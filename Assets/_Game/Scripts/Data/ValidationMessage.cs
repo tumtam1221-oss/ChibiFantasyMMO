@@ -43,7 +43,10 @@ namespace ChibiFantasy.Data
         SlotMismatch = 5,
 
         /// <summary>Content was selected that its own availability rules forbid.</summary>
-        GenderIncompatible = 6
+        GenderIncompatible = 6,
+
+        /// <summary>A definition's own values are internally inconsistent.</summary>
+        InvalidConfiguration = 7
     }
 
     /// <summary>
