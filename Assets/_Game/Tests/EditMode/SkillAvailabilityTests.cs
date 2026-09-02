@@ -114,7 +114,7 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void ASelfPrerequisiteIsRejected()
         {
-            SkillDefinition skill = AddSkill("skill.loop", 3,
+            SkillDefinition skill = AddSkill("skill.loop", 1,
                 prerequisites: new[] { new SkillPrerequisite(new DefinitionId("skill.loop"), 1) });
 
             ValidationReport report = Validate(skill);

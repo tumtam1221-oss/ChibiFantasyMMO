@@ -68,8 +68,14 @@ namespace ChibiFantasy.Gameplay
         /// <summary>
         /// Answers for a set of skills, in the order given.
         /// </summary>
-        /// <remarks>Duplicates in the input are answered once each and left in place; it is
-        /// the caller's list, and silently collapsing it would misreport what was asked.</remarks>
+        /// <remarks>
+        /// Duplicates in the input are answered once each and left in place; it is the
+        /// caller's list, and silently collapsing it would misreport what was asked.
+        ///
+        /// Arguments are checked here rather than left to the first
+        /// <see cref="Evaluate"/> call, so an empty list is rejected on the same terms as a
+        /// full one instead of quietly returning nothing.
+        /// </remarks>
         public IReadOnlyList<SkillAvailability> EvaluateAll(
             CharacterSkillsState learned,
             CharacterClassState classState,
@@ -77,6 +83,21 @@ namespace ChibiFantasy.Gameplay
             IEnumerable<DefinitionId> candidates,
             IDefinitionRegistry<SkillDefinition> skills)
         {
+            if (learned == null)
+            {
+                throw new ArgumentNullException(nameof(learned));
+            }
+
+            if (classState == null)
+            {
+                throw new ArgumentNullException(nameof(classState));
+            }
+
+            if (skills == null)
+            {
+                throw new ArgumentNullException(nameof(skills));
+            }
+
             if (candidates == null)
             {
                 throw new ArgumentNullException(nameof(candidates));

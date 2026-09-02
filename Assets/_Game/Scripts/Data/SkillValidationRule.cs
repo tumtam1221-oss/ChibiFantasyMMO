@@ -88,6 +88,17 @@ namespace ChibiFantasy.Data
             if (levels == null || levels.Length == 0)
             {
                 // A skill with no table is a single-rank skill described by its own fields.
+                // Claiming more ranks than that is a content fault: the ranks above one
+                // describe nothing, so nothing can say what they cost or what they do. Left
+                // unreported it surfaced far away, as a rank-up refused at runtime for a
+                // reason no player caused and no designer was told about.
+                if (skill.MaxLevel > 1)
+                {
+                    report.AddError(ValidationCode.InvalidConfiguration, id,
+                        "Maximum level is " + skill.MaxLevel
+                        + " but no level table is authored, so ranks above one describe nothing.");
+                }
+
                 return;
             }
 
