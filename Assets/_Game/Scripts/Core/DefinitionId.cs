@@ -54,25 +54,7 @@ namespace ChibiFantasy.Core
         /// </remarks>
         public override int GetHashCode()
         {
-            if (_value == null)
-            {
-                return 0;
-            }
-
-            unchecked
-            {
-                const uint offsetBasis = 2166136261;
-                const uint prime = 16777619;
-
-                uint hash = offsetBasis;
-                for (int i = 0; i < _value.Length; i++)
-                {
-                    hash ^= _value[i];
-                    hash *= prime;
-                }
-
-                return (int)hash;
-            }
+            return IdentityHash.Fnv1a(_value);
         }
 
         public override string ToString()
