@@ -37,7 +37,13 @@ namespace ChibiFantasy.Data
         DuplicateDefinitionId = 3,
 
         /// <summary>A definition points at an identity that does not resolve.</summary>
-        MissingReference = 4
+        MissingReference = 4,
+
+        /// <summary>A reference resolved, but to content of the wrong category.</summary>
+        SlotMismatch = 5,
+
+        /// <summary>Content was selected that its own availability rules forbid.</summary>
+        GenderIncompatible = 6
     }
 
     /// <summary>
