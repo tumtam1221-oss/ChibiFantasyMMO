@@ -13,8 +13,13 @@ namespace ChibiFantasy.Data
     /// Depends on no UnityEngine.Object, no MonoBehaviour and no networking type, so
     /// instances remain plain data that a server can hold, validate and persist without a
     /// scene or a Unity runtime.
+    ///
+    /// Extends <see cref="IPersistentState"/>, which is where the Revision member now comes
+    /// from. An owned instance is by definition state that must survive reconnect and
+    /// restart, so it is classified rather than re-described: every existing instance type
+    /// gains the classification without changing a line of its own code.
     /// </remarks>
-    public interface IGameInstance
+    public interface IGameInstance : IPersistentState
     {
         /// <summary>Identity of this specific copy.</summary>
         InstanceId InstanceId { get; }
@@ -24,8 +29,5 @@ namespace ChibiFantasy.Data
 
         /// <summary>Who holds it. May be <see cref="OwnerId.None"/> for unassigned state.</summary>
         OwnerId Owner { get; }
-
-        /// <summary>Change counter, advanced whenever mutable state changes.</summary>
-        Revision Revision { get; }
     }
 }
