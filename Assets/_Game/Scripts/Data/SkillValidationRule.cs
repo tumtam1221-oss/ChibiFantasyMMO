@@ -46,6 +46,7 @@ namespace ChibiFantasy.Data
             DefinitionId id = skill.Id;
 
             ValidateScalars(skill, id, report);
+            ValidateCombinations(skill, id, report);
             ValidateLevels(skill, id, report);
             ValidateAvailability(skill, id, report);
             ValidatePrerequisites(skill, id, report);

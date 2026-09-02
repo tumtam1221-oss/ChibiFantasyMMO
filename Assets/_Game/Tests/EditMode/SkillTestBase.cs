@@ -76,7 +76,12 @@ namespace ChibiFantasy.Tests.EditMode
             return definition;
         }
 
-        /// <summary>Builds a skill. Scalars are authored as JSON, arrays by reflection.</summary>
+        /// <summary>
+        /// Builds a skill. Scalars are authored as JSON, arrays by reflection.
+        /// </summary>
+        /// <remarks>Defaults to a coherent active skill, because real content always states
+        /// a category, a target and a resource. A test wanting another combination
+        /// overrides those fields directly.</remarks>
         protected SkillDefinition AddSkill(string id, int maxLevel = 1, float cost = 0f,
             float cooldown = 0f, float castTime = 0f, float range = 0f,
             string requiredClass = null, string requiredJob = null,
@@ -88,6 +93,9 @@ namespace ChibiFantasy.Tests.EditMode
                 "{\"_id\":{\"_value\":\"" + id + "\"},\"_maxLevel\":" + maxLevel
                 + ",\"_baseResourceCost\":" + cost + ",\"_cooldownSeconds\":" + cooldown
                 + ",\"_castTimeSeconds\":" + castTime + ",\"_range\":" + range
+                + ",\"_category\":" + (int)SkillCategory.Active
+                + ",\"_targetType\":" + (int)SkillTargetType.SingleEnemy
+                + ",\"_resourceType\":" + (int)SkillResourceType.Mana
                 + ",\"_requiredClass\":{\"_value\":\"" + (requiredClass ?? string.Empty)
                 + "\"},\"_requiredJob\":{\"_value\":\"" + (requiredJob ?? string.Empty) + "\"}}",
                 definition);
