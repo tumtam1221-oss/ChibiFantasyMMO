@@ -34,6 +34,7 @@
 # ---------- Generated IDE / solution files ----------
 *.csproj
 *.sln
+*.slnx
 *.suo
 *.user
 *.userprefs
