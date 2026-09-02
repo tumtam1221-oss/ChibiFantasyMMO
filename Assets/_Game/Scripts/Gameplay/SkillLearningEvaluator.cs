@@ -38,13 +38,11 @@ namespace ChibiFantasy.Gameplay
     /// level gate; that is what the schema says, and inventing a default here would be a
     /// rule no designer wrote.
     ///
-    /// <b>Prerequisites are checked one level deep, and that is correct.</b> The question
-    /// is whether the character knows the prerequisite now, which
-    /// <see cref="CharacterSkillsState"/> answers directly; how they came to know it is
-    /// already settled history. Nothing recurses into a prerequisite's own prerequisites,
-    /// so a cycle in authored content -- A requiring B requiring A -- cannot recurse
-    /// indefinitely here. It simply leaves both skills unlearnable, which is a content
-    /// fault to be reported by content validation, not a runtime hazard.
+    /// <b>Class, job and prerequisites come from <see cref="SkillRequirements"/>.</b> The
+    /// schema states those three on the skill rather than per rank, so learning and ranking
+    /// up ask identical questions of them and share one implementation rather than keeping
+    /// two copies that can drift. See that type for why prerequisites are checked one level
+    /// deep and why an authored cycle cannot loop here.
     ///
     /// <b>Not implemented because nothing represents it.</b> No skill point, skill cost or
     /// learning currency exists anywhere in the project, so no such requirement is checked
@@ -96,23 +94,12 @@ namespace ChibiFantasy.Gameplay
                 return SkillLearnEligibility.Rejected(SkillLearnRejection.AlreadyLearned, required);
             }
 
-            if (target.RequiredClass.IsValid && target.RequiredClass != classState.BaseClass)
-            {
-                return SkillLearnEligibility.Rejected(
-                    SkillLearnRejection.ClassRequirementNotMet, required);
-            }
+            SkillRequirementOutcome requirements =
+                SkillRequirements.Check(target, classState, learned);
 
-            if (target.RequiredJob.IsValid && target.RequiredJob != classState.CurrentJob)
+            if (!requirements.IsSatisfied)
             {
-                return SkillLearnEligibility.Rejected(
-                    SkillLearnRejection.JobRequirementNotMet, required);
-            }
-
-            SkillLearnEligibility prerequisiteFault = CheckPrerequisites(target, learned, required);
-
-            if (!prerequisiteFault.IsAllowed)
-            {
-                return prerequisiteFault;
+                return Translate(requirements, required);
             }
 
             if (characterLevel < required)
@@ -170,47 +157,30 @@ namespace ChibiFantasy.Gameplay
                 : 0;
         }
 
-        /// <summary>
-        /// Checks every skill that must be known first, in authored order.
-        /// </summary>
-        /// <remarks>A prerequisite naming no skill is a content fault reported by skill
-        /// validation, not a reason to refuse a player here, so it is skipped rather than
-        /// treated as unmet.</remarks>
-        private static SkillLearnEligibility CheckPrerequisites(SkillDefinition target,
-            CharacterSkillsState learned, int requiredLevel)
+        /// <summary>States a shared requirement failure in learning's own vocabulary.</summary>
+        private static SkillLearnEligibility Translate(SkillRequirementOutcome outcome,
+            int requiredLevel)
         {
-            SkillPrerequisite[] prerequisites = target.Prerequisites;
-
-            if (prerequisites == null)
+            switch (outcome.Fault)
             {
-                return SkillLearnEligibility.Allowed(requiredLevel);
-            }
+                case SkillRequirementFault.Class:
+                    return SkillLearnEligibility.Rejected(
+                        SkillLearnRejection.ClassRequirementNotMet, requiredLevel);
 
-            for (int i = 0; i < prerequisites.Length; i++)
-            {
-                SkillPrerequisite prerequisite = prerequisites[i];
+                case SkillRequirementFault.Job:
+                    return SkillLearnEligibility.Rejected(
+                        SkillLearnRejection.JobRequirementNotMet, requiredLevel);
 
-                if (!prerequisite.Skill.IsValid)
-                {
-                    continue;
-                }
-
-                if (!learned.TryGetRank(prerequisite.Skill, out int rank))
-                {
-                    return SkillLearnEligibility.RejectedByPrerequisite(
-                        SkillLearnRejection.PrerequisiteNotLearned, requiredLevel,
-                        prerequisite.Skill, prerequisite.Level);
-                }
-
-                if (rank < prerequisite.Level)
-                {
+                case SkillRequirementFault.PrerequisiteRankTooLow:
                     return SkillLearnEligibility.RejectedByPrerequisite(
                         SkillLearnRejection.PrerequisiteRankTooLow, requiredLevel,
-                        prerequisite.Skill, prerequisite.Level);
-                }
-            }
+                        outcome.Prerequisite, outcome.RequiredRank);
 
-            return SkillLearnEligibility.Allowed(requiredLevel);
+                default:
+                    return SkillLearnEligibility.RejectedByPrerequisite(
+                        SkillLearnRejection.PrerequisiteNotLearned, requiredLevel,
+                        outcome.Prerequisite, outcome.RequiredRank);
+            }
         }
     }
 }
