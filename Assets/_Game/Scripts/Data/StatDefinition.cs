@@ -20,6 +20,8 @@ namespace ChibiFantasy.Data
         [SerializeField] private LocalizationKey _abbreviationKey;
         [SerializeField] private bool _isPrimary;
         [SerializeField] private float _defaultValue;
+        [SerializeField] private int _minValue;
+        [SerializeField] private int _maxValue = int.MaxValue;
 
         public LocalizationKey NameKey => _nameKey;
 
@@ -31,5 +33,17 @@ namespace ChibiFantasy.Data
 
         /// <summary>Value assumed when no contributor supplies this stat.</summary>
         public float DefaultValue => _defaultValue;
+
+        /// <summary>Lowest base value a character may hold in this stat.</summary>
+        /// <remarks>Bounds are integers because a character's base stats are counted, not
+        /// measured; see <see cref="CharacterStatEntry"/>. They constrain persisted player
+        /// state and are enforced by <see cref="CharacterStatsValidator"/>, not by the
+        /// state itself, which cannot see content.</remarks>
+        public int MinValue => _minValue;
+
+        /// <summary>Highest base value a character may hold in this stat.</summary>
+        /// <remarks>Defaults to no practical ceiling, so a stat is unconstrained until a
+        /// designer decides otherwise rather than being capped by an invented number.</remarks>
+        public int MaxValue => _maxValue;
     }
 }

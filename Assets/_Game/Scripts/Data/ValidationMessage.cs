@@ -46,7 +46,10 @@ namespace ChibiFantasy.Data
         GenderIncompatible = 6,
 
         /// <summary>A definition's own values are internally inconsistent.</summary>
-        InvalidConfiguration = 7
+        InvalidConfiguration = 7,
+
+        /// <summary>A value falls outside the range its definition allows.</summary>
+        ValueOutOfRange = 8
     }
 
     /// <summary>
