@@ -7,7 +7,7 @@ namespace ChibiFantasy.Tests.EditMode
 {
     internal sealed class CharacterCreationTests : CharacterCreationTestBase
     {
-        private bool TryCreate(CharacterCreationInput input, out NewCharacter created,
+        private bool TryCreate(CharacterCreationInput input, out Character created,
             out ValidationReport report)
         {
             return new CharacterCreationService().TryCreate(input, Content(), out created, out report);
@@ -19,7 +19,7 @@ namespace ChibiFantasy.Tests.EditMode
         [TestCase(Archer)]
         public void EveryStartingClassCreatesThroughTheSamePath(string startingClass)
         {
-            bool created = TryCreate(Input(startingClass), out NewCharacter character, out ValidationReport report);
+            bool created = TryCreate(Input(startingClass), out Character character, out ValidationReport report);
 
             Assert.IsTrue(created, report.Messages.Count > 0 ? report.Messages[0].Message : string.Empty);
             Assert.IsTrue(report.IsValid);
@@ -30,7 +30,7 @@ namespace ChibiFantasy.Tests.EditMode
         [TestCase(CharacterGender.Female)]
         public void BothGendersAreAccepted(CharacterGender gender)
         {
-            bool created = TryCreate(Input(Cleric, gender), out NewCharacter character, out _);
+            bool created = TryCreate(Input(Cleric, gender), out Character character, out _);
 
             Assert.IsTrue(created);
             Assert.AreEqual(gender, character.Identity.Gender);
@@ -39,7 +39,7 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void IdentityIsMintedAndSharedByEveryAggregate()
         {
-            TryCreate(Input(Mage), out NewCharacter character, out _);
+            TryCreate(Input(Mage), out Character character, out _);
 
             CharacterId id = character.Identity.CharacterId;
 
@@ -54,8 +54,8 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void EachCreationMintsADistinctIdentity()
         {
-            TryCreate(Input(Mage), out NewCharacter first, out _);
-            TryCreate(Input(Mage), out NewCharacter second, out _);
+            TryCreate(Input(Mage), out Character first, out _);
+            TryCreate(Input(Mage), out Character second, out _);
 
             Assert.AreNotEqual(first.Identity.CharacterId, second.Identity.CharacterId);
         }
@@ -64,7 +64,7 @@ namespace ChibiFantasy.Tests.EditMode
         public void OwnerAndNameArePreserved()
         {
             TryCreate(Input(Archer, CharacterGender.Female, "Robin", "account:77"),
-                out NewCharacter character, out _);
+                out Character character, out _);
 
             Assert.AreEqual(new OwnerId("account:77"), character.Identity.Owner);
             Assert.AreEqual("Robin", character.Identity.Name);
@@ -73,7 +73,7 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void ProgressionStartsAtTheCurveMinimumWithNoExperience()
         {
-            TryCreate(Input(Swordsman), out NewCharacter character, out _);
+            TryCreate(Input(Swordsman), out Character character, out _);
 
             Assert.AreEqual(1, character.Progression.Level);
             Assert.AreEqual(0L, character.Progression.Experience);
@@ -84,7 +84,7 @@ namespace ChibiFantasy.Tests.EditMode
         public void BaseStatsComeFromTheClassAsset()
         {
             // Swordsman fixture authors STR 10, VIT 8.
-            TryCreate(Input(Swordsman), out NewCharacter character, out _);
+            TryCreate(Input(Swordsman), out Character character, out _);
 
             Assert.AreEqual(10, character.Stats.GetOrDefault(new DefinitionId(Str), -1));
             Assert.AreEqual(8, character.Stats.GetOrDefault(new DefinitionId(Vit), -1));
@@ -93,8 +93,8 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void DifferentClassesYieldDifferentStartingStats()
         {
-            TryCreate(Input(Swordsman), out NewCharacter warrior, out _);
-            TryCreate(Input(Mage), out NewCharacter mage, out _);
+            TryCreate(Input(Swordsman), out Character warrior, out _);
+            TryCreate(Input(Mage), out Character mage, out _);
 
             Assert.AreEqual(10, warrior.Stats.GetOrDefault(new DefinitionId(Str), -1));
             Assert.AreEqual(3, mage.Stats.GetOrDefault(new DefinitionId(Str), -1));
@@ -104,7 +104,7 @@ namespace ChibiFantasy.Tests.EditMode
         public void ResourcesStartFullFromTheCalculatedMaxima()
         {
             // Swordsman: VIT 8 so MaxHP = 50 + 80 = 130; STR 10 so MaxMP = 10 + 20 = 30.
-            TryCreate(Input(Swordsman), out NewCharacter character, out _);
+            TryCreate(Input(Swordsman), out Character character, out _);
 
             Assert.AreEqual(130, character.Resources.CurrentHealth);
             Assert.AreEqual(30, character.Resources.CurrentMana);
@@ -113,7 +113,7 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void NoJobIsAssignedAtCreation()
         {
-            TryCreate(Input(Swordsman), out NewCharacter character, out _);
+            TryCreate(Input(Swordsman), out Character character, out _);
 
             Assert.IsFalse(character.Class.HasChangedJob);
             Assert.AreEqual(DefinitionId.None, character.Class.CurrentJob);
@@ -132,7 +132,7 @@ namespace ChibiFantasy.Tests.EditMode
             };
 
             TryCreate(Input(Cleric, CharacterGender.Female, "Nun", "account:1", choices),
-                out NewCharacter character, out _);
+                out Character character, out _);
 
             Assert.AreEqual(new DefinitionId("hair_001"), character.Appearance.Hair);
             Assert.AreEqual(new DefinitionId("face_001"), character.Appearance.Face);
@@ -141,7 +141,7 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void AllAggregatesKeepTheirOwnStateClassification()
         {
-            TryCreate(Input(Mage), out NewCharacter character, out _);
+            TryCreate(Input(Mage), out Character character, out _);
 
             Assert.IsInstanceOf<IPersistentState>(character.Identity);
             Assert.IsInstanceOf<IPersistentState>(character.Class);

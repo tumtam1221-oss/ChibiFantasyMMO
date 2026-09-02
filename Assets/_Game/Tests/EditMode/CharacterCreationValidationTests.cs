@@ -7,7 +7,7 @@ namespace ChibiFantasy.Tests.EditMode
 {
     internal sealed class CharacterCreationValidationTests : CharacterCreationTestBase
     {
-        private bool TryCreate(CharacterCreationInput input, out NewCharacter created,
+        private bool TryCreate(CharacterCreationInput input, out Character created,
             out ValidationReport report)
         {
             return new CharacterCreationService().TryCreate(input, Content(), out created, out report);
@@ -19,7 +19,7 @@ namespace ChibiFantasy.Tests.EditMode
             var input = new CharacterCreationInput(
                 OwnerId.None, "Hero", CharacterGender.Male, new DefinitionId(Mage));
 
-            Assert.IsFalse(TryCreate(input, out NewCharacter created, out ValidationReport report));
+            Assert.IsFalse(TryCreate(input, out Character created, out ValidationReport report));
             Assert.IsNull(created);
             Assert.IsFalse(report.IsValid);
         }
@@ -30,7 +30,7 @@ namespace ChibiFantasy.Tests.EditMode
         public void MissingNameIsRejected(string name)
         {
             Assert.IsFalse(TryCreate(Input(Mage, CharacterGender.Male, name),
-                out NewCharacter created, out ValidationReport report));
+                out Character created, out ValidationReport report));
             Assert.IsNull(created);
             Assert.AreEqual(ValidationCode.InvalidConfiguration, report.Messages[0].Code);
         }
@@ -39,14 +39,14 @@ namespace ChibiFantasy.Tests.EditMode
         public void UnspecifiedGenderIsRejected()
         {
             Assert.IsFalse(TryCreate(Input(Mage, CharacterGender.Unspecified),
-                out NewCharacter created, out _));
+                out Character created, out _));
             Assert.IsNull(created);
         }
 
         [Test]
         public void UnknownClassIsRejected()
         {
-            Assert.IsFalse(TryCreate(Input("class.ghost"), out NewCharacter created,
+            Assert.IsFalse(TryCreate(Input("class.ghost"), out Character created,
                 out ValidationReport report));
             Assert.IsNull(created);
             Assert.AreEqual(ValidationCode.MissingReference, report.Messages[0].Code);
@@ -58,7 +58,7 @@ namespace ChibiFantasy.Tests.EditMode
             var input = new CharacterCreationInput(
                 new OwnerId("account:1"), "Hero", CharacterGender.Male, DefinitionId.None);
 
-            Assert.IsFalse(TryCreate(input, out NewCharacter created, out ValidationReport report));
+            Assert.IsFalse(TryCreate(input, out Character created, out ValidationReport report));
             Assert.IsNull(created);
             Assert.AreEqual(ValidationCode.MissingDefinitionId, report.Messages[0].Code);
         }
@@ -69,12 +69,12 @@ namespace ChibiFantasy.Tests.EditMode
             AddClass("class.valkyrie", GenderAvailability.FemaleOnly, 5, 5);
 
             Assert.IsFalse(TryCreate(Input("class.valkyrie", CharacterGender.Male),
-                out NewCharacter rejected, out ValidationReport report));
+                out Character rejected, out ValidationReport report));
             Assert.IsNull(rejected);
             Assert.AreEqual(ValidationCode.GenderIncompatible, report.Messages[0].Code);
 
             Assert.IsTrue(TryCreate(Input("class.valkyrie", CharacterGender.Female),
-                out NewCharacter accepted, out _));
+                out Character accepted, out _));
             Assert.IsNotNull(accepted);
         }
 
@@ -89,7 +89,7 @@ namespace ChibiFantasy.Tests.EditMode
             };
 
             Assert.IsFalse(TryCreate(Input(Mage, CharacterGender.Male, "Hero", "account:1", choices),
-                out NewCharacter created, out ValidationReport report));
+                out Character created, out ValidationReport report));
             Assert.IsNull(created);
             Assert.AreEqual(ValidationCode.GenderIncompatible, report.Messages[0].Code);
         }
@@ -105,7 +105,7 @@ namespace ChibiFantasy.Tests.EditMode
             };
 
             Assert.IsFalse(TryCreate(Input(Mage, CharacterGender.Male, "Hero", "account:1", choices),
-                out NewCharacter created, out ValidationReport report));
+                out Character created, out ValidationReport report));
             Assert.IsNull(created);
             Assert.AreEqual(ValidationCode.SlotMismatch, report.Messages[0].Code);
         }
@@ -119,7 +119,7 @@ namespace ChibiFantasy.Tests.EditMode
             };
 
             Assert.IsFalse(TryCreate(Input(Mage, CharacterGender.Male, "Hero", "account:1", choices),
-                out NewCharacter created, out _));
+                out Character created, out _));
             Assert.IsNull(created);
         }
 

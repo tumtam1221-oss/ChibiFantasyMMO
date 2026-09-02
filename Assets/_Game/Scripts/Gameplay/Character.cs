@@ -4,9 +4,13 @@ using ChibiFantasy.Data;
 namespace ChibiFantasy.Gameplay
 {
     /// <summary>
-    /// The aggregates a freshly created character consists of.
+    /// A character, as the whole set of state that belongs to one.
     /// </summary>
     /// <remarks>
+    /// <b>This is the character aggregate.</b> Creation produces one; it is not specific to
+    /// creation, which is why it is not called NewCharacter. Everything that makes up a
+    /// character is reachable from here and nowhere else defines that set.
+    ///
     /// A composition, not a god object: it holds the existing aggregates side by side and
     /// adds no state of its own. Each keeps its own revision and can be persisted,
     /// transmitted and validated separately, which is the arrangement every step since
@@ -15,9 +19,9 @@ namespace ChibiFantasy.Gameplay
     /// Resources are the one runtime member; the rest are persistent. That split is the
     /// point, and it is why they are not flattened into a single record.
     /// </remarks>
-    public sealed class NewCharacter
+    public sealed class Character
     {
-        public NewCharacter(CharacterState identity, CharacterClassState characterClass,
+        public Character(CharacterState identity, CharacterClassState characterClass,
             CharacterAppearanceState appearance, CharacterProgressionState progression,
             CharacterStatsState stats, CharacterResourceState resources)
         {

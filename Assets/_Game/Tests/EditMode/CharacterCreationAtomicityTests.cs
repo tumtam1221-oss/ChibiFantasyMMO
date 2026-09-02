@@ -9,7 +9,7 @@ namespace ChibiFantasy.Tests.EditMode
 {
     internal sealed class CharacterCreationAtomicityTests : CharacterCreationTestBase
     {
-        private bool TryCreate(CharacterCreationInput input, out NewCharacter created,
+        private bool TryCreate(CharacterCreationInput input, out Character created,
             out ValidationReport report)
         {
             return new CharacterCreationService().TryCreate(input, Content(), out created, out report);
@@ -22,7 +22,7 @@ namespace ChibiFantasy.Tests.EditMode
             int statsBefore = Stats.Count;
             int appearanceBefore = Appearance.Count;
 
-            Assert.IsFalse(TryCreate(Input("class.ghost"), out NewCharacter created, out _));
+            Assert.IsFalse(TryCreate(Input("class.ghost"), out Character created, out _));
 
             Assert.IsNull(created, "No partially built character may escape.");
             Assert.AreEqual(classesBefore, Classes.Count);
@@ -64,7 +64,7 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void NewAggregatesStartAtInitialRevision()
         {
-            TryCreate(Input(Swordsman), out NewCharacter character, out _);
+            TryCreate(Input(Swordsman), out Character character, out _);
 
             Assert.AreEqual(Revision.Initial, character.Identity.Revision);
             Assert.AreEqual(Revision.Initial, character.Class.Revision);
@@ -75,7 +75,7 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void MutatingAfterCreationFollowsExistingRevisionRules()
         {
-            TryCreate(Input(Swordsman), out NewCharacter character, out _);
+            TryCreate(Input(Swordsman), out Character character, out _);
             CharacterId id = character.Identity.CharacterId;
 
             character.Identity.Rename("Renamed");
@@ -89,7 +89,7 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void PersistentAggregatesSerializeDeterministically()
         {
-            TryCreate(Input(Cleric, CharacterGender.Female, "Nun"), out NewCharacter character, out _);
+            TryCreate(Input(Cleric, CharacterGender.Female, "Nun"), out Character character, out _);
 
             string identity = UnityEngine.JsonUtility.ToJson(character.Identity);
             string classState = UnityEngine.JsonUtility.ToJson(character.Class);
@@ -145,7 +145,7 @@ namespace ChibiFantasy.Tests.EditMode
             Type[] introduced =
             {
                 typeof(CharacterCreationService), typeof(CharacterCreationValidator),
-                typeof(CharacterCreationInput), typeof(NewCharacter)
+                typeof(CharacterCreationInput), typeof(Character)
             };
 
             foreach (Type type in introduced)
@@ -169,7 +169,7 @@ namespace ChibiFantasy.Tests.EditMode
                 "Skill", "Equip", "Inventory", "Item", "Combat", "Damage", "Quest", "Npc"
             };
 
-            foreach (MemberInfo member in typeof(NewCharacter).GetMembers())
+            foreach (MemberInfo member in typeof(Character).GetMembers())
             {
                 foreach (string name in forbidden)
                 {

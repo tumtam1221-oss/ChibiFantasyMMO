@@ -42,7 +42,7 @@ namespace ChibiFantasy.Gameplay
         /// <returns>True when a character was produced. On false <paramref name="created"/>
         /// is null and the report says why.</returns>
         public bool TryCreate(CharacterCreationInput input, CharacterCreationContent content,
-            out NewCharacter created, out ValidationReport report)
+            out Character created, out ValidationReport report)
         {
             created = null;
             report = _validator.Validate(input, content, out ClassDefinition startingClass);
@@ -56,7 +56,7 @@ namespace ChibiFantasy.Gameplay
             return true;
         }
 
-        private NewCharacter Build(CharacterCreationInput input, CharacterCreationContent content,
+        private Character Build(CharacterCreationInput input, CharacterCreationContent content,
             ClassDefinition startingClass)
         {
             CharacterId characterId = CharacterId.New();
@@ -75,7 +75,7 @@ namespace ChibiFantasy.Gameplay
 
             CharacterResourceState resources = CharacterResourceState.CreateFull(characterId, limits);
 
-            return new NewCharacter(identity, characterClass, appearance, progression, stats, resources);
+            return new Character(identity, characterClass, appearance, progression, stats, resources);
         }
 
         private static CharacterAppearanceState BuildAppearance(CharacterId characterId,
