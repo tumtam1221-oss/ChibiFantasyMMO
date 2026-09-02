@@ -1,0 +1,18 @@
+{
+    "name": "ChibiFantasy.Gameplay",
+    "rootNamespace": "ChibiFantasy.Gameplay",
+    "references": [
+        "ChibiFantasy.Core",
+        "ChibiFantasy.Data",
+        "ChibiFantasy.Contracts"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

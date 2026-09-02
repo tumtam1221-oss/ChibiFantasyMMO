@@ -1,0 +1,27 @@
+{
+    "name": "ChibiFantasy.Tests.EditMode",
+    "rootNamespace": "ChibiFantasy.Tests.EditMode",
+    "references": [
+        "ChibiFantasy.Core",
+        "ChibiFantasy.Data",
+        "ChibiFantasy.Contracts",
+        "ChibiFantasy.Gameplay",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

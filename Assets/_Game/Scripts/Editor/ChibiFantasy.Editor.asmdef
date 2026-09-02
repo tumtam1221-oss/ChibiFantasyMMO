@@ -1,0 +1,26 @@
+{
+    "name": "ChibiFantasy.Editor",
+    "rootNamespace": "ChibiFantasy.Editor",
+    "references": [
+        "ChibiFantasy.Core",
+        "ChibiFantasy.Data",
+        "ChibiFantasy.Contracts",
+        "ChibiFantasy.Gameplay",
+        "ChibiFantasy.Network",
+        "ChibiFantasy.Backend",
+        "ChibiFantasy.Server",
+        "ChibiFantasy.Client",
+        "ChibiFantasy.UI"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

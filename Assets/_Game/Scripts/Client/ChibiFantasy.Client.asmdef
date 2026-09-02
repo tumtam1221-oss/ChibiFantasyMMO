@@ -1,0 +1,24 @@
+{
+    "name": "ChibiFantasy.Client",
+    "rootNamespace": "ChibiFantasy.Client",
+    "references": [
+        "ChibiFantasy.Core",
+        "ChibiFantasy.Data",
+        "ChibiFantasy.Contracts",
+        "ChibiFantasy.Gameplay",
+        "ChibiFantasy.Network",
+        "ChibiFantasy.Backend",
+        "ChibiFantasy.UI",
+        "FishNet.Runtime",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
