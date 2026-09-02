@@ -13,12 +13,12 @@ namespace ChibiFantasy.Editor
     /// validators stay usable by the client, the dedicated server and tests without
     /// UnityEditor and without a scene.
     ///
-    /// <b>It now runs the specialised rules.</b> Until this step it constructed a bare
+    /// <b>It runs the specialised rules.</b> Before 06.3 it constructed a bare
     /// DefinitionValidator, which meant every rule written since 04.6 -- progression,
-    /// class, job, stat, derived formula, skill and skill effect -- was never reached by a
-    /// project scan. A scan reported success on content those rules would have rejected,
-    /// which is worse than no scan at all. Assets are partitioned into typed registries
-    /// first so the rules that need them have them.
+    /// class, job, stat, derived formula, skill, skill effect and now skill grant -- was
+    /// never reached by a project scan. A scan reported success on content those rules
+    /// would have rejected, which is worse than no scan at all. Assets are partitioned into
+    /// typed registries first so the rules that need them have them.
     ///
     /// This is a development convenience for checking authored content, not the production
     /// content pipeline. No Resources.LoadAll, no folder convention, no Addressables. The
@@ -132,7 +132,8 @@ namespace ChibiFantasy.Editor
                 new ClassProgressionValidationRule(jobs),
                 new JobProgressionValidationRule(jobs, classes),
                 new SkillValidationRule(skills, classes, jobs),
-                new SkillEffectValidationRule(stats, statusEffects)
+                new SkillEffectValidationRule(stats, statusEffects),
+                new SkillGrantValidationRule(skills)
             };
         }
 

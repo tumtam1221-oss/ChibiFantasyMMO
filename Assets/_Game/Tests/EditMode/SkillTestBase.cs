@@ -133,5 +133,31 @@ namespace ChibiFantasy.Tests.EditMode
                 .GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)
                 .SetValue(target, value);
         }
+
+        /// <summary>Authors the skills a new character of this class begins with.</summary>
+        protected static void SetStartingSkills(ClassDefinition characterClass, params string[] skills)
+        {
+            SetPrivate(characterClass, "_startingSkills", Ids(skills));
+        }
+
+        /// <summary>Authors the skills this job unlocks.</summary>
+        protected static void SetJobSkills(JobDefinition job, params string[] skills)
+        {
+            SetPrivate(job, "_skills", Ids(skills));
+        }
+
+        /// <summary>Null entries become <see cref="DefinitionId.None"/>, so a test can
+        /// author the unset reference an authoring mistake actually produces.</summary>
+        protected static DefinitionId[] Ids(params string[] values)
+        {
+            var ids = new DefinitionId[values.Length];
+
+            for (int i = 0; i < values.Length; i++)
+            {
+                ids[i] = values[i] == null ? DefinitionId.None : new DefinitionId(values[i]);
+            }
+
+            return ids;
+        }
     }
 }
