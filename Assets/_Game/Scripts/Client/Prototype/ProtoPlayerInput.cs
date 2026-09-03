@@ -19,6 +19,8 @@ namespace ChibiFantasy.Client.Prototype
         private InputAction _attack;
         private InputAction _skill1;
         private InputAction _skill2;
+        private InputAction _toggleInventory;
+        private InputAction _toggleStorage;
 
         /// <summary>Raw WASD vector. X = strafe, Y = forward/back. Never longer than 1.</summary>
         public Vector2 Move { get; private set; }
@@ -42,6 +44,16 @@ namespace ChibiFantasy.Client.Prototype
 
         /// <summary>True on the frame the second prototype skill key went down.</summary>
         public bool SkillSecondaryPressed { get; private set; }
+
+        /// <summary>
+        /// True on the frame the inventory key went down.
+        /// </summary>
+        /// <remarks>The UI window is driven from this same asset rather than a second input
+        /// path: one <c>ProtoControls</c> asset remains the only place a key is bound.</remarks>
+        public bool ToggleInventoryPressed { get; private set; }
+
+        /// <summary>True on the frame the storage key went down.</summary>
+        public bool ToggleStoragePressed { get; private set; }
 
         public bool IsReady => _map != null;
 
@@ -68,6 +80,8 @@ namespace ChibiFantasy.Client.Prototype
             _attack = _map.FindAction("Attack", false);
             _skill1 = _map.FindAction("Skill1", false);
             _skill2 = _map.FindAction("Skill2", false);
+            _toggleInventory = _map.FindAction("ToggleInventory", false);
+            _toggleStorage = _map.FindAction("ToggleStorage", false);
         }
 
         private void OnEnable()
@@ -84,6 +98,8 @@ namespace ChibiFantasy.Client.Prototype
             AttackPressed = false;
             SkillPrimaryPressed = false;
             SkillSecondaryPressed = false;
+            ToggleInventoryPressed = false;
+            ToggleStoragePressed = false;
         }
 
         private void Update()
@@ -102,6 +118,8 @@ namespace ChibiFantasy.Client.Prototype
             AttackPressed = _attack != null && _attack.WasPressedThisFrame();
             SkillPrimaryPressed = _skill1 != null && _skill1.WasPressedThisFrame();
             SkillSecondaryPressed = _skill2 != null && _skill2.WasPressedThisFrame();
+            ToggleInventoryPressed = _toggleInventory != null && _toggleInventory.WasPressedThisFrame();
+            ToggleStoragePressed = _toggleStorage != null && _toggleStorage.WasPressedThisFrame();
         }
     }
 }

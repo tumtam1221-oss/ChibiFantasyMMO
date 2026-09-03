@@ -4,7 +4,8 @@
     "references": [
         "ChibiFantasy.Core",
         "ChibiFantasy.Data",
-        "ChibiFantasy.Contracts"
+        "ChibiFantasy.Contracts",
+        "UnityEngine.UI"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

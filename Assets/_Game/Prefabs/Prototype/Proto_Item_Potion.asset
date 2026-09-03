@@ -1,0 +1,32 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 13959da28f477c34ea8d0b3294ba15c3, type: 3}
+  m_Name: Proto_Item_Potion
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.ItemDefinition
+  _id:
+    _value: proto.item.potion
+  _nameKey:
+    _key: item.potion.name
+  _descriptionKey:
+    _key: item.potion.desc
+  _icon:
+    _address: 
+  _category: 1
+  _rarity:
+    _value: 
+  _stackable: 1
+  _maxStackSize: 99
+  _buyPrice: 0
+  _sellPrice: 0
+  _tradable: 1
+  _droppable: 1
+  _usable: 1

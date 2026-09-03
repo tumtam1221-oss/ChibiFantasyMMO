@@ -6,6 +6,8 @@
         "ChibiFantasy.Data",
         "ChibiFantasy.Contracts",
         "ChibiFantasy.Gameplay",
+        "ChibiFantasy.UI",
+        "ChibiFantasy.Client",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],
