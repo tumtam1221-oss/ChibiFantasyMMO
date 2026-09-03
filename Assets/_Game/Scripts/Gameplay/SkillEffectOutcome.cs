@@ -46,7 +46,7 @@ namespace ChibiFantasy.Gameplay
     public readonly struct SkillEffectOutcome
     {
         private SkillEffectOutcome(SkillEffectKind kind, SkillEffectStatus status, int amount,
-            int before, int after, string detail)
+            int before, int after, string detail, DamageType damageType)
         {
             Kind = kind;
             Status = status;
@@ -54,10 +54,20 @@ namespace ChibiFantasy.Gameplay
             Before = before;
             After = after;
             Detail = detail;
+            DamageType = damageType;
         }
 
         /// <summary>The authored kind this outcome came from.</summary>
         public SkillEffectKind Kind { get; }
+
+        /// <summary>
+        /// Which defence answered a damage outcome.
+        /// </summary>
+        /// <remarks>Carried through from the authored effect so a presenter can tell a
+        /// sword blow from a spell without re-reading the definition or recomputing
+        /// anything. <see cref="Data.DamageType.None"/> for every non-damage outcome.
+        /// Reuses the PHASE 07.4 enum; no second one exists.</remarks>
+        public DamageType DamageType { get; }
 
         public SkillEffectStatus Status { get; }
 
@@ -78,27 +88,31 @@ namespace ChibiFantasy.Gameplay
 
         public bool DidMutate => Status == SkillEffectStatus.Applied;
 
-        public static SkillEffectOutcome Applied(SkillEffectKind kind, int amount, int before, int after)
+        public static SkillEffectOutcome Applied(SkillEffectKind kind, int amount, int before,
+            int after, DamageType damageType = DamageType.None)
         {
             return new SkillEffectOutcome(
                 kind,
                 before == after ? SkillEffectStatus.NoOp : SkillEffectStatus.Applied,
-                amount, before, after, null);
+                amount, before, after, null, damageType);
         }
 
         public static SkillEffectOutcome NoOp(SkillEffectKind kind, int amount, int value)
         {
-            return new SkillEffectOutcome(kind, SkillEffectStatus.NoOp, amount, value, value, null);
+            return new SkillEffectOutcome(
+                kind, SkillEffectStatus.NoOp, amount, value, value, null, DamageType.None);
         }
 
         public static SkillEffectOutcome Unsupported(SkillEffectKind kind, string detail)
         {
-            return new SkillEffectOutcome(kind, SkillEffectStatus.Unsupported, 0, 0, 0, detail);
+            return new SkillEffectOutcome(
+                kind, SkillEffectStatus.Unsupported, 0, 0, 0, detail, DamageType.None);
         }
 
         public static SkillEffectOutcome Failed(SkillEffectKind kind, string detail)
         {
-            return new SkillEffectOutcome(kind, SkillEffectStatus.Failed, 0, 0, 0, detail);
+            return new SkillEffectOutcome(
+                kind, SkillEffectStatus.Failed, 0, 0, 0, detail, DamageType.None);
         }
 
         public override string ToString()

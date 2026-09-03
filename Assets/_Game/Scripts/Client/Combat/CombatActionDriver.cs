@@ -48,11 +48,18 @@ namespace ChibiFantasy.Client.Combat
         private CombatActionRunner _runner;
         private DefinitionRegistry<SkillDefinition> _registry;
 
-        /// <summary>Raised after an action's effect resolved. Presentation only.</summary>
-        public event System.Action<CombatAction> ActionExecuted;
-
-        /// <summary>Raised when an action ends, however it ended. Presentation only.</summary>
-        public event System.Action<CombatAction> ActionFinished;
+        /// <summary>
+        /// Facts about combat, for presentation.
+        /// </summary>
+        /// <remarks>
+        /// One typed stream rather than the two loose callbacks PHASE 07.4 left here,
+        /// because two overlapping event surfaces is exactly the duplicate presenter
+        /// wiring this phase is meant to avoid. Nothing consumed the old pair.
+        ///
+        /// Raised after the fact and never awaited. A listener that throws, or the absence
+        /// of any listener at all, cannot change a gameplay outcome.
+        /// </remarks>
+        public event System.Action<CombatPresentationEvent> Presentation;
 
         public CombatantBehaviour Self => _self;
 
@@ -118,16 +125,63 @@ namespace ChibiFantasy.Client.Combat
             // Runtime timing, supplied by the caller. The rules never read a clock.
             _self.Cooldowns.Advance(dt);
 
-            CombatActionPhase before = _runner.Phase;
-            bool hadExecuted = _runner.Current != null && _runner.Current.HasExecuted;
-
             _runner.Advance(dt);
+            PublishTransitions();
+        }
 
+        /// <summary>
+        /// Emits whatever changed since the last look.
+        /// </summary>
+        /// <remarks>
+        /// Idempotency comes from the action's own identity and its
+        /// <see cref="CombatAction.HasExecuted"/> flag rather than from a second combat
+        /// state machine: an execution is announced on the tick it first becomes true, and
+        /// an ending is announced once per action object. Repeated Update calls on a
+        /// finished action therefore emit nothing.
+        /// </remarks>
+        private void PublishTransitions()
+        {
             CombatAction action = _runner.Current;
             if (action == null) return;
 
-            if (!hadExecuted && action.HasExecuted) RaiseExecuted(action);
-            if (before != CombatActionPhase.Idle && action.IsFinished) RaiseFinished(action);
+            if (!ReferenceEquals(action, _watched))
+            {
+                _watched = action;
+                _announcedExecution = false;
+                _announcedEnding = false;
+            }
+
+            if (!_announcedExecution && action.HasExecuted)
+            {
+                _announcedExecution = true;
+                PublishExecution(action);
+            }
+
+            if (_announcedEnding || !action.IsFinished) return;
+
+            _announcedEnding = true;
+
+            Raise(action.Phase == CombatActionPhase.Cancelled
+                ? CombatPresentationEvent.Cancelled(action)
+                : CombatPresentationEvent.Completed(action));
+        }
+
+        /// <summary>Announces one execution as executed, then hit, then death where they apply.</summary>
+        private void PublishExecution(CombatAction action)
+        {
+            CombatPresentationEvent executed = CombatPresentationEvent.Executed(action);
+            Raise(executed);
+
+            // A hit only if health actually moved: a skill whose every effect was
+            // unsupported resolved without striking anybody.
+            if (executed.HealthChange != 0)
+            {
+                Raise(CombatPresentationEvent.Hit(executed, executed.DamageType));
+            }
+
+            // Death is announced because gameplay says the target died, never because an
+            // animation reached a frame.
+            if (executed.TargetDied) Raise(CombatPresentationEvent.Death(executed));
         }
 
         /// <summary>Requests a basic attack against the current target.</summary>
@@ -138,7 +192,7 @@ namespace ChibiFantasy.Client.Combat
             CombatActionResult result = _runner.RequestBasicAttack(
                 target, BuildAttackRules(), basicAttackWindUp, basicAttackRecovery);
 
-            if (result.IsAccepted && result.Action.HasExecuted) RaiseExecuted(result.Action);
+            AnnounceRequest(CombatActionType.BasicAttack, DefinitionId.None, result);
             return result;
         }
 
@@ -147,37 +201,78 @@ namespace ChibiFantasy.Client.Combat
         {
             if (_runner == null) return CombatActionResult.Rejected(CombatActionRejection.NoActor);
 
-            var request = new SkillUseRequest(_self, new DefinitionId(skillId), target, rank);
+            var skill = new DefinitionId(skillId);
+            var request = new SkillUseRequest(_self, skill, target, rank);
             CombatActionResult result = _runner.RequestSkill(
                 request, BuildContext(), BuildSkillRules(), skillRecovery);
 
-            if (result.IsAccepted && result.Action.HasExecuted) RaiseExecuted(result.Action);
+            AnnounceRequest(CombatActionType.Skill, skill, result);
             return result;
+        }
+
+        /// <summary>
+        /// Announces the outcome of a request.
+        /// </summary>
+        /// <remarks>A zero-cast action has already executed by the time the request
+        /// returns, so its execution is published here rather than waiting for the next
+        /// tick; <see cref="PublishTransitions"/> would otherwise announce it a frame late,
+        /// and the guard flags stop it announcing twice.</remarks>
+        private void AnnounceRequest(CombatActionType type, DefinitionId skill,
+            in CombatActionResult result)
+        {
+            if (!result.IsAccepted)
+            {
+                Raise(CombatPresentationEvent.Rejected(type, _self.CombatantId,
+                    target == null ? default : target.CombatantId, skill, result));
+                return;
+            }
+
+            _watched = result.Action;
+            _announcedExecution = false;
+            _announcedEnding = false;
+
+            Raise(CombatPresentationEvent.Started(result.Action));
+            PublishTransitions();
         }
 
         /// <summary>Stops the current action. See the runner for the cancellation policy.</summary>
         public bool CancelAction()
         {
-            return _runner != null && _runner.Cancel();
+            if (_runner == null || !_runner.Cancel()) return false;
+
+            PublishTransitions();
+            return true;
         }
 
         /// <summary>Restores combat runtime to a known state. Touches no persistent value.</summary>
         public void ResetCombatRuntime()
         {
             if (_runner == null) return;
+
+            CombatAction cancelled = _runner.Current;
+            bool wasBusy = cancelled != null && cancelled.IsBusy;
+
             CombatRuntimeReset.Restore(_self, _runner, _self.Cooldowns);
+
+            // The reset clears Current, so the cancellation is announced from the action
+            // captured beforehand rather than being lost.
+            if (wasBusy && !_announcedEnding)
+            {
+                _announcedEnding = true;
+                Raise(CombatPresentationEvent.Cancelled(cancelled));
+            }
+
+            _watched = null;
         }
 
-        private void RaiseExecuted(CombatAction action)
+        private void Raise(CombatPresentationEvent e)
         {
-            var handler = ActionExecuted;
-            if (handler != null) handler(action);
+            var handler = Presentation;
+            if (handler != null) handler(e);
         }
 
-        private void RaiseFinished(CombatAction action)
-        {
-            var handler = ActionFinished;
-            if (handler != null) handler(action);
-        }
+        private CombatAction _watched;
+        private bool _announcedExecution;
+        private bool _announcedEnding;
     }
 }

@@ -1,0 +1,27 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 589acf9af9b41c14aba2d2c47697d08a, type: 3}
+  m_Name: CombatPresentationConfig
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.Combat.CombatPresentationConfig
+  physicalHitVfx: {fileID: 0}
+  magicHitVfx: {fileID: 0}
+  healVfx: {fileID: 0}
+  castVfx: {fileID: 0}
+  deathVfx: {fileID: 0}
+  attackSfx: {fileID: 0}
+  magicCastSfx: {fileID: 0}
+  magicHitSfx: {fileID: 0}
+  healSfx: {fileID: 0}
+  deathSfx: {fileID: 0}
+  cancelSfx: {fileID: 0}
+  effectLifetimeSeconds: 2
+  sfxVolume: 0.8

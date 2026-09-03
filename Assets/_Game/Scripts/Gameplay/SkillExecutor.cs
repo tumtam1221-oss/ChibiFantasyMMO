@@ -205,7 +205,9 @@ namespace ChibiFantasy.Gameplay
             target.ApplyHealthDelta(-(long)damage);
             int after = target.CurrentHealth;
 
-            return SkillEffectOutcome.Applied(effect.Kind, damage, before, after);
+            // The authored type is carried into the outcome so presentation can tell a
+            // blow from a spell. Nothing about the calculation changes.
+            return SkillEffectOutcome.Applied(effect.Kind, damage, before, after, effect.DamageType);
         }
 
         private static SkillEffectOutcome ApplyHeal(in SkillEffect effect, ICombatant caster,

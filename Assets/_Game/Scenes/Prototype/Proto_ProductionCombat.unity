@@ -551,6 +551,7 @@ GameObject:
   - component: {fileID: 649310996}
   - component: {fileID: 649310998}
   - component: {fileID: 649310997}
+  - component: {fileID: 649310999}
   m_Layer: 0
   m_Name: PROTO_Male
   m_TagString: Untagged
@@ -638,7 +639,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 649310989}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: eab972b65ca4b494d8eb91989110af55, type: 3}
   m_Name: 
@@ -737,6 +738,21 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 09136e4c2118f504793513a4d5472e2e, type: 2}
   - {fileID: 11400000, guid: 0255b0c111fe82f4e844d0f45f43c55f, type: 2}
   characterLevel: 10
+--- !u!114 &649310999
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 649310989}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f18748c01445c7a48ab0b2981002b4e2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.Combat.CombatPresenter
+  animator: {fileID: 619209143}
+  config: {fileID: 11400000, guid: da27385490d9bba4b98a5fff24acaac7, type: 2}
+  presentationAnchor: {fileID: 649310990}
 --- !u!1 &769384316
 GameObject:
   m_ObjectHideFlags: 0
@@ -897,6 +913,7 @@ GameObject:
   - component: {fileID: 1093769054}
   - component: {fileID: 1093769056}
   - component: {fileID: 1093769055}
+  - component: {fileID: 1093769057}
   m_Layer: 0
   m_Name: PROTO_Female
   m_TagString: Untagged
@@ -984,7 +1001,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1093769047}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: eab972b65ca4b494d8eb91989110af55, type: 3}
   m_Name: 
@@ -1083,6 +1100,21 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 09136e4c2118f504793513a4d5472e2e, type: 2}
   - {fileID: 11400000, guid: 0255b0c111fe82f4e844d0f45f43c55f, type: 2}
   characterLevel: 10
+--- !u!114 &1093769057
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1093769047}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f18748c01445c7a48ab0b2981002b4e2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.Combat.CombatPresenter
+  animator: {fileID: 578113887}
+  config: {fileID: 11400000, guid: da27385490d9bba4b98a5fff24acaac7, type: 2}
+  presentationAnchor: {fileID: 1093769050}
 --- !u!1 &1394427793
 GameObject:
   m_ObjectHideFlags: 0
@@ -1352,6 +1384,7 @@ GameObject:
   - component: {fileID: 1807004779}
   - component: {fileID: 1807004780}
   - component: {fileID: 1807004781}
+  - component: {fileID: 1807004782}
   m_Layer: 0
   m_Name: ProtoSystems
   m_TagString: Untagged
@@ -1454,6 +1487,21 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a2ca54be8ab5b814e9f715cb3ec53b08, type: 3}
   m_Name: 
   m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.Prototype.ProtoProductionCombatTest
+  maleDriver: {fileID: 649310997}
+  femaleDriver: {fileID: 1093769055}
+  dummy: {fileID: 1394427799}
+--- !u!114 &1807004782
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1807004775}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e25e9dcb0c5072e43a5ae03207d58f9d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.Prototype.ProtoPresentationRegressionTest
   maleDriver: {fileID: 649310997}
   femaleDriver: {fileID: 1093769055}
   dummy: {fileID: 1394427799}
