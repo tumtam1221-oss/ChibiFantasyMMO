@@ -138,6 +138,9 @@ namespace ChibiFantasy.UI
                 ? LocalizedText.Resolve(text, data.NameKey)
                 : data.DefinitionId.ToString();
 
+            // The enhancement level rides on the name, the way a player expects to read it.
+            if (data.HasEnhancement) name += " +" + data.EnhancementLevel;
+
             return data.Quantity > 1 ? name + " x" + data.Quantity : name;
         }
 
@@ -160,6 +163,15 @@ namespace ChibiFantasy.UI
             builder.Append(data.Category);
 
             if (data.IsEquipment) builder.Append(" / ").Append(data.Slot);
+
+            if (data.HasRarity)
+            {
+                // The tier's own name where it could be resolved, its id otherwise. No
+                // rarity name is written here or anywhere else in the UI.
+                builder.Append(" / ").Append(data.RarityNameKey.IsValid
+                    ? LocalizedText.Resolve(text, data.RarityNameKey)
+                    : data.RarityId.ToString());
+            }
 
             if (data.DescriptionKey.IsValid)
             {
@@ -190,11 +202,48 @@ namespace ChibiFantasy.UI
             if (data.HasClassRestriction) AppendIds(builder, "\nClass: ", data.AllowedClasses);
             if (data.HasJobRestriction) AppendIds(builder, "\nJob: ", data.AllowedJobs);
 
-            for (int i = 0; i < data.StatModifiers.Count; i++)
-            {
-                var modifier = data.StatModifiers[i];
+            AppendModifiers(builder, data.StatModifiers);
 
-                // The authored value verbatim, with the kind named rather than applied.
+            if (data.EnchantCapacity > 0)
+            {
+                builder.Append("\nSockets ").Append(data.FilledEnchantCount)
+                    .Append('/').Append(data.EnchantCapacity);
+
+                for (int i = 0; i < data.Enchants.Count; i++)
+                {
+                    EnchantSlotViewData socket = data.Enchants[i];
+                    if (socket.IsEmpty) continue;
+
+                    builder.Append("\n  [").Append(socket.SocketIndex).Append("] ")
+                        .Append(socket.NameKey.IsValid
+                            ? LocalizedText.Resolve(text, socket.NameKey)
+                            : socket.Stone.ToString());
+
+                    if (socket.Rank > 1) builder.Append(" r").Append(socket.Rank);
+                }
+            }
+
+            // Base, tier, level and stones together -- what this copy is worth, as opposed
+            // to what the item authors. Still not a character's effective stats.
+            if (data.EffectiveModifiers.Count > 0)
+            {
+                builder.Append("\nTotal");
+                AppendModifiers(builder, data.EffectiveModifiers);
+            }
+
+            return builder.ToString();
+        }
+
+        /// <summary>Writes authored modifiers verbatim, one per line.</summary>
+        /// <remarks>The kind is named rather than applied: a tooltip that worked out what a
+        /// Percent modifier came to would be a second stat calculator.</remarks>
+        private static void AppendModifiers(StringBuilder builder,
+            System.Collections.Generic.IReadOnlyList<ChibiFantasy.Core.StatModifier> modifiers)
+        {
+            for (int i = 0; i < modifiers.Count; i++)
+            {
+                ChibiFantasy.Core.StatModifier modifier = modifiers[i];
+
                 builder.Append('\n')
                     .Append(modifier.Stat)
                     .Append(' ')
@@ -204,8 +253,6 @@ namespace ChibiFantasy.UI
                     .Append(modifier.Kind)
                     .Append(')');
             }
-
-            return builder.ToString();
         }
 
         private static void AppendIds(StringBuilder builder, string label,

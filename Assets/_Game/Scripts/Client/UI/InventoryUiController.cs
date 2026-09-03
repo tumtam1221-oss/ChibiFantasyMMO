@@ -54,6 +54,10 @@ namespace ChibiFantasy.Client.UI
         private IDefinitionRegistry<ItemDefinition> _items;
         private IDefinitionRegistry<MapDefinition> _maps;
         private IDefinitionRegistry<StatusEffectDefinition> _statusEffects;
+        private IDefinitionRegistry<RarityDefinition> _rarities;
+        private IDefinitionRegistry<EnhancementDefinition> _enhancements;
+        private IDefinitionRegistry<StoneFusionDefinition> _fusionRecipes;
+        private IRandomResultSource _results;
         private ResourceLimits _limits;
 
         private int _characterLevel = 1;
@@ -993,6 +997,134 @@ namespace ChibiFantasy.Client.UI
             PendingWarpDestination = DefinitionId.None;
         }
 
+        // ---- equipment progression -----------------------------------------------------
+
+        /// <summary>
+        /// Points the UI at the progression content.
+        /// </summary>
+        /// <remarks>Separate from <see cref="Bind"/> so a screen with no enhancement UI
+        /// does not have to supply registries it has no use for. Without them the
+        /// progression commands are refused by their services rather than half-working.</remarks>
+        public void BindProgression(IDefinitionRegistry<RarityDefinition> rarities,
+            IDefinitionRegistry<EnhancementDefinition> enhancements,
+            IDefinitionRegistry<StoneFusionDefinition> fusionRecipes,
+            IRandomResultSource results = null)
+        {
+            _rarities = rarities;
+            _enhancements = enhancements;
+            _fusionRecipes = fusionRecipes;
+            _results = results;
+
+            if (_bound) Refresh();
+        }
+
+        /// <summary>The registries the progression adapter reads through.</summary>
+        public EquipmentProgressionAdapter.Context ProgressionContext =>
+            new EquipmentProgressionAdapter.Context(_items, _rarities, _enhancements,
+                _fusionRecipes);
+
+        /// <summary>The answer to the last enhancement attempted.</summary>
+        public EnhancementResult LastEnhancementResult { get; private set; }
+
+        /// <summary>The answer to the last stone socketed.</summary>
+        public EnchantResult LastEnchantResult { get; private set; }
+
+        /// <summary>The answer to the last fusion run.</summary>
+        public FusionResult LastFusionResult { get; private set; }
+
+        /// <summary>
+        /// What an enhancement panel should draw for a bag slot.
+        /// </summary>
+        /// <remarks>A read. Building a preview resolves modifiers at a level the piece is
+        /// not at, and the resolver is pure, so asking cannot change anything.</remarks>
+        public EnhancementViewData BuildEnhancementView(int inventorySlot)
+        {
+            return EquipmentProgressionAdapter.BuildEnhancement(_inventory, inventorySlot,
+                ProgressionContext);
+        }
+
+        /// <summary>The same, for a worn piece.</summary>
+        public EnhancementViewData BuildEnhancementView(EquipmentSlot slot)
+        {
+            return EquipmentProgressionAdapter.BuildEnhancement(_equipment, slot, _inventory,
+                ProgressionContext);
+        }
+
+        /// <summary>What a fusion panel should draw for a recipe. A read.</summary>
+        public FusionViewData BuildFusionView(DefinitionId recipeId)
+        {
+            return EquipmentProgressionAdapter.BuildFusion(_inventory, recipeId,
+                ProgressionContext);
+        }
+
+        /// <summary>Asks gameplay to enhance the piece in a bag slot.</summary>
+        public EnhancementResult SubmitEnhance(int inventorySlot)
+        {
+            var context = new EnhancementService.Context(_items, _enhancements, _rarities,
+                _results, default);
+
+            LastEnhancementResult = EnhancementService.TryEnhance(_inventory, inventorySlot,
+                context);
+
+            if (LastEnhancementResult.IsAccepted) Selection = ItemSelection.None;
+
+            Refresh();
+            return LastEnhancementResult;
+        }
+
+        /// <summary>Asks gameplay to enhance a worn piece. Costs come from the bag.</summary>
+        public EnhancementResult SubmitEnhance(EquipmentSlot slot)
+        {
+            var context = new EnhancementService.Context(_items, _enhancements, _rarities,
+                _results, default);
+
+            LastEnhancementResult = EnhancementService.TryEnhance(_equipment, slot, _inventory,
+                context);
+
+            Refresh();
+            return LastEnhancementResult;
+        }
+
+        /// <summary>Asks gameplay to socket the stone in one bag slot into the piece in another.</summary>
+        public EnchantResult SubmitEnchant(int equipmentSlot, int stoneSlot)
+        {
+            var context = new EnchantService.Context(_items, _rarities, _results, default);
+
+            LastEnchantResult = EnchantService.TryEnchant(_inventory, equipmentSlot, stoneSlot,
+                context);
+
+            if (LastEnchantResult.IsAccepted) Selection = ItemSelection.None;
+
+            Refresh();
+            return LastEnchantResult;
+        }
+
+        /// <summary>Asks gameplay to socket a stone into a worn piece.</summary>
+        public EnchantResult SubmitEnchant(EquipmentSlot slot, int stoneSlot)
+        {
+            var context = new EnchantService.Context(_items, _rarities, _results, default);
+
+            LastEnchantResult = EnchantService.TryEnchant(_equipment, slot, _inventory, stoneSlot,
+                context);
+
+            Refresh();
+            return LastEnchantResult;
+        }
+
+        /// <summary>Asks gameplay to run a fusion recipe against the bag.</summary>
+        public FusionResult SubmitFusion(DefinitionId recipeId)
+        {
+            var context = new StoneFusionService.Context(_items, _fusionRecipes, _results,
+                _inventory == null ? default : _inventory.Owner);
+
+            LastFusionResult = StoneFusionService.TryFuse(_inventory, recipeId, context);
+
+            if (LastFusionResult.IsAccepted) Selection = ItemSelection.None;
+
+            Refresh();
+            return LastFusionResult;
+        }
+
         // ---- cancel --------------------------------------------------------------------
 
         /// <summary>
@@ -1046,15 +1178,52 @@ namespace ChibiFantasy.Client.UI
             switch (Selection.Source)
             {
                 case ItemSelectionSource.Inventory:
-                    return InventoryViewAdapter.BuildTooltip(_inventory, Selection.SlotIndex, _items, _maps);
+                    return WithProgression(
+                        InventoryViewAdapter.BuildTooltip(_inventory, Selection.SlotIndex, _items, _maps),
+                        PieceAt(_inventory, Selection.SlotIndex));
+
                 case ItemSelectionSource.Storage:
-                    return InventoryViewAdapter.BuildTooltip(_storage, Selection.SlotIndex, _items, _maps);
+                    return WithProgression(
+                        InventoryViewAdapter.BuildTooltip(_storage, Selection.SlotIndex, _items, _maps),
+                        PieceAt(_storage, Selection.SlotIndex));
+
                 case ItemSelectionSource.Equipment:
-                    return InventoryViewAdapter.BuildTooltip(_equipment,
-                        (EquipmentSlot)Selection.SlotIndex, _items);
+                    return WithProgression(
+                        InventoryViewAdapter.BuildTooltip(_equipment,
+                            (EquipmentSlot)Selection.SlotIndex, _items),
+                        WornAt((EquipmentSlot)Selection.SlotIndex));
+
                 default:
                     return ItemTooltipData.None;
             }
+        }
+
+        /// <summary>
+        /// Adds this copy's rarity, level and stones to a tooltip.
+        /// </summary>
+        /// <remarks>A no-op for anything that is not a piece of equipment, and for a screen
+        /// that never bound the progression registries -- the tooltip then shows what the
+        /// item authors and nothing more, which is what it showed before this existed.</remarks>
+        private ItemTooltipData WithProgression(ItemTooltipData tooltip, EquipmentInstance piece)
+        {
+            if (piece == null) return tooltip;
+            return EquipmentProgressionAdapter.WithProgression(tooltip, piece, ProgressionContext);
+        }
+
+        private static EquipmentInstance PieceAt(ItemContainerState container, int slotIndex)
+        {
+            if (container == null || !container.IsValidIndex(slotIndex)) return null;
+
+            ItemSlot slot = container.GetSlot(slotIndex);
+            return slot.IsEmpty ? null : slot.Content as EquipmentInstance;
+        }
+
+        private EquipmentInstance WornAt(EquipmentSlot slot)
+        {
+            if (_equipment == null) return null;
+
+            EquipmentInstance worn;
+            return _equipment.TryGet(slot, out worn) ? worn : null;
         }
 
         // ---- helpers -------------------------------------------------------------------

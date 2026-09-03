@@ -52,6 +52,15 @@ namespace ChibiFantasy.UI
             UseType = useType;
             WarpDestination = warpDestination;
             WarpDestinationName = warpDestinationName;
+
+            // Per-copy progression is layered on afterwards by WithProgression, because
+            // resolving it needs registries the UI assembly does not have.
+            _enchants = NoEnchants;
+            _effective = NoModifiers;
+            EnhancementLevel = 0;
+            RarityId = DefinitionId.None;
+            RarityNameKey = default;
+            EnchantCapacity = 0;
         }
 
         /// <summary>False when there is nothing to show. A view draws nothing rather than throwing.</summary>
@@ -118,6 +127,126 @@ namespace ChibiFantasy.UI
         public LocalizationKey WarpDestinationName { get; }
 
         public bool HasWarpDestination => WarpDestination.IsValid;
+
+        /// <summary>
+        /// This copy's enhancement level. Zero for unenhanced and for anything that is not
+        /// equipment.
+        /// </summary>
+        /// <remarks>Per-copy progression, so it arrives from the instance rather than the
+        /// definition. See <see cref="WithProgression"/>.</remarks>
+        public int EnhancementLevel { get; }
+
+        /// <summary>The tier this copy is actually at, override resolved.</summary>
+        public DefinitionId RarityId { get; }
+
+        /// <summary>The tier's own name key, when the caller could resolve the tier.</summary>
+        public LocalizationKey RarityNameKey { get; }
+
+        /// <summary>Stones socketed into this copy.</summary>
+        public IReadOnlyList<EnchantSlotViewData> Enchants =>
+            _enchants ?? (IReadOnlyList<EnchantSlotViewData>)NoEnchants;
+
+        /// <summary>How many sockets the piece has in total, filled or not.</summary>
+        public int EnchantCapacity { get; }
+
+        /// <summary>
+        /// Everything the piece grants right now.
+        /// </summary>
+        /// <remarks>
+        /// Base, tier, level and stones together, computed by
+        /// <c>EquipmentModifierResolver</c> and copied in. Distinct from
+        /// <see cref="StatModifiers"/>, which is only what the item itself authors: a
+        /// tooltip wants to show both "this sword is worth 10 STR" and "this one, +5 and
+        /// Rare, is worth 25".
+        ///
+        /// Still not a character's effective stats. Nothing here knows the wearer.
+        /// </remarks>
+        public IReadOnlyList<StatModifier> EffectiveModifiers =>
+            _effective ?? (IReadOnlyList<StatModifier>)NoModifiers;
+
+        public bool HasEnhancement => EnhancementLevel > 0;
+
+        public bool HasRarity => RarityId.IsValid;
+
+        /// <summary>
+        /// How many sockets actually hold a stone.
+        /// </summary>
+        /// <remarks><see cref="Enchants"/> carries empty sockets too, so a player can see
+        /// the room left. Counting its length would report a piece with one stone in three
+        /// sockets as full.</remarks>
+        public int FilledEnchantCount
+        {
+            get
+            {
+                IReadOnlyList<EnchantSlotViewData> sockets = Enchants;
+                int filled = 0;
+
+                for (int i = 0; i < sockets.Count; i++)
+                {
+                    if (sockets[i].IsOccupied) filled++;
+                }
+
+                return filled;
+            }
+        }
+
+        public bool HasEnchants => FilledEnchantCount > 0;
+
+        private readonly EnchantSlotViewData[] _enchants;
+        private readonly StatModifier[] _effective;
+
+        private static readonly EnchantSlotViewData[] NoEnchants = new EnchantSlotViewData[0];
+
+        /// <summary>
+        /// Returns a copy carrying this piece's per-copy progression.
+        /// </summary>
+        /// <remarks>
+        /// Separate from <see cref="From"/> because progression needs registries the UI
+        /// assembly does not have -- the tier, the enhancement track, each stone. The
+        /// Client resolves them and layers the result on, which keeps the definition-only
+        /// path working unchanged for every caller that does not care.
+        /// </remarks>
+        public ItemTooltipData WithProgression(int enhancementLevel, DefinitionId rarityId,
+            LocalizationKey rarityNameKey, int enchantCapacity,
+            EnchantSlotViewData[] enchants, StatModifier[] effective)
+        {
+            if (!IsValid) return this;
+
+            return new ItemTooltipData(this, enchants, effective,
+                enhancementLevel < 0 ? 0 : enhancementLevel, rarityId, rarityNameKey,
+                enchantCapacity < 0 ? 0 : enchantCapacity);
+        }
+
+        /// <summary>Copy constructor for <see cref="WithProgression"/>.</summary>
+        private ItemTooltipData(in ItemTooltipData other, EnchantSlotViewData[] enchants,
+            StatModifier[] effective, int enhancementLevel, DefinitionId rarityId,
+            LocalizationKey rarityNameKey, int enchantCapacity)
+        {
+            IsValid = other.IsValid;
+            DefinitionId = other.DefinitionId;
+            NameKey = other.NameKey;
+            DescriptionKey = other.DescriptionKey;
+            Category = other.Category;
+            Quantity = other.Quantity;
+            IsEquipment = other.IsEquipment;
+            Slot = other.Slot;
+            LevelRequirement = other.LevelRequirement;
+            _allowedClasses = other._allowedClasses;
+            _allowedJobs = other._allowedJobs;
+            _modifiers = other._modifiers;
+            IsUsable = other.IsUsable;
+            UseType = other.UseType;
+            WarpDestination = other.WarpDestination;
+            WarpDestinationName = other.WarpDestinationName;
+
+            _enchants = enchants ?? NoEnchants;
+            _effective = effective ?? NoModifiers;
+
+            EnhancementLevel = enhancementLevel;
+            RarityId = rarityId;
+            RarityNameKey = rarityNameKey;
+            EnchantCapacity = enchantCapacity;
+        }
 
         /// <summary>Nothing to show. What a view gets for an empty or stale selection.</summary>
         public static ItemTooltipData None => default;
