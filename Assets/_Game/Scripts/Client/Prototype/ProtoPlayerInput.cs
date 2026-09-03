@@ -16,6 +16,7 @@ namespace ChibiFantasy.Client.Prototype
         private InputAction _move;
         private InputAction _look;
         private InputAction _zoom;
+        private InputAction _attack;
 
         /// <summary>Raw WASD vector. X = strafe, Y = forward/back. Never longer than 1.</summary>
         public Vector2 Move { get; private set; }
@@ -25,6 +26,14 @@ namespace ChibiFantasy.Client.Prototype
 
         /// <summary>Mouse wheel delta for this frame.</summary>
         public float Zoom { get; private set; }
+
+        /// <summary>
+        /// True on the frame the attack button went down.
+        /// </summary>
+        /// <remarks>An edge, not a level, so holding the button does not queue a swing every
+        /// frame. Pacing is still enforced by the combat state machine; this only keeps the
+        /// controller from asking a hundred times a second.</remarks>
+        public bool AttackPressed { get; private set; }
 
         public bool IsReady => _map != null;
 
@@ -45,6 +54,10 @@ namespace ChibiFantasy.Client.Prototype
             _move = _map.FindAction("Move", true);
             _look = _map.FindAction("Look", true);
             _zoom = _map.FindAction("Zoom", true);
+
+            // Optional: an older ProtoControls asset without the combat action must still
+            // drive movement rather than throwing on load.
+            _attack = _map.FindAction("Attack", false);
         }
 
         private void OnEnable()
@@ -58,6 +71,7 @@ namespace ChibiFantasy.Client.Prototype
             Move = Vector2.zero;
             Look = Vector2.zero;
             Zoom = 0f;
+            AttackPressed = false;
         }
 
         private void Update()
@@ -73,6 +87,7 @@ namespace ChibiFantasy.Client.Prototype
             Move = move;
             Look = _look.ReadValue<Vector2>();
             Zoom = _zoom.ReadValue<float>();
+            AttackPressed = _attack != null && _attack.WasPressedThisFrame();
         }
     }
 }
