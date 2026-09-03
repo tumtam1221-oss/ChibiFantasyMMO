@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8286160a286578e4791feb66dfb11b3c, type: 3}
+  m_Name: ProtoMovementSettings
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.Prototype.ProtoMovementSettings
+  walkSpeed: 1.2
+  runSpeed: 2.4
+  rotationSpeed: 720
+  acceleration: 12
+  deceleration: 16
+  gravity: -9.81
+  groundedStickVelocity: -2
+  groundCheckDistance: 0.15
+  groundCheckRadius: 0.12
+  referenceWalkClipSpeed: 0.55
+  minAnimatorSpeed: 0.5
+  maxAnimatorSpeed: 2.5

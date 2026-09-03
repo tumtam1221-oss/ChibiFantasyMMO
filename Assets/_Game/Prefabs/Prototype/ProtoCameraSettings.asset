@@ -1,0 +1,31 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0fc1a18ae7345c840abd6d4d712dc66d, type: 3}
+  m_Name: ProtoCameraSettings
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.Prototype.ProtoCameraSettings
+  followHeight: 0.85
+  defaultDistance: 3
+  minDistance: 1.2
+  maxDistance: 6
+  pitchMin: -20
+  pitchMax: 60
+  startPitch: 15
+  orbitSensitivityX: 0.15
+  orbitSensitivityY: 0.12
+  zoomSensitivity: 0.004
+  positionSmoothTime: 0.06
+  zoomSmoothTime: 0.1
+  collisionRadius: 0.2
+  minHeightAboveGround: 0.25
+  collisionMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
