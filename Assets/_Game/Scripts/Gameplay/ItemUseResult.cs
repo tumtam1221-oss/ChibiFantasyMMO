@@ -127,7 +127,7 @@ namespace ChibiFantasy.Gameplay
     {
         private ItemUseResult(bool accepted, ItemUseRejection reason, DefinitionId definitionId,
             InstanceId instanceId, int consumed, int health, int mana, int buffs,
-            DefinitionId destination)
+            DefinitionId destination, DefinitionId destinationSpawn)
         {
             IsAccepted = accepted;
             Reason = reason;
@@ -138,6 +138,7 @@ namespace ChibiFantasy.Gameplay
             ManaRestored = mana;
             BuffsGranted = buffs;
             WarpDestination = destination;
+            WarpDestinationSpawn = destinationSpawn;
         }
 
         public bool IsAccepted { get; }
@@ -169,22 +170,31 @@ namespace ChibiFantasy.Gameplay
         /// travel is a later system and, in a served game, the server's call.</remarks>
         public DefinitionId WarpDestination { get; }
 
+        /// <summary>
+        /// The authored place an accepted warp arrives at.
+        /// </summary>
+        /// <remarks>Resolved by the service from the destination map, so the client places
+        /// the traveller at a point content authored rather than inventing one. Invalid when
+        /// no spawn registry was supplied, in which case only the map was validated.</remarks>
+        public DefinitionId WarpDestinationSpawn { get; }
+
         public bool HasWarp => WarpDestination.IsValid;
 
         public bool RestoredAnything => HealthRestored > 0 || ManaRestored > 0;
 
         public static ItemUseResult Accepted(DefinitionId definitionId, InstanceId instanceId,
-            int health = 0, int mana = 0, int buffs = 0, DefinitionId destination = default)
+            int health = 0, int mana = 0, int buffs = 0, DefinitionId destination = default,
+            DefinitionId destinationSpawn = default)
         {
             return new ItemUseResult(true, ItemUseRejection.None, definitionId, instanceId,
-                1, health, mana, buffs, destination);
+                1, health, mana, buffs, destination, destinationSpawn);
         }
 
         public static ItemUseResult Rejected(ItemUseRejection reason,
             DefinitionId definitionId = default, InstanceId instanceId = default)
         {
             return new ItemUseResult(false, reason, definitionId, instanceId,
-                0, 0, 0, 0, default);
+                0, 0, 0, 0, default, default);
         }
 
         public override string ToString()

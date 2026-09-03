@@ -34,6 +34,7 @@ namespace ChibiFantasy.Gameplay
                 CharacterResourceState resources, ResourceLimits limits,
                 IDefinitionRegistry<StatusEffectDefinition> statusEffects = null,
                 IDefinitionRegistry<MapDefinition> maps = null,
+                IDefinitionRegistry<SpawnPointDefinition> spawnPoints = null,
                 OwnerId owner = default,
                 List<ItemBuffGrant> grantedBuffs = null)
             {
@@ -42,6 +43,7 @@ namespace ChibiFantasy.Gameplay
                 Limits = limits;
                 StatusEffects = statusEffects;
                 Maps = maps;
+                SpawnPoints = spawnPoints;
                 Owner = owner;
                 GrantedBuffs = grantedBuffs;
             }
@@ -63,6 +65,15 @@ namespace ChibiFantasy.Gameplay
 
             /// <summary>Needed only by items that warp.</summary>
             public IDefinitionRegistry<MapDefinition> Maps { get; }
+
+            /// <summary>
+            /// Where a warp destination resolves to a place to stand.
+            /// </summary>
+            /// <remarks>Optional, so a caller with no world content still gets the town
+            /// check. Supplied, it adds the stricter one: a town with no authored player
+            /// spawn is refused rather than warped to, because the client would otherwise
+            /// have to invent a position.</remarks>
+            public IDefinitionRegistry<SpawnPointDefinition> SpawnPoints { get; }
 
             /// <summary>
             /// Who is acting.
@@ -132,6 +143,7 @@ namespace ChibiFantasy.Gameplay
             int plannedMana = 0;
             int plannedBuffs = 0;
             DefinitionId plannedWarp = default;
+            DefinitionId plannedWarpSpawn = default;
 
             for (int i = 0; i < effects.Length; i++)
             {
@@ -187,9 +199,25 @@ namespace ChibiFantasy.Gameplay
                             return ItemUseResult.Rejected(ItemUseRejection.InvalidDestination, id, instance.InstanceId);
 
                         // The game rule, read off the map rather than off the item: a scroll
-                        // reaches towns. Fields and boss areas are walked to.
-                        if (!map.IsTown || map.Category != MapCategory.Town || map.IsBossArea)
+                        // reaches towns. Fields and boss areas are walked to. Asked of
+                        // TravelService so travel and item use cannot disagree about what a
+                        // town is.
+                        if (!TravelService.IsTown(map))
                             return ItemUseResult.Rejected(ItemUseRejection.WarpNotAllowed, id, instance.InstanceId);
+
+                        // A destination with nowhere to stand is not a destination. Refusing
+                        // here is what keeps a scroll from being spent on a map the client
+                        // would then have to place the player on by guessing.
+                        if (context.SpawnPoints != null)
+                        {
+                            SpawnPointDefinition arrival = TravelService.FindPlayerSpawn(
+                                effect.DestinationMap, context.SpawnPoints);
+
+                            if (arrival == null)
+                                return ItemUseResult.Rejected(ItemUseRejection.InvalidDestination, id, instance.InstanceId);
+
+                            plannedWarpSpawn = arrival.Id;
+                        }
 
                         if (plannedWarp.IsValid)
                             return ItemUseResult.Rejected(ItemUseRejection.InvalidEffect, id, instance.InstanceId);
@@ -259,7 +287,8 @@ namespace ChibiFantasy.Gameplay
             // and a quantity of at least one were all established above.
             inventory.RemoveAt(slotIndex, 1);
 
-            return ItemUseResult.Accepted(id, used, actualHealth, actualMana, grants, plannedWarp);
+            return ItemUseResult.Accepted(id, used, actualHealth, actualMana, grants, plannedWarp,
+                plannedWarpSpawn);
         }
 
         /// <summary>

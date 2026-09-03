@@ -19,6 +19,7 @@ namespace ChibiFantasy.Tests.EditMode
         protected DefinitionRegistry<ItemDefinition> Items;
         protected DefinitionRegistry<StatusEffectDefinition> StatusEffects;
         protected DefinitionRegistry<MapDefinition> Maps;
+        protected DefinitionRegistry<SpawnPointDefinition> SpawnPoints;
         protected DefinitionRegistry<RarityDefinition> Rarities;
         protected DefinitionRegistry<EnhancementDefinition> Enhancements;
         protected DefinitionRegistry<StoneFusionDefinition> FusionRecipes;
@@ -43,6 +44,7 @@ namespace ChibiFantasy.Tests.EditMode
             Items = new DefinitionRegistry<ItemDefinition>();
             StatusEffects = new DefinitionRegistry<StatusEffectDefinition>();
             Maps = new DefinitionRegistry<MapDefinition>();
+            SpawnPoints = new DefinitionRegistry<SpawnPointDefinition>();
             Rarities = new DefinitionRegistry<RarityDefinition>();
             Enhancements = new DefinitionRegistry<EnhancementDefinition>();
             FusionRecipes = new DefinitionRegistry<StoneFusionDefinition>();
@@ -142,6 +144,31 @@ namespace ChibiFantasy.Tests.EditMode
             _created.Add(definition);
             StatusEffects.Register(definition);
             return definition;
+        }
+
+        /// <summary>
+        /// Authors a place on a map.
+        /// </summary>
+        /// <remarks>A warp destination needs one: a town with nowhere to stand is refused
+        /// rather than warped to, so the town fixtures author theirs explicitly.</remarks>
+        protected SpawnPointDefinition AddSpawnPoint(string id, string map,
+            SpawnType type = SpawnType.Player, float x = 0f, float y = 0f, float z = 0f)
+        {
+            var definition = ScriptableObject.CreateInstance<SpawnPointDefinition>();
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"" + id + "\"},\"_map\":{\"_value\":\"" + map + "\"},"
+                + "\"_spawnType\":" + (int)type
+                + ",\"_x\":" + F(x) + ",\"_y\":" + F(y) + ",\"_z\":" + F(z) + "}", definition);
+
+            _created.Add(definition);
+            SpawnPoints.Register(definition);
+            return definition;
+        }
+
+        /// <summary>Invariant-culture float, so a comma locale cannot break the JSON.</summary>
+        protected static string F(float value)
+        {
+            return value.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
         /// <summary>Authors a map a warp scroll can point at.</summary>

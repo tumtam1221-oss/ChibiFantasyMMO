@@ -54,6 +54,7 @@ namespace ChibiFantasy.Client.UI
         private IDefinitionRegistry<ItemDefinition> _items;
         private IDefinitionRegistry<MapDefinition> _maps;
         private IDefinitionRegistry<StatusEffectDefinition> _statusEffects;
+        private IDefinitionRegistry<SpawnPointDefinition> _spawnPoints;
         private IDefinitionRegistry<RarityDefinition> _rarities;
         private IDefinitionRegistry<EnhancementDefinition> _enhancements;
         private IDefinitionRegistry<StoneFusionDefinition> _fusionRecipes;
@@ -125,7 +126,8 @@ namespace ChibiFantasy.Client.UI
             DefinitionId characterJob = default,
             CharacterResourceState resources = null, ResourceLimits limits = default,
             IDefinitionRegistry<MapDefinition> maps = null,
-            IDefinitionRegistry<StatusEffectDefinition> statusEffects = null)
+            IDefinitionRegistry<StatusEffectDefinition> statusEffects = null,
+            IDefinitionRegistry<SpawnPointDefinition> spawnPoints = null)
         {
             _inventory = inventory;
             _storage = storage;
@@ -138,6 +140,7 @@ namespace ChibiFantasy.Client.UI
             _limits = limits;
             _maps = maps;
             _statusEffects = statusEffects;
+            _spawnPoints = spawnPoints;
 
             Selection = ItemSelection.None;
             Drag = ItemDragPayload.None;
@@ -973,7 +976,7 @@ namespace ChibiFantasy.Client.UI
             _grantedBuffs.Clear();
 
             var context = new ItemUseService.Context(_items, _resources, _limits,
-                _statusEffects, _maps, default, _grantedBuffs);
+                _statusEffects, _maps, _spawnPoints, default, _grantedBuffs);
 
             LastUseResult = ItemUseService.Use(_inventory, inventorySlot, context);
 

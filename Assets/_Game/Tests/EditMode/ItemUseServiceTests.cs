@@ -90,6 +90,11 @@ namespace ChibiFantasy.Tests.EditMode
             AddMap(FieldA, MapCategory.Field, isTown: false);
             AddMap(BossA, MapCategory.BossArena, isTown: false, isBossArea: true);
 
+            // A warp destination must resolve to somewhere to stand, so the towns author
+            // arrival points. A town without one is a separate test.
+            AddSpawnPoint("spawn.town.a", TownA);
+            AddSpawnPoint("spawn.town.b", TownB);
+
             AddUsable(TownScroll, ItemUseType.WarpTown, new[]
             {
                 new ItemUseEffect(ItemEffectKind.WarpToMap,
@@ -131,7 +136,7 @@ namespace ChibiFantasy.Tests.EditMode
         private ItemUseService.Context Context(OwnerId owner = default)
         {
             return new ItemUseService.Context(Items, _resources, _limits,
-                StatusEffects, Maps, owner, _grants);
+                StatusEffects, Maps, SpawnPoints, owner, _grants);
         }
 
         private ItemContainerState WithStack(string id, int quantity, out ItemContainerState made)
@@ -516,7 +521,7 @@ namespace ChibiFantasy.Tests.EditMode
             WithStack(TownScroll, 1, out bag);
 
             var noMaps = new ItemUseService.Context(Items, _resources, _limits,
-                StatusEffects, null, default, _grants);
+                StatusEffects, null, SpawnPoints, default, _grants);
 
             Assert.That(ItemUseService.Use(bag, 0, noMaps).Reason,
                 Is.EqualTo(ItemUseRejection.MissingContext));
@@ -652,7 +657,7 @@ namespace ChibiFantasy.Tests.EditMode
             // A registry that no longer knows the item: what a content patch looks like.
             var emptyRegistry = new DefinitionRegistry<ItemDefinition>();
             var context = new ItemUseService.Context(emptyRegistry, _resources, _limits,
-                StatusEffects, Maps, default, _grants);
+                StatusEffects, Maps, SpawnPoints, default, _grants);
 
             Assert.That(ItemUseService.Use(bag, 0, context).Reason,
                 Is.EqualTo(ItemUseRejection.UnknownDefinition));
@@ -702,7 +707,7 @@ namespace ChibiFantasy.Tests.EditMode
             WithStack(StrengthFood, 2, out bag);
 
             var noStatus = new ItemUseService.Context(Items, _resources, _limits,
-                null, Maps, default, _grants);
+                null, Maps, SpawnPoints, default, _grants);
 
             Assert.That(ItemUseService.Use(bag, 0, noStatus).Reason,
                 Is.EqualTo(ItemUseRejection.MissingContext));
