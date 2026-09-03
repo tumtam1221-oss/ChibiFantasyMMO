@@ -63,6 +63,7 @@ namespace ChibiFantasy.Data
         [SerializeField] private SkillEffectKind _kind;
         [SerializeField] private DefinitionId _reference;
         [SerializeField] private ElementType _element;
+        [SerializeField] private DamageType _damageType;
         [SerializeField] private SkillResourceType _resource;
         [SerializeField] private int _flatAmount;
         [SerializeField] private StatTerm[] _scaling;
@@ -80,6 +81,14 @@ namespace ChibiFantasy.Data
 
         /// <summary>Element of a damage effect. Neutral where it does not apply.</summary>
         public ElementType Element => _element;
+
+        /// <summary>
+        /// Which defence answers a damage effect.
+        /// </summary>
+        /// <remarks>Independent of <see cref="Element"/>: a fire sword and a fire spell
+        /// share an element and are resisted differently. Unused by every kind except
+        /// <see cref="SkillEffectKind.Damage"/>.</remarks>
+        public DamageType DamageType => _damageType;
 
         /// <summary>Which pool a heal or resource change touches.</summary>
         public SkillResourceType Resource => _resource;
@@ -101,13 +110,27 @@ namespace ChibiFantasy.Data
         /// <summary>The change a stat-modifying effect makes.</summary>
         public StatModifier StatModifier => _statModifier;
 
-        /// <summary>Damage of an element, from a flat amount and optional stat scaling.</summary>
-        public static SkillEffect Damage(int flatAmount, ElementType element, StatTerm[] scaling = null)
+        /// <summary>
+        /// Damage of an element, from a flat amount and optional stat scaling.
+        /// </summary>
+        /// <remarks>
+        /// <paramref name="damageType"/> is a trailing optional so that content and tests
+        /// written before it existed still compile and still mean what they meant: an
+        /// ordinary physical blow.
+        ///
+        /// There is deliberately no separate MagicDamage factory. A magic skill is this
+        /// same effect with <see cref="DamageType.Magic"/> and scaling terms that read a
+        /// magic-power stat, which is why the runtime needs one damage path rather than
+        /// two.
+        /// </remarks>
+        public static SkillEffect Damage(int flatAmount, ElementType element,
+            StatTerm[] scaling = null, DamageType damageType = DamageType.Physical)
         {
             return new SkillEffect
             {
                 _kind = SkillEffectKind.Damage,
                 _element = element,
+                _damageType = damageType,
                 _flatAmount = flatAmount,
                 _scaling = scaling ?? new StatTerm[0]
             };

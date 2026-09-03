@@ -19,19 +19,45 @@ namespace ChibiFantasy.Gameplay
     public readonly struct SkillExecutionRules
     {
         public SkillExecutionRules(DefinitionId defenseStat, int minimumDamage)
+            : this(defenseStat, DefinitionId.None, minimumDamage)
+        {
+        }
+
+        public SkillExecutionRules(DefinitionId defenseStat, DefinitionId magicDefenseStat,
+            int minimumDamage)
         {
             DefenseStat = defenseStat;
+            MagicDefenseStat = magicDefenseStat;
             MinimumDamage = minimumDamage < 0 ? 0 : minimumDamage;
         }
 
-        /// <summary>Id of the stat read from the target to resist damage.</summary>
+        /// <summary>Id of the stat that resists <see cref="DamageType.Physical"/> damage.</summary>
         public DefinitionId DefenseStat { get; }
+
+        /// <summary>
+        /// Id of the stat that resists <see cref="DamageType.Magic"/> damage.
+        /// </summary>
+        /// <remarks>A second id rather than a second formula. Which stat defends is
+        /// content; how damage is computed is not, and there is only one of those.</remarks>
+        public DefinitionId MagicDefenseStat { get; }
 
         /// <summary>Floor applied after subtraction. Never negative.</summary>
         public int MinimumDamage { get; }
 
         /// <summary>No defending stat and no floor: damage lands as authored.</summary>
         public static SkillExecutionRules None => default;
+
+        /// <summary>
+        /// The defence stat that answers a damage type.
+        /// </summary>
+        /// <remarks>The single place the physical/magic choice is made. Having it here
+        /// rather than inline in the executor is what makes it testable on its own and
+        /// what stops the two ever being crossed.
+        /// <see cref="DamageType.None"/> resolves as physical; see that type for why.</remarks>
+        public DefinitionId DefenseStatFor(DamageType damageType)
+        {
+            return damageType == DamageType.Magic ? MagicDefenseStat : DefenseStat;
+        }
     }
 
     /// <summary>
@@ -162,10 +188,17 @@ namespace ChibiFantasy.Gameplay
         private static SkillEffectOutcome ApplyDamage(in SkillEffect effect, ICombatant caster,
             ICombatant target, in SkillExecutionRules rules)
         {
+            // Power is flat plus authored scaling. Which stat that scaling reads is what
+            // makes a skill physical or magical on the attacking side; the damage type
+            // decides only which defence answers it.
             int power = SkillAmountCalculator.CalculateMagnitude(effect, caster);
-            int defense = rules.DefenseStat.IsValid
-                && target.TryGetCombatStat(rules.DefenseStat, out int value) ? value : 0;
 
+            DefinitionId defenseStat = rules.DefenseStatFor(effect.DamageType);
+            int defense = defenseStat.IsValid
+                && target.TryGetCombatStat(defenseStat, out int value) ? value : 0;
+
+            // One formula for basic attacks and for both damage types. Physical and magic
+            // differ in which stats they read, never in how the subtraction is done.
             int damage = BasicDamageFormula.Calculate(power, defense, rules.MinimumDamage);
 
             int before = target.CurrentHealth;

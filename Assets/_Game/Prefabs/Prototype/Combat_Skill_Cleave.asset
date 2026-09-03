@@ -1,0 +1,86 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0c8a460d67bf6aa49ab75a939baa879e, type: 3}
+  m_Name: Combat_Skill_Cleave
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.SkillDefinition
+  _id:
+    _value: combat.skill.cleave
+  _nameKey:
+    _key: 
+  _descriptionKey:
+    _key: 
+  _icon:
+    _address: 
+  _category: 1
+  _targetType: 3
+  _maxLevel: 2
+  _resourceType: 1
+  _baseResourceCost: 0
+  _cooldownSeconds: 0
+  _castTimeSeconds: 1
+  _range: 3
+  _requiredClass:
+    _value: 
+  _requiredJob:
+    _value: 
+  _prerequisites: []
+  _levels:
+  - _level: 1
+    _requiredCharacterLevel: 1
+    _resourceCost: 10
+    _cooldownSeconds: 2
+    _effects:
+    - _kind: 1
+      _reference:
+        _value: 
+      _element: 0
+      _damageType: 1
+      _resource: 0
+      _flatAmount: 30
+      _scaling:
+      - _source:
+          _value: stat.atk
+        _numerator: 1
+        _denominator: 1
+      _statModifier:
+        _stat:
+          _value: 
+        _kind: 0
+        _value: 0
+  - _level: 2
+    _requiredCharacterLevel: 1
+    _resourceCost: 14
+    _cooldownSeconds: 1.5
+    _effects:
+    - _kind: 1
+      _reference:
+        _value: 
+      _element: 0
+      _damageType: 1
+      _resource: 0
+      _flatAmount: 60
+      _scaling:
+      - _source:
+          _value: stat.atk
+        _numerator: 1
+        _denominator: 1
+      _statModifier:
+        _stat:
+          _value: 
+        _kind: 0
+        _value: 0
+  _animation:
+    _address: 
+  _visualEffect:
+    _address: 
+  _soundEffect:
+    _address: 
