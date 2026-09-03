@@ -57,6 +57,10 @@ namespace ChibiFantasy.Data
         [Tooltip("What it does, in authored order. Empty means nothing happens.")]
         [SerializeField] private ItemUseEffect[] _useEffects = new ItemUseEffect[0];
 
+        [Header("Status stone")]
+        [Tooltip("Socketing rules. Meaningful only when Category is StatusStone.")]
+        [SerializeField] private StatusStoneConfig _stoneConfig;
+
         public LocalizationKey NameKey => _nameKey;
 
         public LocalizationKey DescriptionKey => _descriptionKey;
@@ -111,6 +115,23 @@ namespace ChibiFantasy.Data
         /// which is refused as unusable rather than crashing a save.
         /// </remarks>
         public ItemUseEffect[] UseEffects => _useEffects ?? NoEffects;
+
+        /// <summary>
+        /// Socketing rules, when this item is a status stone.
+        /// </summary>
+        /// <remarks>Meaningful only alongside <see cref="ItemCategory.StatusStone"/>.
+        /// <see cref="IsStatusStone"/> is the question callers should ask; reading this
+        /// block off a potion returns an empty configuration rather than throwing.</remarks>
+        public StatusStoneConfig StoneConfig => _stoneConfig;
+
+        /// <summary>
+        /// Whether this item can be socketed into equipment.
+        /// </summary>
+        /// <remarks>The authored category is what decides, not the presence of a
+        /// configuration: a stone with no modifiers yet is still a stone, and an item
+        /// mis-categorised as a potion must not become socketable because someone filled
+        /// in the block by accident.</remarks>
+        public bool IsStatusStone => _category == ItemCategory.StatusStone;
 
         private static readonly ItemUseEffect[] NoEffects = new ItemUseEffect[0];
     }

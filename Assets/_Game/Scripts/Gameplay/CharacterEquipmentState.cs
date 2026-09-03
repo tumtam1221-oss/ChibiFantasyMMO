@@ -109,9 +109,11 @@ namespace ChibiFantasy.Gameplay
         /// duplicated here, which is why equipping a sword changes effective stats without
         /// a single line of stat arithmetic in this file.
         ///
-        /// Enhancement is deliberately not read. <see cref="EquipmentInstance.EnhancementLevel"/>
-        /// exists in the schema and will one day scale these; that is a later phase and
-        /// pretending to support it now would produce numbers nobody authored.
+        /// Enhancement, rarity and sockets are deliberately not read by <em>this</em>
+        /// overload. It is the base-only view and its behaviour is frozen: callers that
+        /// predate equipment progression keep getting exactly what they got before. The
+        /// overload taking an <see cref="EquipmentModifierResolver.Context"/> is the one
+        /// that includes them, and a caller opts in by supplying the registries it needs.
         ///
         /// The list is rebuilt from the equipped set every call, so it cannot drift and a
         /// double equip cannot leave a stale contribution behind.
@@ -148,6 +150,45 @@ namespace ChibiFantasy.Gameplay
         {
             var list = new List<StatModifier>();
             CollectModifiers(items, list);
+            return list;
+        }
+
+        /// <summary>
+        /// Gathers every modifier the worn set grants, progression included.
+        /// </summary>
+        /// <remarks>
+        /// <b>The same seam, widened.</b> This is the base-only overload plus rarity,
+        /// enhancement and socketed stones, delegated per piece to
+        /// <see cref="EquipmentModifierResolver"/>. It performs no stat arithmetic, and
+        /// <see cref="DerivedStatsCalculator"/> is still the only thing that decides how
+        /// modifiers combine -- so equipment progression reaches effective stats without a
+        /// second stat pipeline existing.
+        ///
+        /// <b>Rebuilt from the equipped set every call.</b> That is what makes drift
+        /// impossible: nothing is remembered between calls, so unequipping and re-equipping
+        /// cannot double a contribution, and enhancing from +1 to +5 replaces the
+        /// contribution rather than adding to it.
+        /// </remarks>
+        public void CollectModifiers(in EquipmentModifierResolver.Context context,
+            List<StatModifier> into)
+        {
+            if (into == null) return;
+
+            into.Clear();
+
+            if (!context.IsUsable) return;
+
+            foreach (KeyValuePair<EquipmentSlot, EquipmentInstance> pair in _equipped)
+            {
+                EquipmentModifierResolver.Collect(pair.Value, context, into);
+            }
+        }
+
+        /// <summary>Convenience overload that allocates the list.</summary>
+        public List<StatModifier> CollectModifiers(in EquipmentModifierResolver.Context context)
+        {
+            var list = new List<StatModifier>();
+            CollectModifiers(context, list);
             return list;
         }
 

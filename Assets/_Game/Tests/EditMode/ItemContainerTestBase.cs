@@ -19,6 +19,9 @@ namespace ChibiFantasy.Tests.EditMode
         protected DefinitionRegistry<ItemDefinition> Items;
         protected DefinitionRegistry<StatusEffectDefinition> StatusEffects;
         protected DefinitionRegistry<MapDefinition> Maps;
+        protected DefinitionRegistry<RarityDefinition> Rarities;
+        protected DefinitionRegistry<EnhancementDefinition> Enhancements;
+        protected DefinitionRegistry<StoneFusionDefinition> FusionRecipes;
         protected OwnerId Owner;
         private List<Object> _created;
 
@@ -40,6 +43,9 @@ namespace ChibiFantasy.Tests.EditMode
             Items = new DefinitionRegistry<ItemDefinition>();
             StatusEffects = new DefinitionRegistry<StatusEffectDefinition>();
             Maps = new DefinitionRegistry<MapDefinition>();
+            Rarities = new DefinitionRegistry<RarityDefinition>();
+            Enhancements = new DefinitionRegistry<EnhancementDefinition>();
+            FusionRecipes = new DefinitionRegistry<StoneFusionDefinition>();
             _created = new List<Object>();
             Owner = new OwnerId("account:test");
 
@@ -154,12 +160,167 @@ namespace ChibiFantasy.Tests.EditMode
             return definition;
         }
 
-        protected static void SetPrivate(Object target, string field, object value)
+        // ---- PHASE 09 fixtures: equipment progression ----------------------------------
+        // Every number below is authored on a definition. No service knows any of them.
+
+        /// <summary>Authors a rarity tier.</summary>
+        protected RarityDefinition AddRarity(string id, int order,
+            StatModifier[] modifiers = null, int bonusSlots = 0, int maxEnhancement = 0)
         {
-            target.GetType()
+            var definition = ScriptableObject.CreateInstance<RarityDefinition>();
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"" + id + "\"},\"_nameKey\":{\"_key\":\"" + id + ".name\"},"
+                + "\"_order\":" + order
+                + ",\"_bonusEnchantSlots\":" + bonusSlots
+                + ",\"_maxEnhancementLevel\":" + maxEnhancement + "}", definition);
+
+            if (modifiers != null) SetPrivate(definition, "_statModifiers", modifiers);
+
+            _created.Add(definition);
+            Rarities.Register(definition);
+            return definition;
+        }
+
+        /// <summary>Authors an enhancement track from a list of steps.</summary>
+        protected EnhancementDefinition AddEnhancementRule(string id, int maxLevel,
+            EnhancementStep[] steps)
+        {
+            var definition = ScriptableObject.CreateInstance<EnhancementDefinition>();
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"" + id + "\"},\"_nameKey\":{\"_key\":\"" + id + ".name\"},"
+                + "\"_minLevel\":0,\"_maxLevel\":" + maxLevel + "}", definition);
+
+            SetPrivate(definition, "_steps", steps ?? new EnhancementStep[0]);
+
+            _created.Add(definition);
+            Enhancements.Register(definition);
+            return definition;
+        }
+
+        /// <summary>
+        /// Builds one authored enhancement step.
+        /// </summary>
+        /// <remarks><see cref="EnhancementStep"/> has only private serialized fields and no
+        /// constructor, so a fixture is filled the same way Unity would fill it.</remarks>
+        protected static EnhancementStep Step(int fromLevel, float successChance,
+            StatModifier[] granted = null, string materialItem = null, int materialAmount = 0,
+            int currencyCost = 0,
+            EnhancementFailureBehavior failure = EnhancementFailureBehavior.LoseMaterials)
+        {
+            object boxed = new EnhancementStep();
+            SetStructField(ref boxed, "_fromLevel", fromLevel);
+            SetStructField(ref boxed, "_successChance", successChance);
+            SetStructField(ref boxed, "_failureBehavior", failure);
+            SetStructField(ref boxed, "_grantedModifiers", granted ?? new StatModifier[0]);
+            SetStructField(ref boxed, "_materialItem",
+                materialItem == null ? default(DefinitionId) : new DefinitionId(materialItem));
+            SetStructField(ref boxed, "_materialAmount", materialAmount);
+            SetStructField(ref boxed, "_currencyCost", currencyCost);
+            return (EnhancementStep)boxed;
+        }
+
+        /// <summary>Authors a status stone as an ordinary inventory item.</summary>
+        protected ItemDefinition AddStone(string id, StatModifier[] modifiers,
+            float successChance = 0f, int maxPerEquipment = 1, bool fusable = true,
+            EquipmentCategory category = EquipmentCategory.None,
+            EquipmentSlot[] slots = null, DefinitionId[] rarities = null,
+            EnchantFailureBehavior failure = EnchantFailureBehavior.LoseStone,
+            int maxStack = 99)
+        {
+            var definition = ScriptableObject.CreateInstance<ItemDefinition>();
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"" + id + "\"},\"_nameKey\":{\"_key\":\"" + id + ".name\"},"
+                + "\"_stackable\":true,\"_maxStackSize\":" + maxStack
+                + ",\"_category\":" + (int)ItemCategory.StatusStone + "}", definition);
+
+            object config = new StatusStoneConfig();
+            SetStructField(ref config, "_statModifiers", modifiers ?? new StatModifier[0]);
+            SetStructField(ref config, "_successChance", successChance);
+            SetStructField(ref config, "_failureBehavior", failure);
+            SetStructField(ref config, "_allowedCategory", category);
+            SetStructField(ref config, "_allowedSubtypes", new EquipmentSubtype[0]);
+            SetStructField(ref config, "_allowedSlots", slots ?? new EquipmentSlot[0]);
+            SetStructField(ref config, "_allowedRarities", rarities ?? new DefinitionId[0]);
+            SetStructField(ref config, "_minimumItemLevel", 0);
+            SetStructField(ref config, "_maxPerEquipment", maxPerEquipment);
+            SetStructField(ref config, "_fusable", fusable);
+
+            SetPrivate(definition, "_stoneConfig", config);
+
+            _created.Add(definition);
+            Items.Register(definition);
+            return definition;
+        }
+
+        /// <summary>Authors a fusion recipe.</summary>
+        protected StoneFusionDefinition AddFusionRecipe(string id, FusionIngredient[] inputs,
+            string result, int resultQuantity = 1, float successChance = 0f,
+            string failureResult = null, int failureResultQuantity = 1,
+            bool consumeOnFailure = true, int currencyCost = 0, string currencyItem = null)
+        {
+            var definition = ScriptableObject.CreateInstance<StoneFusionDefinition>();
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"" + id + "\"},\"_nameKey\":{\"_key\":\"" + id + ".name\"},"
+                + "\"_result\":{\"_value\":\"" + result + "\"}"
+                + ",\"_resultQuantity\":" + resultQuantity
+                + ",\"_successChance\":" + successChance.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + ",\"_failureResult\":{\"_value\":\"" + (failureResult ?? string.Empty) + "\"}"
+                + ",\"_failureResultQuantity\":" + failureResultQuantity
+                + ",\"_consumeInputsOnFailure\":" + (consumeOnFailure ? "true" : "false")
+                + ",\"_currencyCost\":" + currencyCost
+                + ",\"_currencyItem\":{\"_value\":\"" + (currencyItem ?? string.Empty) + "\"}}",
+                definition);
+
+            SetPrivate(definition, "_inputs", inputs ?? new FusionIngredient[0]);
+
+            _created.Add(definition);
+            FusionRecipes.Register(definition);
+            return definition;
+        }
+
+        /// <summary>Sets a private serialized field on a boxed struct.</summary>
+        protected static void SetStructField(ref object boxed, string field, object value)
+        {
+            boxed.GetType()
                 .GetField(field, System.Reflection.BindingFlags.Instance
                                  | System.Reflection.BindingFlags.NonPublic)
-                .SetValue(target, value);
+                .SetValue(boxed, value);
+        }
+
+        /// <summary>The registries every equipment-progression service needs.</summary>
+        protected EquipmentModifierResolver.Context ResolverContext()
+        {
+            return new EquipmentModifierResolver.Context(Items, Rarities, Enhancements);
+        }
+
+        /// <summary>
+        /// Sets a private serialized field, including one declared on a base type.
+        /// </summary>
+        /// <remarks>Walks the hierarchy because <c>GetField</c> with <c>NonPublic</c> does
+        /// not see a base class's private fields -- and <see cref="EquipmentDefinition"/>
+        /// inherits several from <see cref="ItemDefinition"/>, rarity among them.</remarks>
+        protected static void SetPrivate(Object target, string field, object value)
+        {
+            System.Type type = target.GetType();
+
+            while (type != null)
+            {
+                System.Reflection.FieldInfo info = type.GetField(field,
+                    System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.DeclaredOnly);
+
+                if (info != null)
+                {
+                    info.SetValue(target, value);
+                    return;
+                }
+
+                type = type.BaseType;
+            }
+
+            throw new System.ArgumentException(
+                "No field '" + field + "' on " + target.GetType().Name, "field");
         }
 
         protected ItemContainerState Container(int capacity) =>
