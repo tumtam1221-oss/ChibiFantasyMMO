@@ -308,9 +308,11 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void NoCombatOrCastingWasIntroduced()
         {
+            // PHASE 07.3 added skill execution; see SkillLearningApplyTests for why these
+            // two names left the list and why the duplicate-system names stayed.
             string[] forbidden =
             {
-                "SkillExecutor", "SkillCaster", "CastSkill", "ExecuteSkill", "CombatResolver",
+                "SkillCaster", "CastSkill", "CombatResolver",
                 "DamageResolver", "HealResolver", "CooldownManager", "TargetResolver"
             };
 

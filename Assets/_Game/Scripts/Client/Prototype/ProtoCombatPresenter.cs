@@ -93,6 +93,32 @@ namespace ChibiFantasy.Client.Prototype
             }
         }
 
+        /// <summary>
+        /// Called after a skill resolved. Presentation only.
+        /// </summary>
+        /// <remarks>Reuses the same Animator trigger as a basic attack, because no skill
+        /// animation is authored and inventing one would be a production animation task.
+        /// The skill's own <c>SkillDefinition.Animation</c> address is where a real clip
+        /// will come from; nothing here loads it.</remarks>
+        public void OnSkillExecuted(SkillExecutionResult result)
+        {
+            SkillSignalCount++;
+            LastSkillResult = result;
+
+            EnsureParameterInfo();
+
+            if (_hasTrigger && animator.isActiveAndEnabled)
+            {
+                animator.SetTrigger(AttackTriggerHash);
+            }
+        }
+
+        /// <summary>How many times a skill was signalled. For inspection and tests.</summary>
+        public int SkillSignalCount { get; private set; }
+
+        /// <summary>The last skill outcome presentation was told about.</summary>
+        public SkillExecutionResult LastSkillResult { get; private set; }
+
         /// <summary>Mirrors the current combat phase onto the Animator.</summary>
         public void Report(AttackPhase phase)
         {

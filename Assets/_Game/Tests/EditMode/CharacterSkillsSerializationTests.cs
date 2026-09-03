@@ -142,9 +142,14 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void NoRuntimeOrCombatSkillStateWasIntroduced()
         {
-            // A learned skill is persistent. Cooldown timers, cast progress and queued
-            // casts are runtime state for a combat system that does not exist; no empty
-            // placeholder was created for them, so nothing can accidentally be persisted.
+            // A learned skill is persistent. Cooldown and cast progress are runtime state.
+            //
+            // PHASE 07.3 introduced that runtime state as SkillCooldownState in the
+            // Gameplay assembly, so its absence is no longer the invariant. The concern
+            // this guard was written for -- that combat timing could end up in save data --
+            // is instead asserted directly below, which is a stronger check than absence.
+            //
+            // The Data assembly, where persistent state lives, must still hold none of it.
             string[] forbidden =
             {
                 "SkillRuntimeState", "SkillCooldownState", "SkillCooldown", "CooldownState",
@@ -154,8 +159,7 @@ namespace ChibiFantasy.Tests.EditMode
 
             Assembly[] assemblies =
             {
-                typeof(CharacterSkillsState).Assembly,
-                typeof(ChibiFantasy.Gameplay.Character).Assembly
+                typeof(CharacterSkillsState).Assembly
             };
 
             foreach (Assembly assembly in assemblies)
@@ -165,10 +169,22 @@ namespace ChibiFantasy.Tests.EditMode
                     foreach (string name in forbidden)
                     {
                         Assert.AreNotEqual(name, type.Name,
-                            "Skill runtime and execution belong to a later step.");
+                            "Persistent skill data must contain no combat runtime state.");
                     }
                 }
             }
+
+            // The real invariant, asserted directly: the 07.3 cooldown state is runtime
+            // only. It carries no persistence contract and no serialization attribute, so
+            // combat timing cannot reach save data.
+            Type cooldown = typeof(ChibiFantasy.Gameplay.SkillCooldownState);
+
+            Assert.IsTrue(typeof(IRuntimeState).IsAssignableFrom(cooldown),
+                "A cooldown is runtime state.");
+            Assert.IsFalse(typeof(IPersistentState).IsAssignableFrom(cooldown),
+                "A cooldown must never be persistent.");
+            Assert.IsEmpty(cooldown.GetCustomAttributes(typeof(SerializableAttribute), false),
+                "A cooldown must not be serializable, or it could be written to save data.");
         }
 
         [Test]

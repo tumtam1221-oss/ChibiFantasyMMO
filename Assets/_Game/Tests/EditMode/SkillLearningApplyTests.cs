@@ -223,9 +223,14 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void NoCombatOrCastingWasIntroduced()
         {
+            // PHASE 07.3 added skill execution, so SkillExecutor and an Execute entry point
+            // now legitimately exist in this assembly. The duplicate-system names stay
+            // forbidden, and that is the point: execution reuses BasicDamageFormula,
+            // TargetEvaluator and CharacterResourceState rather than introducing resolvers
+            // of its own, so none of these may ever appear.
             string[] forbidden =
             {
-                "SkillExecutor", "SkillCaster", "CastSkill", "ExecuteSkill", "CombatResolver",
+                "SkillCaster", "CastSkill", "CombatResolver",
                 "DamageResolver", "HealResolver", "CooldownManager", "TargetResolver",
                 "ResourceCostProcessor"
             };

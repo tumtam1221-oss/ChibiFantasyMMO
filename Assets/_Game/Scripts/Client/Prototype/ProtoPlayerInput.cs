@@ -17,6 +17,8 @@ namespace ChibiFantasy.Client.Prototype
         private InputAction _look;
         private InputAction _zoom;
         private InputAction _attack;
+        private InputAction _skill1;
+        private InputAction _skill2;
 
         /// <summary>Raw WASD vector. X = strafe, Y = forward/back. Never longer than 1.</summary>
         public Vector2 Move { get; private set; }
@@ -34,6 +36,12 @@ namespace ChibiFantasy.Client.Prototype
         /// frame. Pacing is still enforced by the combat state machine; this only keeps the
         /// controller from asking a hundred times a second.</remarks>
         public bool AttackPressed { get; private set; }
+
+        /// <summary>True on the frame the first prototype skill key went down.</summary>
+        public bool SkillPrimaryPressed { get; private set; }
+
+        /// <summary>True on the frame the second prototype skill key went down.</summary>
+        public bool SkillSecondaryPressed { get; private set; }
 
         public bool IsReady => _map != null;
 
@@ -58,6 +66,8 @@ namespace ChibiFantasy.Client.Prototype
             // Optional: an older ProtoControls asset without the combat action must still
             // drive movement rather than throwing on load.
             _attack = _map.FindAction("Attack", false);
+            _skill1 = _map.FindAction("Skill1", false);
+            _skill2 = _map.FindAction("Skill2", false);
         }
 
         private void OnEnable()
@@ -72,6 +82,8 @@ namespace ChibiFantasy.Client.Prototype
             Look = Vector2.zero;
             Zoom = 0f;
             AttackPressed = false;
+            SkillPrimaryPressed = false;
+            SkillSecondaryPressed = false;
         }
 
         private void Update()
@@ -88,6 +100,8 @@ namespace ChibiFantasy.Client.Prototype
             Look = _look.ReadValue<Vector2>();
             Zoom = _zoom.ReadValue<float>();
             AttackPressed = _attack != null && _attack.WasPressedThisFrame();
+            SkillPrimaryPressed = _skill1 != null && _skill1.WasPressedThisFrame();
+            SkillSecondaryPressed = _skill2 != null && _skill2.WasPressedThisFrame();
         }
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using ChibiFantasy.Core;
+using ChibiFantasy.Data;
 
 namespace ChibiFantasy.Gameplay
 {
@@ -32,7 +33,7 @@ namespace ChibiFantasy.Gameplay
     /// of a fight, not of a person: the same character is an ally in a party and an enemy
     /// in a duel.
     /// </remarks>
-    public sealed class CharacterCombatant : ICombatant
+    public sealed class CharacterCombatant : ICombatant, ICombatantResourcePool
     {
         private readonly Character _character;
         private readonly InstanceId _combatantId;
@@ -113,6 +114,54 @@ namespace ChibiFantasy.Gameplay
         public void ApplyHealthDelta(long delta)
         {
             _character.Resources.ChangeHealth(delta, _limits);
+        }
+
+        // ---- ICombatantResourcePool -------------------------------------------------
+        // A character has the two pools CharacterResourceState owns and no others.
+        // Stamina and Rage are named by SkillResourceType but nothing implements them,
+        // so they are reported absent rather than silently treated as empty.
+
+        public bool HasResource(SkillResourceType resource)
+        {
+            return resource == SkillResourceType.Health || resource == SkillResourceType.Mana;
+        }
+
+        public bool TryGetResource(SkillResourceType resource, out int current, out int max)
+        {
+            switch (resource)
+            {
+                case SkillResourceType.Health:
+                    current = _character.Resources.CurrentHealth;
+                    max = _limits.MaxHealth;
+                    return true;
+
+                case SkillResourceType.Mana:
+                    current = _character.Resources.CurrentMana;
+                    max = _limits.MaxMana;
+                    return true;
+
+                default:
+                    current = 0;
+                    max = 0;
+                    return false;
+            }
+        }
+
+        public bool TryApplyResourceDelta(SkillResourceType resource, long delta)
+        {
+            switch (resource)
+            {
+                case SkillResourceType.Health:
+                    _character.Resources.ChangeHealth(delta, _limits);
+                    return true;
+
+                case SkillResourceType.Mana:
+                    _character.Resources.ChangeMana(delta, _limits);
+                    return true;
+
+                default:
+                    return false;
+            }
         }
     }
 }

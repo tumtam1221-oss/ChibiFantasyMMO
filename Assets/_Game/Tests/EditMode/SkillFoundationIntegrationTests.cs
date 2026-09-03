@@ -650,9 +650,17 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void NoCombatOrBackendTypeExistsInTheSkillFoundation()
         {
+            // PHASE 07.3 moved this boundary. Skill execution now legitimately exists in
+            // the Gameplay assembly (SkillExecutor), so its absence is no longer the
+            // invariant. What still holds, and is what this guard now protects:
+            //   - duplicate resolvers were never created; execution reuses
+            //     BasicDamageFormula, TargetEvaluator and CharacterResourceState, so
+            //     DamageResolver, HealResolver, TargetResolver and CooldownManager must
+            //     still not exist anywhere;
+            //   - backend and network types still belong to neither assembly.
             string[] forbidden =
             {
-                "SkillExecutor", "SkillCaster", "CombatResolver", "DamageResolver",
+                "SkillCaster", "CombatResolver", "DamageResolver",
                 "HealResolver", "CooldownManager", "TargetResolver", "SkillPoint",
                 "SkillRepository", "SkillDatabase", "SkillApiClient", "SkillNetworkHandler"
             };
