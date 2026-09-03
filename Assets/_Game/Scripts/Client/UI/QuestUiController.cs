@@ -45,6 +45,8 @@ namespace ChibiFantasy.Client.UI
         private IDefinitionRegistry<ItemDefinition> _items;
         private IDefinitionRegistry<MonsterDefinition> _monsters;
         private IDefinitionRegistry<QuestDefinition> _questDefinitions;
+        private IDefinitionRegistry<NPCDefinition> _npcs;
+        private IDefinitionRegistry<MapDefinition> _mapDefinitions;
 
         private OwnerId _owner;
         private CharacterId _character;
@@ -75,13 +77,17 @@ namespace ChibiFantasy.Client.UI
             IDefinitionRegistry<ItemDefinition> items,
             IDefinitionRegistry<MonsterDefinition> monsters,
             IDefinitionRegistry<QuestDefinition> questDefinitions,
-            CharacterId character, OwnerId owner, int characterLevel = 1)
+            CharacterId character, OwnerId owner, int characterLevel = 1,
+            IDefinitionRegistry<NPCDefinition> npcs = null,
+            IDefinitionRegistry<MapDefinition> maps = null)
         {
             _quests = quests;
             _inventory = inventory;
             _items = items;
             _monsters = monsters;
             _questDefinitions = questDefinitions;
+            _npcs = npcs;
+            _mapDefinitions = maps;
             _character = character;
             _owner = owner;
             _characterLevel = characterLevel;
@@ -122,7 +128,8 @@ namespace ChibiFantasy.Client.UI
 
         /// <summary>The registries the adapter reads through.</summary>
         public WorldViewAdapter.Context ViewContext =>
-            new WorldViewAdapter.Context(_items, _monsters, _questDefinitions);
+            new WorldViewAdapter.Context(_items, _monsters, _questDefinitions, _npcs,
+                _mapDefinitions);
 
         private QuestService.Context QuestContext =>
             new QuestService.Context(_questDefinitions, _items, _characterLevel, _owner);

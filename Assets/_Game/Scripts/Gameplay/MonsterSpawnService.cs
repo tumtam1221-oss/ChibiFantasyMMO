@@ -252,18 +252,14 @@ namespace ChibiFantasy.Gameplay
         /// <remarks>An empty restriction list means unrestricted, and a point with no map
         /// set is not checked at all -- so content authored before maps existed still
         /// spawns.</remarks>
+        /// <summary>
+        /// Whether this point's map is one the monster is authored for.
+        /// </summary>
+        /// <remarks>Delegated to <see cref="MonsterSpawnPlacement.IsMapAllowed"/> so the
+        /// content pass and the spawner cannot answer the same question differently.</remarks>
         private bool IsMapAllowed(MonsterDefinition definition)
         {
-            DefinitionId[] allowed = definition.AllowedMaps;
-
-            if (allowed.Length == 0 || !_point.Map.IsValid) return true;
-
-            for (int i = 0; i < allowed.Length; i++)
-            {
-                if (allowed[i] == _point.Map) return true;
-            }
-
-            return false;
+            return MonsterSpawnPlacement.IsMapAllowed(definition, _point.Map);
         }
     }
 }

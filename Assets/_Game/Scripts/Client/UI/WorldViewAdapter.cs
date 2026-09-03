@@ -30,11 +30,15 @@ namespace ChibiFantasy.Client.UI
         {
             public Context(IDefinitionRegistry<ItemDefinition> items,
                 IDefinitionRegistry<MonsterDefinition> monsters = null,
-                IDefinitionRegistry<QuestDefinition> quests = null)
+                IDefinitionRegistry<QuestDefinition> quests = null,
+                IDefinitionRegistry<NPCDefinition> npcs = null,
+                IDefinitionRegistry<MapDefinition> maps = null)
             {
                 Items = items;
                 Monsters = monsters;
                 Quests = quests;
+                Npcs = npcs;
+                Maps = maps;
             }
 
             public IDefinitionRegistry<ItemDefinition> Items { get; }
@@ -42,6 +46,18 @@ namespace ChibiFantasy.Client.UI
             public IDefinitionRegistry<MonsterDefinition> Monsters { get; }
 
             public IDefinitionRegistry<QuestDefinition> Quests { get; }
+
+            /// <summary>
+            /// Where an NPC objective's name comes from.
+            /// </summary>
+            /// <remarks>Phase 10 could not resolve these because it was never given the
+            /// registry, and quest state deliberately stores an id rather than a name.
+            /// Supplying it here is the whole fix: nothing in Gameplay changed, and no name
+            /// was copied into quest state.</remarks>
+            public IDefinitionRegistry<NPCDefinition> Npcs { get; }
+
+            /// <summary>Where a map objective's name comes from.</summary>
+            public IDefinitionRegistry<MapDefinition> Maps { get; }
         }
 
         /// <summary>What a health bar should draw for a monster.</summary>
@@ -196,9 +212,25 @@ namespace ChibiFantasy.Client.UI
                         ? item.NameKey
                         : default;
 
+                case QuestObjectiveType.TalkToNpc:
+                    if (context.Npcs == null) return default;
+
+                    NPCDefinition npc;
+                    return context.Npcs.TryGet(target, out npc) && npc != null
+                        ? npc.NameKey
+                        : default;
+
+                case QuestObjectiveType.ReachMap:
+                    if (context.Maps == null) return default;
+
+                    MapDefinition map;
+                    return context.Maps.TryGet(target, out map) && map != null
+                        ? map.NameKey
+                        : default;
+
                 default:
-                    // NPCs and maps have their own registries this adapter is not given.
-                    // Showing the id is the honest fallback.
+                    // A level objective names no content, so there is nothing to resolve.
+                    // Showing the id remains the honest fallback for anything unresolvable.
                     return default;
             }
         }
