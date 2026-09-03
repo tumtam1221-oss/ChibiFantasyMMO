@@ -75,6 +75,9 @@ namespace ChibiFantasy.Data
 
         [SerializeField] private EnhancementStep[] _steps = new EnhancementStep[0];
 
+        [Tooltip("Item the steps' CurrencyCost is paid in. Invalid means no currency is charged.")]
+        [SerializeField] private DefinitionId _currencyItem;
+
         public LocalizationKey NameKey => _nameKey;
 
         /// <summary>Equipment category this track applies to. None means unrestricted.</summary>
@@ -89,5 +92,18 @@ namespace ChibiFantasy.Data
 
         /// <summary>Authored steps, one per level transition.</summary>
         public EnhancementStep[] Steps => _steps;
+
+        /// <summary>
+        /// The item each step's <see cref="EnhancementStep.CurrencyCost"/> is paid in.
+        /// </summary>
+        /// <remarks>
+        /// On the track rather than on each step, because a track charges in one currency
+        /// and repeating that id per level would be a chance for one row to disagree.
+        ///
+        /// Currency is an ordinary inventory item: no wallet exists and none is invented.
+        /// An invalid id means the track charges no currency, and a step that names a cost
+        /// anyway is malformed content rather than a free upgrade.
+        /// </remarks>
+        public DefinitionId CurrencyItem => _currencyItem;
     }
 }
