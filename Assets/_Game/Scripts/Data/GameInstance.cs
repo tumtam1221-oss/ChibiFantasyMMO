@@ -22,6 +22,37 @@ namespace ChibiFantasy.Data
     /// here is authoritative: the client is untrusted, and a server must validate every
     /// field it receives before accepting it.
     /// </remarks>
+    /// <summary>
+    /// Why an owned object is not free to change hands.
+    /// </summary>
+    /// <remarks>
+    /// <b>One state, not four booleans.</b> The alternative was <c>IsTrading</c>,
+    /// <c>IsInShop</c>, <c>IsReservedForShop</c> and friends, which can contradict each
+    /// other: an item both trading and listed is representable with flags and meaningless in
+    /// fact. A single value cannot be in two states at once.
+    ///
+    /// <b>Only what this mechanism owns.</b> Equipped and socketed are deliberately absent.
+    /// Those facts already have authoritative homes -- <c>CharacterEquipmentState</c> and
+    /// <c>EquipmentInstance.Cards</c> -- and copying them here would create a second answer
+    /// that could disagree with the first. <c>ItemTransferRules</c> asks each authority in
+    /// turn and reports them as reasons; this enum holds only the reservations trade and
+    /// shops actually set, so no value here is ever declared and never assigned.
+    /// </remarks>
+    public enum ItemLockState
+    {
+        /// <summary>Free to be used, equipped, traded or listed.</summary>
+        Available = 0,
+
+        /// <summary>Held by an open trade session.</summary>
+        Reserved = 1,
+
+        /// <summary>Held by a player shop listing.</summary>
+        Listed = 2,
+
+        /// <summary>Bound to its owner and never transferable.</summary>
+        Bound = 3
+    }
+
     [Serializable]
     public abstract class GameInstance : IGameInstance
     {
@@ -29,6 +60,7 @@ namespace ChibiFantasy.Data
         [SerializeField] private DefinitionId _definitionId;
         [SerializeField] private OwnerId _owner;
         [SerializeField] private Revision _revision;
+        [SerializeField] private ItemLockState _lockState;
 
         /// <summary>Exists for deserializers, which construct before populating.</summary>
         /// <remarks>An instance created this way is not valid until deserialization fills
@@ -63,6 +95,51 @@ namespace ChibiFantasy.Data
         public OwnerId Owner => _owner;
 
         public Revision Revision => _revision;
+
+        /// <summary>
+        /// Whether something currently holds this object against transfer.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="ItemLockState.Available"/> by default, which is what an instance
+        /// created or deserialized before this field existed reads as -- the harmless answer.
+        /// A lock is a claim by one system; whether an object may actually move also depends
+        /// on facts held elsewhere, and <c>ItemTransferRules</c> is the one place all of them
+        /// are asked together.
+        /// </remarks>
+        public ItemLockState LockState => _lockState;
+
+        public bool IsLocked => _lockState != ItemLockState.Available;
+
+        /// <summary>
+        /// Records a reservation and advances the revision.
+        /// </summary>
+        /// <remarks>
+        /// Assignment only. Whether a claim is legitimate is decided by the service making
+        /// it, and releasing one is the same call with
+        /// <see cref="ItemLockState.Available"/>.
+        ///
+        /// Refuses to overwrite one lock with a different one: an item already held by a
+        /// trade must not be quietly taken over by a shop listing, because whichever system
+        /// released it second would leave the object marked free while the other still
+        /// believed it held it. A caller must release before re-claiming, and gets false
+        /// rather than a silent theft.
+        ///
+        /// Setting the state it already holds changes nothing and does not advance the
+        /// revision, so a no-op cannot look like a mutation.
+        /// </remarks>
+        public bool TrySetLockState(ItemLockState state)
+        {
+            if (_lockState == state) return false;
+
+            if (_lockState != ItemLockState.Available && state != ItemLockState.Available)
+            {
+                return false;
+            }
+
+            _lockState = state;
+            AdvanceRevision();
+            return true;
+        }
 
         /// <summary>
         /// Reassigns ownership and advances the revision.
