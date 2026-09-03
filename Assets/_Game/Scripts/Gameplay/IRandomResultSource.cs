@@ -30,10 +30,27 @@ namespace ChibiFantasy.Gameplay
         bool Succeeds(float successChance);
     }
 
-    /// <summary>Always succeeds, whatever the odds.</summary>
+    /// <summary>
+    /// Picks a number in a range.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="IRandomResultSource"/> because it answers a different
+    /// question: "did it happen" and "how many" are independent rolls, and a drop needs
+    /// both. Splitting them keeps each implementation trivial and lets a test force a
+    /// certain drop of a specific quantity.
+    ///
+    /// Inclusive at both ends, because an authored range of one to three means all three
+    /// are possible.
+    /// </remarks>
+    public interface IRandomRangeSource
+    {
+        int Range(int minInclusive, int maxInclusive);
+    }
+
+    /// <summary>Always succeeds, and always picks the top of a range.</summary>
     /// <remarks>The default for a caller with no source: a service must not silently fail
     /// a player's materials because nobody wired a generator.</remarks>
-    public sealed class AlwaysSucceeds : IRandomResultSource
+    public sealed class AlwaysSucceeds : IRandomResultSource, IRandomRangeSource
     {
         public static readonly AlwaysSucceeds Instance = new AlwaysSucceeds();
 
@@ -41,16 +58,26 @@ namespace ChibiFantasy.Gameplay
         {
             return true;
         }
+
+        public int Range(int minInclusive, int maxInclusive)
+        {
+            return maxInclusive >= minInclusive ? maxInclusive : minInclusive;
+        }
     }
 
-    /// <summary>Always fails, whatever the odds.</summary>
-    public sealed class AlwaysFails : IRandomResultSource
+    /// <summary>Always fails, and always picks the bottom of a range.</summary>
+    public sealed class AlwaysFails : IRandomResultSource, IRandomRangeSource
     {
         public static readonly AlwaysFails Instance = new AlwaysFails();
 
         public bool Succeeds(float successChance)
         {
             return false;
+        }
+
+        public int Range(int minInclusive, int maxInclusive)
+        {
+            return minInclusive;
         }
     }
 
@@ -63,10 +90,12 @@ namespace ChibiFantasy.Gameplay
     /// so a test that makes one extra call gets a defined answer instead of an exception
     /// that hides what it was really checking.
     /// </remarks>
-    public sealed class ScriptedResultSource : IRandomResultSource
+    public sealed class ScriptedResultSource : IRandomResultSource, IRandomRangeSource
     {
         private readonly List<bool> _outcomes = new List<bool>();
+        private readonly List<int> _numbers = new List<int>();
         private int _next;
+        private int _nextNumber;
 
         public ScriptedResultSource(params bool[] outcomes)
         {
@@ -76,6 +105,17 @@ namespace ChibiFantasy.Gameplay
 
         /// <summary>How many times an outcome has been asked for.</summary>
         public int Calls { get; private set; }
+
+        /// <summary>How many times a number has been asked for.</summary>
+        public int RangeCalls { get; private set; }
+
+        /// <summary>Scripts the numbers <see cref="Range"/> returns, clamped into range.</summary>
+        public ScriptedResultSource WithNumbers(params int[] numbers)
+        {
+            if (numbers == null) return this;
+            for (int i = 0; i < numbers.Length; i++) _numbers.Add(numbers[i]);
+            return this;
+        }
 
         public bool Succeeds(float successChance)
         {
@@ -87,6 +127,27 @@ namespace ChibiFantasy.Gameplay
             if (_next < _outcomes.Count) _next++;
 
             return _outcomes[index];
+        }
+
+        /// <summary>
+        /// The next scripted number, clamped.
+        /// </summary>
+        /// <remarks>With nothing scripted it returns the bottom of the range, which is the
+        /// least surprising default: a caller that forgot to script quantities gets the
+        /// smallest legal drop rather than the largest.</remarks>
+        public int Range(int minInclusive, int maxInclusive)
+        {
+            RangeCalls++;
+
+            if (maxInclusive < minInclusive) maxInclusive = minInclusive;
+            if (_numbers.Count == 0) return minInclusive;
+
+            int index = _nextNumber < _numbers.Count ? _nextNumber : _numbers.Count - 1;
+            if (_nextNumber < _numbers.Count) _nextNumber++;
+
+            int value = _numbers[index];
+            return value < minInclusive ? minInclusive
+                : value > maxInclusive ? maxInclusive : value;
         }
     }
 
@@ -100,7 +161,7 @@ namespace ChibiFantasy.Gameplay
     /// chance can never succeed on a 0.0 roll, and a 1.0 chance always succeeds because no
     /// roll reaches 1.0.
     /// </remarks>
-    public sealed class ThresholdResultSource : IRandomResultSource
+    public sealed class ThresholdResultSource : IRandomResultSource, IRandomRangeSource
     {
         private readonly float _roll;
 
@@ -113,6 +174,25 @@ namespace ChibiFantasy.Gameplay
         {
             if (successChance <= 0f) return true;
             return _roll < successChance;
+        }
+
+        /// <summary>
+        /// The same roll, read as a position within the range.
+        /// </summary>
+        /// <remarks>A roll of 0 gives the minimum and a roll approaching 1 gives the
+        /// maximum, so one number drives both questions consistently -- which is what makes
+        /// a 1-in-a-million drop testable with a single fixture.</remarks>
+        public int Range(int minInclusive, int maxInclusive)
+        {
+            if (maxInclusive <= minInclusive) return minInclusive;
+
+            int span = maxInclusive - minInclusive + 1;
+            int offset = (int)(_roll * span);
+
+            if (offset < 0) offset = 0;
+            if (offset >= span) offset = span - 1;
+
+            return minInclusive + offset;
         }
     }
 }

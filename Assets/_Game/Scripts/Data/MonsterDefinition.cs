@@ -78,6 +78,25 @@ namespace ChibiFantasy.Data
 
         [SerializeField] private RespawnSettings _respawn;
 
+        [Header("Engagement")]
+        [Tooltip("How far it notices a target. Zero or less means it never notices one.")]
+        [SerializeField] private float _detectionRange;
+
+        [Tooltip("How close it must be to strike. Zero or less means it cannot attack.")]
+        [SerializeField] private float _attackRange = 1.5f;
+
+        [Tooltip("Seconds between attacks. Zero or less means as fast as combat allows.")]
+        [SerializeField] private float _attackCooldownSeconds = 2f;
+
+        [Tooltip("How far it will chase before giving up and going home. Zero means no leash.")]
+        [SerializeField] private float _leashRange;
+
+        [Tooltip("World units per second.")]
+        [SerializeField] private float _moveSpeed = 2f;
+
+        [Tooltip("Maps it may be spawned on. Empty means unrestricted.")]
+        [SerializeField] private DefinitionId[] _allowedMaps = new DefinitionId[0];
+
         public LocalizationKey NameKey => _nameKey;
 
         public int Level => _level;
@@ -104,5 +123,64 @@ namespace ChibiFantasy.Data
         public int CurrencyReward => _currencyReward;
 
         public RespawnSettings Respawn => _respawn;
+
+        /// <summary>
+        /// How far it notices a target.
+        /// </summary>
+        /// <remarks>Zero or less means it never notices one, which is the correct reading
+        /// for a training dummy and for anything authored before this field existed.
+        /// Whether it <em>acts</em> on noticing is <see cref="AggressionType"/>.</remarks>
+        public float DetectionRange => _detectionRange;
+
+        /// <summary>How close it must be to strike.</summary>
+        public float AttackRange => _attackRange;
+
+        /// <summary>Seconds between attacks. Zero or less defers to combat's own pacing.</summary>
+        public float AttackCooldownSeconds => _attackCooldownSeconds;
+
+        /// <summary>
+        /// How far from home it will chase before giving up.
+        /// </summary>
+        /// <remarks>Zero means no leash. Measured from the spawn point rather than from the
+        /// target, so a monster cannot be walked across a map by a player retreating in a
+        /// straight line.</remarks>
+        public float LeashRange => _leashRange;
+
+        public float MoveSpeed => _moveSpeed;
+
+        /// <summary>References to <see cref="MapDefinition"/>. Empty means unrestricted.</summary>
+        public DefinitionId[] AllowedMaps => _allowedMaps ?? NoIds;
+
+        /// <summary>
+        /// Reads one authored base stat.
+        /// </summary>
+        /// <remarks>
+        /// Absent is not zero: a stat nobody authored has no value, and the caller decides
+        /// what that means -- the same contract <c>DerivedStatsResult.TryGet</c> and
+        /// <see cref="ICombatant"/>'s stat lookup already use. Monsters therefore need no
+        /// derived-stat pipeline of their own; their combat figures are authored directly.
+        /// </remarks>
+        public bool TryGetStat(DefinitionId stat, out int value)
+        {
+            StatValue[] stats = _baseStats;
+
+            if (stats != null && stat.IsValid)
+            {
+                for (int i = 0; i < stats.Length; i++)
+                {
+                    if (stats[i].Stat != stat) continue;
+
+                    float raw = stats[i].Value;
+                    value = raw > int.MaxValue ? int.MaxValue
+                        : raw < int.MinValue ? int.MinValue : (int)raw;
+                    return true;
+                }
+            }
+
+            value = 0;
+            return false;
+        }
+
+        private static readonly DefinitionId[] NoIds = new DefinitionId[0];
     }
 }
