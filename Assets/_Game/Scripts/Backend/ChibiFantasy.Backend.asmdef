@@ -2,7 +2,9 @@
     "name": "ChibiFantasy.Backend",
     "rootNamespace": "ChibiFantasy.Backend",
     "references": [
-        "ChibiFantasy.Core"
+        "ChibiFantasy.Core",
+        "ChibiFantasy.Data",
+        "ChibiFantasy.Contracts"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

@@ -5,6 +5,7 @@
         "ChibiFantasy.Core",
         "ChibiFantasy.Data",
         "ChibiFantasy.Contracts",
+        "ChibiFantasy.Backend",
         "ChibiFantasy.Gameplay",
         "ChibiFantasy.UI",
         "ChibiFantasy.Client",
