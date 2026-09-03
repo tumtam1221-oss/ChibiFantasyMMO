@@ -30,6 +30,7 @@ namespace ChibiFantasy.Data
         [SerializeField] private int _enhancementLevel;
         [SerializeField] private DefinitionId _rarity;
         [SerializeField] private List<EquipmentEnchant> _enchants = new List<EquipmentEnchant>();
+        [SerializeField] private List<EquipmentCardSocket> _cards = new List<EquipmentCardSocket>();
 
         /// <summary>Exists for deserializers.</summary>
         public EquipmentInstance()
@@ -188,6 +189,128 @@ namespace ChibiFantasy.Data
             for (int i = 0; i < capacity; i++)
             {
                 if (!IsSocketOccupied(i)) return i;
+            }
+
+            return -1;
+        }
+
+        // ---- cards ---------------------------------------------------------------------
+        //
+        // A separate set from the enchants above, deliberately. Cards and status stones have
+        // different capacities, different compatibility rules and different removal
+        // behaviour; sharing one list would make a card consume a stone's socket and would
+        // put Phase 09's semantics at the mercy of a Phase 12 change.
+
+        /// <summary>
+        /// Cards socketed into this copy, in insertion order.
+        /// </summary>
+        /// <remarks>Read-only to callers: only a Gameplay service may change the set, so a
+        /// panel holding this cannot socket a card by writing to a list.</remarks>
+        public IReadOnlyList<EquipmentCardSocket> Cards
+        {
+            get
+            {
+                if (_cards == null) _cards = new List<EquipmentCardSocket>();
+                return _cards;
+            }
+        }
+
+        public int CardCount => _cards == null ? 0 : _cards.Count;
+
+        /// <summary>
+        /// Sockets a card and advances the revision.
+        /// </summary>
+        /// <remarks>Assignment only: capacity, compatibility, duplicates and ownership are
+        /// validated by <c>CardSocketService</c>, which is the only thing that should call
+        /// this.</remarks>
+        public bool AddCard(EquipmentCardSocket card)
+        {
+            if (!card.IsValid) return false;
+
+            if (_cards == null) _cards = new List<EquipmentCardSocket>();
+
+            _cards.Add(card);
+            AdvanceRevision();
+            return true;
+        }
+
+        /// <summary>
+        /// Takes the card out of a socket.
+        /// </summary>
+        /// <remarks>
+        /// Reports what was removed rather than just whether something was, because the
+        /// caller has to put that exact copy back into a bag. A removal that returned only
+        /// true would leave the service guessing which card it had just destroyed.
+        /// </remarks>
+        public bool RemoveCardAt(int socketIndex, out EquipmentCardSocket removed)
+        {
+            removed = default;
+            if (_cards == null) return false;
+
+            for (int i = 0; i < _cards.Count; i++)
+            {
+                if (_cards[i].SocketIndex != socketIndex) continue;
+
+                removed = _cards[i];
+                _cards.RemoveAt(i);
+                AdvanceRevision();
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Whether a card socket already holds something.</summary>
+        public bool IsCardSocketOccupied(int socketIndex)
+        {
+            if (_cards == null) return false;
+
+            for (int i = 0; i < _cards.Count; i++)
+            {
+                if (_cards[i].SocketIndex == socketIndex) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>How many copies of one card are socketed, for per-card limits.</summary>
+        public int CountOfCard(DefinitionId card)
+        {
+            if (_cards == null || !card.IsValid) return 0;
+
+            int count = 0;
+
+            for (int i = 0; i < _cards.Count; i++)
+            {
+                if (_cards[i].Card == card) count++;
+            }
+
+            return count;
+        }
+
+        /// <summary>Whether a specific owned copy is already in this piece.</summary>
+        /// <remarks>What stops one card being socketed into the same piece twice; the
+        /// service asks the same of every other piece to stop it being in two at once.</remarks>
+        public bool HasCardInstance(InstanceId cardInstance)
+        {
+            if (_cards == null || !cardInstance.IsValid) return false;
+
+            for (int i = 0; i < _cards.Count; i++)
+            {
+                if (_cards[i].CardInstance == cardInstance) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>The lowest card socket below <paramref name="capacity"/> that is free.</summary>
+        /// <remarks>Minus one when the piece is full. Filled lowest-first, so a player sees
+        /// cards accumulate left to right.</remarks>
+        public int FirstFreeCardSocket(int capacity)
+        {
+            for (int i = 0; i < capacity; i++)
+            {
+                if (!IsCardSocketOccupied(i)) return i;
             }
 
             return -1;

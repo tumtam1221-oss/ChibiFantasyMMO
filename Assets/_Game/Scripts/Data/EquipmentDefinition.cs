@@ -82,6 +82,9 @@ namespace ChibiFantasy.Data
         [SerializeField] private int _maxEnhancementLevel;
         [SerializeField] private DefinitionId _enhancementRule;
 
+
+        [Tooltip("Number of card sockets. Separate from status-stone sockets on purpose.")]
+        [SerializeField] private int _cardSlots;
         [SerializeField] private int _statusStoneSlots;
 
         [SerializeField] private AssetRef _model;
@@ -112,6 +115,17 @@ namespace ChibiFantasy.Data
 
         /// <summary>Number of status-stone / enchant sockets this piece is authored with.</summary>
         public int StatusStoneSlots => _statusStoneSlots;
+
+        /// <summary>
+        /// Number of card sockets this piece is authored with.
+        /// </summary>
+        /// <remarks>
+        /// Counted separately from <see cref="StatusStoneSlots"/>. A piece with two stone
+        /// sockets and one card socket is a normal thing to author, and sharing one number
+        /// would mean socketing a card silently cost a player an enchant slot -- a Phase 09
+        /// behaviour change nobody asked for.
+        /// </remarks>
+        public int CardSlots => _cardSlots;
 
         public AssetRef Model => _model;
     }

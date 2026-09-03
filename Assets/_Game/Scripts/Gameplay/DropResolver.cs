@@ -125,7 +125,14 @@ namespace ChibiFantasy.Gameplay
                 DropEntry entry = entries[i];
 
                 // A malformed row is skipped rather than dropping nothing-times-nothing.
+                // IsValid covers a probability that is not a usable number, so a NaN from a
+                // bad import cannot masquerade as a drop that merely never happens.
                 if (!entry.IsValid) continue;
+
+                // Turned off by configuration. A row, not an item: nothing here knows what
+                // kind of thing was switched off.
+                if (!entry.Enabled) continue;
+
                 if (!entry.AppliesTo(context.KillerLevel)) continue;
 
                 // The item must exist before it can be promised. Content removed by a patch

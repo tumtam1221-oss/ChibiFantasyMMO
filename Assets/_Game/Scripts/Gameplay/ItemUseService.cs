@@ -36,7 +36,12 @@ namespace ChibiFantasy.Gameplay
                 IDefinitionRegistry<MapDefinition> maps = null,
                 IDefinitionRegistry<SpawnPointDefinition> spawnPoints = null,
                 OwnerId owner = default,
-                List<ItemBuffGrant> grantedBuffs = null)
+                List<ItemBuffGrant> grantedBuffs = null,
+                IDefinitionRegistry<DevilFruitDefinition> devilFruits = null,
+                CharacterDevilFruitState devilFruitState = null,
+                IDefinitionRegistry<PetDefinition> pets = null,
+                IDefinitionRegistry<SkillDefinition> skills = null,
+                StatusEffectRuntimeState status = null)
             {
                 Items = items;
                 Resources = resources;
@@ -46,6 +51,11 @@ namespace ChibiFantasy.Gameplay
                 SpawnPoints = spawnPoints;
                 Owner = owner;
                 GrantedBuffs = grantedBuffs;
+                DevilFruits = devilFruits;
+                DevilFruitState = devilFruitState;
+                Pets = pets;
+                Skills = skills;
+                Status = status;
             }
 
             public IDefinitionRegistry<ItemDefinition> Items { get; }
@@ -90,6 +100,26 @@ namespace ChibiFantasy.Gameplay
             /// <c>CharacterEquipmentState.CollectModifiers</c>. Null is fine: the grants are
             /// then counted and discarded.</remarks>
             public List<ItemBuffGrant> GrantedBuffs { get; }
+
+            /// <summary>Needed only by an item that is a Devil Fruit.</summary>
+            public IDefinitionRegistry<DevilFruitDefinition> DevilFruits { get; }
+
+            /// <summary>
+            /// The character's active-fruit record.
+            /// </summary>
+            /// <remarks>Where an activation lands. Without it a fruit item is refused rather
+            /// than eaten for nothing, because there would be nowhere to record the power the
+            /// player just paid for.</remarks>
+            public CharacterDevilFruitState DevilFruitState { get; }
+
+            /// <summary>Needed only by an item that grants a pet.</summary>
+            public IDefinitionRegistry<PetDefinition> Pets { get; }
+
+            /// <summary>Needed only to confirm a fruit's authored abilities resolve.</summary>
+            public IDefinitionRegistry<SkillDefinition> Skills { get; }
+
+            /// <summary>Where a fruit's effects and immunities land. Optional.</summary>
+            public StatusEffectRuntimeState Status { get; }
         }
 
         /// <summary>
@@ -144,6 +174,8 @@ namespace ChibiFantasy.Gameplay
             int plannedBuffs = 0;
             DefinitionId plannedWarp = default;
             DefinitionId plannedWarpSpawn = default;
+            DefinitionId plannedFruit = default;
+            DefinitionId plannedPet = default;
 
             for (int i = 0; i < effects.Length; i++)
             {
@@ -226,13 +258,66 @@ namespace ChibiFantasy.Gameplay
                         break;
                     }
 
+                    case ItemEffectKind.ConsumeDevilFruit:
+                    {
+                        if (!effect.DevilFruit.IsValid)
+                            return ItemUseResult.Rejected(ItemUseRejection.InvalidEffect, id, instance.InstanceId);
+
+                        if (context.DevilFruits == null || context.DevilFruitState == null)
+                            return ItemUseResult.Rejected(ItemUseRejection.MissingContext, id, instance.InstanceId);
+
+                        // The whole activation is decided here, in the dry run. Asking
+                        // afterwards would mean spending an ultra-rare item to discover the
+                        // character already had a fruit.
+                        var fruitContext = new DevilFruitService.Context(context.DevilFruits,
+                            context.Status, context.StatusEffects, context.Skills, context.Owner);
+
+                        DevilFruitRejection refusal = DevilFruitService.CanActivate(
+                            context.DevilFruitState, effect.DevilFruit, fruitContext);
+
+                        if (refusal != DevilFruitRejection.None)
+                            return ItemUseResult.Rejected(Translate(refusal), id, instance.InstanceId);
+
+                        if (plannedFruit.IsValid)
+                            return ItemUseResult.Rejected(ItemUseRejection.InvalidEffect, id, instance.InstanceId);
+
+                        plannedFruit = effect.DevilFruit;
+                        break;
+                    }
+
+                    case ItemEffectKind.GrantPet:
+                    {
+                        if (!effect.Pet.IsValid)
+                            return ItemUseResult.Rejected(ItemUseRejection.InvalidEffect, id, instance.InstanceId);
+
+                        if (context.Pets == null)
+                            return ItemUseResult.Rejected(ItemUseRejection.MissingContext, id, instance.InstanceId);
+
+                        var petContext = new PetService.Context(context.Pets, context.Items,
+                            context.StatusEffects, context.Status, context.Owner);
+
+                        PetRejection petRefusal = PetService.CanAcquire(effect.Pet, petContext);
+
+                        if (petRefusal != PetRejection.None)
+                            return ItemUseResult.Rejected(Translate(petRefusal), id, instance.InstanceId);
+
+                        if (plannedPet.IsValid)
+                            return ItemUseResult.Rejected(ItemUseRejection.InvalidEffect, id, instance.InstanceId);
+
+                        plannedPet = effect.Pet;
+                        break;
+                    }
+
                     default:
                         return ItemUseResult.Rejected(ItemUseRejection.InvalidEffect, id, instance.InstanceId);
                 }
             }
 
-            if (plannedHealth == 0 && plannedMana == 0 && plannedBuffs == 0 && !plannedWarp.IsValid)
+            if (plannedHealth == 0 && plannedMana == 0 && plannedBuffs == 0 && !plannedWarp.IsValid
+                && !plannedFruit.IsValid && !plannedPet.IsValid)
+            {
                 return ItemUseResult.Rejected(ItemUseRejection.NoEffect, id, instance.InstanceId);
+            }
 
             // ---- everything is resolved and nothing can fail from here ------------------
 
@@ -283,12 +368,68 @@ namespace ChibiFantasy.Gameplay
                 grants++;
             }
 
+            // The fruit's power is taken on before the item is spent, and it cannot fail:
+            // CanActivate already passed against this exact state in the dry run.
+            DevilFruitResult fruitResult = default;
+
+            if (plannedFruit.IsValid)
+            {
+                var fruitContext = new DevilFruitService.Context(context.DevilFruits,
+                    context.Status, context.StatusEffects, context.Skills, context.Owner);
+
+                fruitResult = DevilFruitService.TryActivate(context.DevilFruitState, plannedFruit,
+                    used, fruitContext);
+            }
+
+            PetResult petResult = default;
+
+            if (plannedPet.IsValid)
+            {
+                var petContext = new PetService.Context(context.Pets, context.Items,
+                    context.StatusEffects, context.Status, context.Owner);
+
+                petResult = PetService.TryAcquire(plannedPet, instance.Owner, petContext);
+            }
+
             // Exactly one, exactly once. This cannot be refused: the index, the occupancy
             // and a quantity of at least one were all established above.
             inventory.RemoveAt(slotIndex, 1);
 
             return ItemUseResult.Accepted(id, used, actualHealth, actualMana, grants, plannedWarp,
-                plannedWarpSpawn);
+                plannedWarpSpawn, fruitResult.IsAccepted ? plannedFruit : default,
+                petResult.IsAccepted ? petResult.Pet : null);
+        }
+
+        /// <summary>
+        /// Reports a fruit refusal in the vocabulary an item use speaks.
+        /// </summary>
+        /// <remarks>
+        /// The two enums stay separate on purpose: a fruit can be refused for reasons an item
+        /// use has no word for, and merging them would make every caller of either learn the
+        /// other's vocabulary. Anything without a precise counterpart becomes
+        /// <see cref="ItemUseRejection.InvalidEffect"/> -- less specific, never wrong.
+        /// </remarks>
+        private static ItemUseRejection Translate(DevilFruitRejection reason)
+        {
+            switch (reason)
+            {
+                case DevilFruitRejection.MissingContext: return ItemUseRejection.MissingContext;
+                case DevilFruitRejection.NotOwned: return ItemUseRejection.NotOwned;
+                case DevilFruitRejection.AlreadyHasFruit: return ItemUseRejection.AlreadyActive;
+                case DevilFruitRejection.UnknownFruit: return ItemUseRejection.UnknownDefinition;
+                default: return ItemUseRejection.InvalidEffect;
+            }
+        }
+
+        private static ItemUseRejection Translate(PetRejection reason)
+        {
+            switch (reason)
+            {
+                case PetRejection.MissingContext: return ItemUseRejection.MissingContext;
+                case PetRejection.NotOwned: return ItemUseRejection.NotOwned;
+                case PetRejection.UnknownPet: return ItemUseRejection.UnknownDefinition;
+                default: return ItemUseRejection.InvalidEffect;
+            }
         }
 
         /// <summary>
@@ -311,6 +452,8 @@ namespace ChibiFantasy.Gameplay
             bool restores = false;
             bool buffs = false;
             bool warps = false;
+            bool fruits = false;
+            bool pets = false;
 
             for (int i = 0; i < effects.Length; i++)
             {
@@ -319,10 +462,18 @@ namespace ChibiFantasy.Gameplay
                     case ItemEffectKind.RestoreResource: restores = true; break;
                     case ItemEffectKind.ApplyStatusEffect: buffs = true; break;
                     case ItemEffectKind.WarpToMap: warps = true; break;
+                    case ItemEffectKind.ConsumeDevilFruit: fruits = true; break;
+                    case ItemEffectKind.GrantPet: pets = true; break;
                 }
             }
 
             if (warps && type != ItemUseType.WarpTown) return ItemUseRejection.WarpNotAllowed;
+
+            // Gated in both directions, exactly as warp is. A consumable that gained a fruit
+            // or a pet effect through a bad import cannot grant either, and a fruit item that
+            // lost its effect cannot be eaten for nothing.
+            if (fruits && type != ItemUseType.DevilFruit) return ItemUseRejection.InvalidEffect;
+            if (pets && type != ItemUseType.PetTame) return ItemUseRejection.InvalidEffect;
 
             switch (type)
             {
@@ -332,6 +483,10 @@ namespace ChibiFantasy.Gameplay
                     return buffs ? ItemUseRejection.None : ItemUseRejection.UnknownUseType;
                 case ItemUseType.WarpTown:
                     return warps ? ItemUseRejection.None : ItemUseRejection.UnknownUseType;
+                case ItemUseType.DevilFruit:
+                    return fruits ? ItemUseRejection.None : ItemUseRejection.UnknownUseType;
+                case ItemUseType.PetTame:
+                    return pets ? ItemUseRejection.None : ItemUseRejection.UnknownUseType;
                 default:
                     return ItemUseRejection.UnknownUseType;
             }

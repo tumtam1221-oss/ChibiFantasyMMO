@@ -82,5 +82,31 @@ namespace ChibiFantasy.Data
         {
             _revision = _revision.Next();
         }
+
+        /// <summary>
+        /// Repoints this instance at a different definition, without advancing the revision.
+        /// </summary>
+        /// <remarks>
+        /// <b>Protected, and deliberately awkward.</b> An instance's definition is normally
+        /// fixed for life: a sword does not become a different sword. One thing genuinely
+        /// changes what it is -- a pet that evolves -- and the alternative was to destroy the
+        /// owned pet and create a second one, losing its identity, its owner and its history
+        /// to represent something a player experiences as the same creature growing up.
+        ///
+        /// <b>It advances no revision on purpose.</b> A caller changing a definition is
+        /// changing more than one field, and advancing here would count one logical mutation
+        /// twice. The subclass calls <see cref="AdvanceRevision"/> once, at the end. That is
+        /// why this is not public: there is no correct way to call it alone.
+        ///
+        /// Refuses an invalid id rather than blanking the instance, since an instance with no
+        /// definition cannot be resolved by anything.
+        /// </remarks>
+        protected bool ReplaceDefinitionId(DefinitionId definitionId)
+        {
+            if (!definitionId.IsValid) return false;
+
+            _definitionId = definitionId;
+            return true;
+        }
     }
 }

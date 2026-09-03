@@ -30,7 +30,13 @@ namespace ChibiFantasy.Data
         Buff = 2,
 
         /// <summary>Moves the character to an authored town.</summary>
-        WarpTown = 3
+        WarpTown = 3,
+
+        /// <summary>Takes on an authored Devil Fruit's power. Permanent, and one at a time.</summary>
+        DevilFruit = 4,
+
+        /// <summary>Turns into an owned pet. See <see cref="ItemEffectKind.GrantPet"/>.</summary>
+        PetTame = 5
     }
 
     /// <summary>Who an item acts on.</summary>
@@ -75,7 +81,13 @@ namespace ChibiFantasy.Data
         ApplyStatusEffect = 2,
 
         /// <summary>Sends the character to <see cref="ItemUseEffect.DestinationMap"/>.</summary>
-        WarpToMap = 3
+        WarpToMap = 3,
+
+        /// <summary>Activates <see cref="ItemUseEffect.DevilFruit"/> on the user.</summary>
+        ConsumeDevilFruit = 4,
+
+        /// <summary>Creates an owned pet from <see cref="ItemUseEffect.Pet"/>.</summary>
+        GrantPet = 5
     }
 
     /// <summary>
@@ -120,9 +132,16 @@ namespace ChibiFantasy.Data
         [Tooltip("MapDefinition a WarpToMap effect travels to.")]
         [SerializeField] private DefinitionId _destinationMap;
 
+        [Tooltip("DevilFruitDefinition a ConsumeDevilFruit effect activates.")]
+        [SerializeField] private DefinitionId _devilFruit;
+
+        [Tooltip("PetDefinition a GrantPet effect creates an owned pet from.")]
+        [SerializeField] private DefinitionId _pet;
+
         public ItemUseEffect(ItemEffectKind kind, ItemResource resource = ItemResource.None,
             int amount = 0, float percent = 0f, DefinitionId statusEffect = default,
-            float durationSeconds = 0f, DefinitionId destinationMap = default)
+            float durationSeconds = 0f, DefinitionId destinationMap = default,
+            DefinitionId devilFruit = default, DefinitionId pet = default)
         {
             _kind = kind;
             _resource = resource;
@@ -131,6 +150,8 @@ namespace ChibiFantasy.Data
             _statusEffect = statusEffect;
             _durationSeconds = durationSeconds;
             _destinationMap = destinationMap;
+            _devilFruit = devilFruit;
+            _pet = pet;
         }
 
         public ItemEffectKind Kind => _kind;
@@ -152,6 +173,18 @@ namespace ChibiFantasy.Data
         /// <summary>Reference to a <see cref="MapDefinition"/>.</summary>
         public DefinitionId DestinationMap => _destinationMap;
 
+        /// <summary>
+        /// Reference to a <see cref="DevilFruitDefinition"/>.
+        /// </summary>
+        /// <remarks>The item and the power are two definitions on purpose: the item is what
+        /// sits in a bag, stacks, drops and will one day be traded, and the fruit is what the
+        /// character gains. Merging them would make an untouched fruit untradeable by
+        /// construction.</remarks>
+        public DefinitionId DevilFruit => _devilFruit;
+
+        /// <summary>Reference to a <see cref="PetDefinition"/>.</summary>
+        public DefinitionId Pet => _pet;
+
         public override string ToString()
         {
             switch (_kind)
@@ -162,6 +195,10 @@ namespace ChibiFantasy.Data
                     return _kind + " " + _statusEffect;
                 case ItemEffectKind.WarpToMap:
                     return _kind + " " + _destinationMap;
+                case ItemEffectKind.ConsumeDevilFruit:
+                    return _kind + " " + _devilFruit;
+                case ItemEffectKind.GrantPet:
+                    return _kind + " " + _pet;
                 default:
                     return _kind.ToString();
             }

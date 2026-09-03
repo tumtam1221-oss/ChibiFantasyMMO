@@ -14,10 +14,25 @@ namespace ChibiFantasy.Data
     /// small <see cref="Chance"/>, and no drop code changes to support them.
     ///
     /// <b>Flat because it has to persist.</b> One row of a future <c>drop_entry</c> table
-    /// is a table id, an item id, two quantities, a chance and two optional gates.
+    /// is a table id, an item id, two quantities, a chance, an enabled flag and two
+    /// optional gates. The row's identity is its table plus its ordinal in
+    /// <see cref="DropTableDefinition.Entries"/>; no surrogate id is stored here because
+    /// nothing in the domain references a single entry.
+    ///
+    /// <b>Probability convention, stated once.</b> <see cref="Chance"/> is a
+    /// <em>fraction in 0..1</em>, never a percentage. A designer's "0.0001%" is authored as
+    /// <c>0.000001</c> and an admin's future <c>drop_entry.chance</c> column holds the same
+    /// number. There is exactly one convention and it is this one; any UI that wants to
+    /// show a percentage multiplies at the edge.
     ///
     /// <see cref="Chance"/> at zero or less means guaranteed, not never -- an unauthored
     /// chance must not silently make an entry impossible.
+    ///
+    /// <b>Precision.</b> A 32-bit float carries a full binary exponent, so an ultra-rare
+    /// <c>1e-7</c> is held with a <em>relative</em> error near 6e-8 -- orders of magnitude
+    /// finer than any rate an operator would distinguish. The representation is not the
+    /// limit on how rare a drop can be authored, so this stays a float rather than growing
+    /// a fixed-point scheme the resolver and a future SQL column would both have to learn.
     /// </remarks>
     [Serializable]
     public struct DropEntry
@@ -26,8 +41,11 @@ namespace ChibiFantasy.Data
         [SerializeField] private int _minQuantity;
         [SerializeField] private int _maxQuantity;
 
-        [Tooltip("Chance in 0..1. Zero or less is guaranteed.")]
+        [Tooltip("Probability as a fraction in 0..1, never a percentage. Zero or less is guaranteed.")]
         [SerializeField] private float _chance;
+
+        [Tooltip("Turns the row off without deleting it. Stored inverted so existing content stays enabled.")]
+        [SerializeField] private bool _disabled;
 
         [Tooltip("Rarity stamped on dropped equipment. Invalid leaves the authored tier.")]
         [SerializeField] private DefinitionId _rarityOverride;
@@ -39,7 +57,8 @@ namespace ChibiFantasy.Data
         [SerializeField] private int _maxKillerLevel;
 
         public DropEntry(DefinitionId item, int minQuantity, int maxQuantity, float chance = 0f,
-            DefinitionId rarityOverride = default, int minKillerLevel = 0, int maxKillerLevel = 0)
+            DefinitionId rarityOverride = default, int minKillerLevel = 0, int maxKillerLevel = 0,
+            bool enabled = true)
         {
             _item = item;
             _minQuantity = minQuantity;
@@ -48,6 +67,7 @@ namespace ChibiFantasy.Data
             _rarityOverride = rarityOverride;
             _minKillerLevel = minKillerLevel;
             _maxKillerLevel = maxKillerLevel;
+            _disabled = !enabled;
         }
 
         /// <summary>Reference to the dropped <see cref="ItemDefinition"/>.</summary>
@@ -58,10 +78,47 @@ namespace ChibiFantasy.Data
         /// <summary>Top of the range. Below the minimum reads as a fixed quantity.</summary>
         public int MaxQuantity => _maxQuantity < _minQuantity ? _minQuantity : _maxQuantity;
 
-        /// <summary>Zero or less is guaranteed, so a blank is not "never".</summary>
+        /// <summary>
+        /// Probability as a fraction in 0..1. Zero or less is guaranteed, so a blank is not
+        /// "never".
+        /// </summary>
+        /// <remarks>The single number an operator changes. Nothing in code compares it to a
+        /// literal and no system has its own copy of it, which is what makes a live
+        /// configuration change take effect with no rebuild.</remarks>
         public float Chance => _chance;
 
+        /// <summary>
+        /// Whether the row participates in a roll.
+        /// </summary>
+        /// <remarks>
+        /// Stored inverted. A serialized <c>bool</c> added to an existing asset deserializes
+        /// as <c>false</c>, so a field named <c>_enabled</c> would silently switch off every
+        /// drop authored before it existed. <c>_disabled</c> defaults to the harmless
+        /// answer. A future <c>drop_entry.enabled</c> column maps to this property, not to
+        /// the field.
+        /// </remarks>
+        public bool Enabled => !_disabled;
+
         public bool IsGuaranteed => _chance <= 0f;
+
+        /// <summary>
+        /// Whether the authored probability is a number a roll can use.
+        /// </summary>
+        /// <remarks>
+        /// NaN and infinity come from bad imports and bad admin input, and both are worse
+        /// than a missing row: NaN compares false against everything, so an entry carrying
+        /// one would look like a drop that simply never happens rather than like a
+        /// configuration error. Content validation reports it and the resolver skips it, so
+        /// neither silently clamps a value an operator typed.
+        /// </remarks>
+        public bool IsChanceValid
+        {
+            get
+            {
+                if (float.IsNaN(_chance) || float.IsInfinity(_chance)) return false;
+                return _chance <= 1f;
+            }
+        }
 
         /// <summary>
         /// Rarity stamped on what drops.
@@ -75,7 +132,7 @@ namespace ChibiFantasy.Data
 
         public int MaxKillerLevel => _maxKillerLevel;
 
-        public bool IsValid => _item.IsValid && _minQuantity > 0;
+        public bool IsValid => _item.IsValid && _minQuantity > 0 && IsChanceValid;
 
         /// <summary>
         /// Whether this entry applies to a killer of a given level.

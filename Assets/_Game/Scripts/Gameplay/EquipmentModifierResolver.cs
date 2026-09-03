@@ -15,7 +15,9 @@ namespace ChibiFantasy.Gameplay
     /// than the sum of +1 through +5, and what makes repeated recalculation identical by
     /// construction rather than by care.
     ///
-    /// <b>Order is fixed and stated once.</b> base -> rarity -> enhancement -> enchant.
+    /// <b>Order is fixed and stated once.</b> base -> rarity -> enhancement -> enchant ->
+    /// card. Cards were appended at the end rather than inserted, so no existing source
+    /// moved and Phase 05 and Phase 09 semantics are exactly what they were.
     /// It matters only for readability today, because
     /// <see cref="DerivedStatsCalculator"/> sums flats and then applies percents
     /// regardless of arrival order; stating it here means nobody has to guess later.
@@ -36,11 +38,13 @@ namespace ChibiFantasy.Gameplay
         {
             public Context(IDefinitionRegistry<ItemDefinition> items,
                 IDefinitionRegistry<RarityDefinition> rarities = null,
-                IDefinitionRegistry<EnhancementDefinition> enhancements = null)
+                IDefinitionRegistry<EnhancementDefinition> enhancements = null,
+                IDefinitionRegistry<CardDefinition> cards = null)
             {
                 Items = items;
                 Rarities = rarities;
                 Enhancements = enhancements;
+                Cards = cards;
             }
 
             public IDefinitionRegistry<ItemDefinition> Items { get; }
@@ -48,6 +52,14 @@ namespace ChibiFantasy.Gameplay
             public IDefinitionRegistry<RarityDefinition> Rarities { get; }
 
             public IDefinitionRegistry<EnhancementDefinition> Enhancements { get; }
+
+            /// <summary>
+            /// Where socketed cards are resolved.
+            /// </summary>
+            /// <remarks>Optional and last, so every existing caller compiles and behaves
+            /// unchanged: with no card registry a piece resolves exactly as it did before
+            /// cards existed.</remarks>
+            public IDefinitionRegistry<CardDefinition> Cards { get; }
 
             public bool IsUsable => Items != null;
         }
@@ -83,6 +95,11 @@ namespace ChibiFantasy.Gameplay
             // 4. enchant -- read off each stone's definition, so re-authoring a stone
             //    updates every piece already carrying it.
             AppendEnchants(worn, context, into);
+
+            // 5. card -- the same rule again, through the card service that owns the socket
+            //    set. Delegated rather than duplicated, so there is one reading of what a
+            //    socketed card is worth.
+            CardSocketService.CollectModifiers(worn, context.Cards, into);
         }
 
         /// <summary>Convenience overload that allocates.</summary>
@@ -118,6 +135,7 @@ namespace ChibiFantasy.Gameplay
 
             AppendEnhancementAt(equipment, enhancementLevel, context, into);
             AppendEnchants(worn, context, into);
+            CardSocketService.CollectModifiers(worn, context.Cards, into);
         }
 
         /// <summary>

@@ -42,6 +42,15 @@ namespace ChibiFantasy.Data
         [SerializeField] private DefinitionId[] _grantedEffects = new DefinitionId[0];
         [SerializeField] private DefinitionId[] _immunities = new DefinitionId[0];
 
+        [Tooltip("Categories the bearer refuses wholesale, such as every debuff.")]
+        [SerializeField] private StatusEffectCategory[] _immuneCategories = new StatusEffectCategory[0];
+
+        [Tooltip("What the bearer gains for as long as the fruit is active.")]
+        [SerializeField] private StatModifier[] _statModifiers = new StatModifier[0];
+
+        [Tooltip("Turns the fruit off without deleting it. Stored inverted so existing content stays enabled.")]
+        [SerializeField] private bool _disabled;
+
         [SerializeField] private AssetRef _visualEffect;
         [SerializeField] private AssetRef _soundEffect;
 
@@ -77,10 +86,40 @@ namespace ChibiFantasy.Data
         public DefinitionId[] GrantedEffects => _grantedEffects;
 
         /// <summary>References to <see cref="StatusEffectDefinition"/> the bearer becomes immune to.</summary>
-        public DefinitionId[] Immunities => _immunities;
+        public DefinitionId[] Immunities => _immunities ?? NoIds;
+
+        /// <summary>
+        /// Whole categories the bearer refuses.
+        /// </summary>
+        /// <remarks>
+        /// What "immune to debuffs" actually is. Listing every debuff by id would be wrong
+        /// the moment a new one is authored, so the immunity is expressed against the
+        /// authored <see cref="StatusEffectDefinition.Category"/> instead and covers effects
+        /// that do not exist yet.
+        /// </remarks>
+        public StatusEffectCategory[] ImmuneCategories => _immuneCategories ?? NoCategories;
+
+        /// <summary>
+        /// What the bearer gains while the fruit is active.
+        /// </summary>
+        /// <remarks>Read at resolve time like every other modifier source, never copied onto
+        /// the character, so re-authoring a fruit updates everyone already carrying it.</remarks>
+        public StatModifier[] StatModifiers => _statModifiers ?? NoModifiers;
+
+        /// <summary>
+        /// Whether the fruit may be taken on.
+        /// </summary>
+        /// <remarks>Stored inverted, for the reason <see cref="DropEntry.Enabled"/> gives: a
+        /// serialized bool added to existing assets deserializes as false, and a field named
+        /// <c>_enabled</c> would silently switch off every fruit authored before it.</remarks>
+        public bool Enabled => !_disabled;
 
         public AssetRef VisualEffect => _visualEffect;
 
         public AssetRef SoundEffect => _soundEffect;
+
+        private static readonly DefinitionId[] NoIds = new DefinitionId[0];
+        private static readonly StatusEffectCategory[] NoCategories = new StatusEffectCategory[0];
+        private static readonly StatModifier[] NoModifiers = new StatModifier[0];
     }
 }

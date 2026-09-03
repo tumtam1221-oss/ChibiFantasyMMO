@@ -62,7 +62,12 @@ namespace ChibiFantasy.Gameplay
         InvalidDestination = 13,
 
         /// <summary>The destination resolved, but is not somewhere a scroll may reach.</summary>
-        WarpNotAllowed = 14
+        WarpNotAllowed = 14,
+
+        /// <summary>The character already carries a Devil Fruit's power.</summary>
+        /// <remarks>Refused rather than replaced. Swapping would destroy a power the player
+        /// spent an ultra-rare drop on, and no authored mechanic says it may.</remarks>
+        AlreadyActive = 15
     }
 
     /// <summary>
@@ -127,7 +132,8 @@ namespace ChibiFantasy.Gameplay
     {
         private ItemUseResult(bool accepted, ItemUseRejection reason, DefinitionId definitionId,
             InstanceId instanceId, int consumed, int health, int mana, int buffs,
-            DefinitionId destination, DefinitionId destinationSpawn)
+            DefinitionId destination, DefinitionId destinationSpawn,
+            DefinitionId devilFruit, PetInstance pet)
         {
             IsAccepted = accepted;
             Reason = reason;
@@ -139,6 +145,8 @@ namespace ChibiFantasy.Gameplay
             BuffsGranted = buffs;
             WarpDestination = destination;
             WarpDestinationSpawn = destinationSpawn;
+            DevilFruitActivated = devilFruit;
+            PetGranted = pet;
         }
 
         public bool IsAccepted { get; }
@@ -178,23 +186,43 @@ namespace ChibiFantasy.Gameplay
         /// no spawn registry was supplied, in which case only the map was validated.</remarks>
         public DefinitionId WarpDestinationSpawn { get; }
 
+        /// <summary>
+        /// The <see cref="DevilFruitDefinition"/> an accepted use activated.
+        /// </summary>
+        /// <remarks>A completed activation, unlike <see cref="WarpDestination"/>: the power
+        /// is already recorded on the character by the time this is returned, because eating
+        /// a fruit and gaining it are one act.</remarks>
+        public DefinitionId DevilFruitActivated { get; }
+
+        /// <summary>
+        /// The pet an accepted use created.
+        /// </summary>
+        /// <remarks>
+        /// The instance itself rather than an id, because it was created by this call and
+        /// there is nowhere else to look it up: it has no home until the caller stores it.
+        /// That is the one live object any result in this assembly hands back, and it is
+        /// owned state the caller must keep, not a view into gameplay.
+        /// </remarks>
+        public PetInstance PetGranted { get; }
+
         public bool HasWarp => WarpDestination.IsValid;
 
         public bool RestoredAnything => HealthRestored > 0 || ManaRestored > 0;
 
         public static ItemUseResult Accepted(DefinitionId definitionId, InstanceId instanceId,
             int health = 0, int mana = 0, int buffs = 0, DefinitionId destination = default,
-            DefinitionId destinationSpawn = default)
+            DefinitionId destinationSpawn = default, DefinitionId devilFruit = default,
+            PetInstance pet = null)
         {
             return new ItemUseResult(true, ItemUseRejection.None, definitionId, instanceId,
-                1, health, mana, buffs, destination, destinationSpawn);
+                1, health, mana, buffs, destination, destinationSpawn, devilFruit, pet);
         }
 
         public static ItemUseResult Rejected(ItemUseRejection reason,
             DefinitionId definitionId = default, InstanceId instanceId = default)
         {
             return new ItemUseResult(false, reason, definitionId, instanceId,
-                0, 0, 0, 0, default, default);
+                0, 0, 0, 0, default, default, default, null);
         }
 
         public override string ToString()

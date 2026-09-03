@@ -84,6 +84,55 @@ namespace ChibiFantasy.Data
             AdvanceRevision();
         }
 
+        /// <summary>
+        /// Records level and experience together, advancing the revision once.
+        /// </summary>
+        /// <remarks>
+        /// Awarding experience usually moves both numbers, and calling
+        /// <see cref="SetLevel"/> then <see cref="SetExperience"/> would count one award as
+        /// two mutations -- which anything watching the revision would read as two awards.
+        /// Whether the new level is one the pet's authored curve actually reaches is
+        /// <c>PetService</c>'s decision.
+        ///
+        /// Returns false when nothing changed, so a zero-experience award is not a mutation.
+        /// </remarks>
+        public bool SetProgress(int level, int experience)
+        {
+            ValidateLevel(level);
+            ValidateExperience(experience);
+
+            if (_level == level && _experience == experience) return false;
+
+            _level = level;
+            _experience = experience;
+            AdvanceRevision();
+            return true;
+        }
+
+        /// <summary>
+        /// Becomes an evolved form, advancing the revision once.
+        /// </summary>
+        /// <remarks>
+        /// <b>The same pet, changed.</b> The instance id, the owner and the accumulated
+        /// experience all survive; only what the pet <em>is</em> and how far it has come
+        /// change. No second <see cref="PetInstance"/> is created, so nothing has to
+        /// reconcile two records of one creature and no owner has to be reassigned.
+        ///
+        /// Assignment only. Whether the level requirement was met, whether the material was
+        /// paid and whether the target form exists at all are <c>PetService</c>'s decisions,
+        /// made in full before this is called.
+        /// </remarks>
+        public bool Evolve(DefinitionId evolvedForm, int stage)
+        {
+            ValidateEvolutionStage(stage);
+
+            if (!ReplaceDefinitionId(evolvedForm)) return false;
+
+            _evolutionStage = stage;
+            AdvanceRevision();
+            return true;
+        }
+
         private static void ValidateLevel(int level)
         {
             if (level < 1)
