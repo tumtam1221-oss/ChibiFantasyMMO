@@ -21,6 +21,7 @@ namespace ChibiFantasy.Client.Prototype
         private InputAction _skill2;
         private InputAction _toggleInventory;
         private InputAction _toggleStorage;
+        private InputAction _cancel;
 
         /// <summary>Raw WASD vector. X = strafe, Y = forward/back. Never longer than 1.</summary>
         public Vector2 Move { get; private set; }
@@ -55,6 +56,14 @@ namespace ChibiFantasy.Client.Prototype
         /// <summary>True on the frame the storage key went down.</summary>
         public bool ToggleStoragePressed { get; private set; }
 
+        /// <summary>
+        /// True on the frame the cancel key went down.
+        /// </summary>
+        /// <remarks>Escape. Backing out of a drag, a dialog or a menu is input like any
+        /// other, so it is bound in the same asset rather than read from the keyboard
+        /// directly somewhere.</remarks>
+        public bool CancelPressed { get; private set; }
+
         public bool IsReady => _map != null;
 
         public void SetControls(InputActionAsset asset)
@@ -82,6 +91,7 @@ namespace ChibiFantasy.Client.Prototype
             _skill2 = _map.FindAction("Skill2", false);
             _toggleInventory = _map.FindAction("ToggleInventory", false);
             _toggleStorage = _map.FindAction("ToggleStorage", false);
+            _cancel = _map.FindAction("CancelInteraction", false);
         }
 
         private void OnEnable()
@@ -100,6 +110,7 @@ namespace ChibiFantasy.Client.Prototype
             SkillSecondaryPressed = false;
             ToggleInventoryPressed = false;
             ToggleStoragePressed = false;
+            CancelPressed = false;
         }
 
         private void Update()
@@ -120,6 +131,7 @@ namespace ChibiFantasy.Client.Prototype
             SkillSecondaryPressed = _skill2 != null && _skill2.WasPressedThisFrame();
             ToggleInventoryPressed = _toggleInventory != null && _toggleInventory.WasPressedThisFrame();
             ToggleStoragePressed = _toggleStorage != null && _toggleStorage.WasPressedThisFrame();
+            CancelPressed = _cancel != null && _cancel.WasPressedThisFrame();
         }
     }
 }

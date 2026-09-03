@@ -80,13 +80,27 @@ namespace ChibiFantasy.Client.UI
         public static ItemTooltipData BuildTooltip(ItemContainerState container, int slotIndex,
             IDefinitionRegistry<ItemDefinition> items)
         {
+            return BuildTooltip(container, slotIndex, items, null);
+        }
+
+        /// <summary>
+        /// The tooltip for a container slot, with a warp item's destination name resolved.
+        /// </summary>
+        /// <remarks>The map registry is looked up here because the UI assembly cannot see
+        /// one. A missing registry is not an error: the tooltip then shows the destination's
+        /// id instead of its name.</remarks>
+        public static ItemTooltipData BuildTooltip(ItemContainerState container, int slotIndex,
+            IDefinitionRegistry<ItemDefinition> items, IDefinitionRegistry<MapDefinition> maps)
+        {
             if (container == null || !container.IsValidIndex(slotIndex)) return ItemTooltipData.None;
 
             ItemSlot slot = container.GetSlot(slotIndex);
             if (slot.IsEmpty) return ItemTooltipData.None;
 
-            return ItemTooltipData.From(slot.DefinitionId, slot.Quantity,
-                Resolve(items, slot.DefinitionId));
+            ItemDefinition definition = Resolve(items, slot.DefinitionId);
+
+            return ItemTooltipData.From(slot.DefinitionId, slot.Quantity, definition,
+                ResolveWarpName(definition, maps));
         }
 
         /// <summary>The tooltip for a worn piece, or <see cref="ItemTooltipData.None"/>.</summary>
@@ -100,6 +114,39 @@ namespace ChibiFantasy.Client.UI
 
             // One: equipment does not stack, so no count is shown.
             return ItemTooltipData.From(worn.DefinitionId, 1, Resolve(items, worn.DefinitionId));
+        }
+
+        /// <summary>
+        /// The name key of the town a warp item points at.
+        /// </summary>
+        /// <remarks>
+        /// Read off the <see cref="MapDefinition"/>, which is the only place a town's name
+        /// lives. Nothing here decides where a scroll goes and nothing here validates it --
+        /// that is <see cref="ItemUseService"/>'s job. This is a lookup for a label.
+        /// </remarks>
+        private static LocalizationKey ResolveWarpName(ItemDefinition definition,
+            IDefinitionRegistry<MapDefinition> maps)
+        {
+            if (definition == null || maps == null) return default;
+            if (definition.UseType != ItemUseType.WarpTown) return default;
+
+            ItemUseEffect[] effects = definition.UseEffects;
+
+            for (int i = 0; i < effects.Length; i++)
+            {
+                if (effects[i].Kind != ItemEffectKind.WarpToMap) continue;
+                if (!effects[i].DestinationMap.IsValid) continue;
+
+                MapDefinition map;
+                if (maps.TryGet(effects[i].DestinationMap, out map) && map != null)
+                {
+                    return map.NameKey;
+                }
+
+                return default;
+            }
+
+            return default;
         }
 
         /// <summary>

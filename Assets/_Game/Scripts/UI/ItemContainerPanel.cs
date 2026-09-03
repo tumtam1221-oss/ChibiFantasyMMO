@@ -32,6 +32,27 @@ namespace ChibiFantasy.UI
         /// <summary>Raised when a slot is clicked, carrying its index.</summary>
         public event System.Action<int> SlotClicked;
 
+        /// <summary>Raised on a right click. What opens a context menu.</summary>
+        public event System.Action<int> SlotRightClicked;
+
+        /// <summary>Raised when a drag begins on a slot of this panel.</summary>
+        public event System.Action<int> SlotDragStarted;
+
+        /// <summary>Raised while dragging, carrying the pointer position.</summary>
+        public event System.Action<Vector2> SlotDragging;
+
+        /// <summary>Raised when a drag from this panel is released, wherever it landed.</summary>
+        public event System.Action SlotDragEnded;
+
+        /// <summary>Raised when a drag is released onto a slot of this panel.</summary>
+        public event System.Action<int> SlotDropped;
+
+        /// <summary>Raised when the pointer enters a slot of this panel.</summary>
+        public event System.Action<int> SlotHovered;
+
+        /// <summary>Raised when the pointer leaves a slot of this panel.</summary>
+        public event System.Action<int> SlotUnhovered;
+
         public int SlotCount => _slots.Count;
 
         public IReadOnlyList<ItemSlotView> Slots => _slots;
@@ -60,14 +81,49 @@ namespace ChibiFantasy.UI
         /// <summary>Re-draws every visible slot from a fresh snapshot.</summary>
         public void Refresh(IReadOnlyList<ItemSlotViewData> data, ItemSelection selection)
         {
+            Refresh(data, selection, null);
+        }
+
+        /// <summary>
+        /// Re-draws every visible slot, resolving icons through <paramref name="icons"/>.
+        /// </summary>
+        /// <remarks>The resolver caches, so a refresh of a full bag costs no loads after
+        /// the first. A null resolver is fine and draws placeholder colours.</remarks>
+        public void Refresh(IReadOnlyList<ItemSlotViewData> data, ItemSelection selection,
+            IconResolver icons)
+        {
             if (data == null) return;
 
             if (data.Count != _slots.Count) Build(data.Count);
 
             for (int i = 0; i < data.Count && i < _slots.Count; i++)
             {
-                _slots[i].Bind(data[i], selection.Matches(data[i]));
+                Sprite icon = icons == null ? null : icons.Resolve(data[i].Icon);
+                _slots[i].Bind(data[i], selection.Matches(data[i]), icon);
             }
+        }
+
+        /// <summary>
+        /// Paints the advisory drop indicator across the panel for an active drag.
+        /// </summary>
+        /// <remarks>Recomputed for every slot rather than tracked incrementally, because a
+        /// stale hint left on a slot the pointer already passed is the failure mode that
+        /// actually happens. See <see cref="ItemDropAdvice"/>: this is advice, not
+        /// permission.</remarks>
+        public void ApplyDropHints(ItemDragPayload drag, ItemSelectionSource ownSource)
+        {
+            for (int i = 0; i < _slots.Count; i++)
+            {
+                _slots[i].SetDropHint(drag.IsActive
+                    ? ItemDropAdvice.ForContainerSlot(drag, ownSource, i)
+                    : SlotDropHint.None);
+            }
+        }
+
+        /// <summary>Clears every drop indicator. Called when a drag ends or is cancelled.</summary>
+        public void ClearDropHints()
+        {
+            for (int i = 0; i < _slots.Count; i++) _slots[i].SetDropHint(SlotDropHint.None);
         }
 
         private void EnsureParent()
@@ -92,13 +148,66 @@ namespace ChibiFantasy.UI
             var view = go.AddComponent<ItemSlotView>();
             view.EnsureVisuals();
             view.Bind(ItemSlotViewData.Empty(index), false);
+
+            // Each slot's events are republished as the panel's, so the controller
+            // subscribes once per panel instead of once per slot -- and keeps working
+            // when the panel grows.
             view.Clicked += OnSlotClicked;
+            view.RightClicked += OnSlotRightClicked;
+            view.DragStarted += OnSlotDragStarted;
+            view.Dragging += OnSlotDragging;
+            view.DragEnded += OnSlotDragEnded;
+            view.Dropped += OnSlotDropped;
+            view.HoverEntered += OnSlotHovered;
+            view.HoverExited += OnSlotUnhovered;
             return view;
         }
 
         private void OnSlotClicked(int index)
         {
             var handler = SlotClicked;
+            if (handler != null) handler(index);
+        }
+
+        private void OnSlotRightClicked(int index)
+        {
+            var handler = SlotRightClicked;
+            if (handler != null) handler(index);
+        }
+
+        private void OnSlotDragStarted(int index)
+        {
+            var handler = SlotDragStarted;
+            if (handler != null) handler(index);
+        }
+
+        private void OnSlotDragging(Vector2 pointer)
+        {
+            var handler = SlotDragging;
+            if (handler != null) handler(pointer);
+        }
+
+        private void OnSlotDragEnded()
+        {
+            var handler = SlotDragEnded;
+            if (handler != null) handler();
+        }
+
+        private void OnSlotDropped(int index)
+        {
+            var handler = SlotDropped;
+            if (handler != null) handler(index);
+        }
+
+        private void OnSlotHovered(int index)
+        {
+            var handler = SlotHovered;
+            if (handler != null) handler(index);
+        }
+
+        private void OnSlotUnhovered(int index)
+        {
+            var handler = SlotUnhovered;
             if (handler != null) handler(index);
         }
     }

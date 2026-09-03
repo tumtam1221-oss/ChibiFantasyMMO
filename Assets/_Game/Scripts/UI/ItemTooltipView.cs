@@ -78,6 +78,14 @@ namespace ChibiFantasy.UI
             return text;
         }
 
+        /// <summary>
+        /// Where the tooltip's keys are translated.
+        /// </summary>
+        /// <remarks>Optional: with none set, keys are drawn raw, which is what every screen
+        /// does until a localisation system exists. See
+        /// <see cref="ILocalizedTextSource"/>.</remarks>
+        public ILocalizedTextSource Text { get; set; }
+
         /// <summary>Shows a snapshot, or hides the tooltip when it is invalid.</summary>
         public void Show(ItemTooltipData data)
         {
@@ -89,8 +97,8 @@ namespace ChibiFantasy.UI
                 return;
             }
 
-            Title = FormatTitle(data);
-            Body = FormatBody(data);
+            Title = FormatTitle(data, Text);
+            Body = FormatBody(data, Text);
             IsVisible = true;
 
             if (titleText != null) titleText.text = Title;
@@ -113,9 +121,23 @@ namespace ChibiFantasy.UI
         /// <summary>The name line, with a stack count when there is more than one.</summary>
         public static string FormatTitle(ItemTooltipData data)
         {
+            return FormatTitle(data, null);
+        }
+
+        /// <summary>
+        /// The name line, translated where a source can translate it.
+        /// </summary>
+        /// <remarks>Falls back to the raw name key, then to the definition id. An item whose
+        /// content was removed by a patch still gets a legible line, which is what makes the
+        /// problem visible instead of silent.</remarks>
+        public static string FormatTitle(ItemTooltipData data, ILocalizedTextSource text)
+        {
             if (!data.IsValid) return string.Empty;
 
-            string name = data.NameKey.IsValid ? data.NameKey.ToString() : data.DefinitionId.ToString();
+            string name = data.NameKey.IsValid
+                ? LocalizedText.Resolve(text, data.NameKey)
+                : data.DefinitionId.ToString();
+
             return data.Quantity > 1 ? name + " x" + data.Quantity : name;
         }
 
@@ -126,6 +148,12 @@ namespace ChibiFantasy.UI
         /// no GameObject, no Canvas and no scene.</remarks>
         public static string FormatBody(ItemTooltipData data)
         {
+            return FormatBody(data, null);
+        }
+
+        /// <summary>The detail block, translated where a source can translate it.</summary>
+        public static string FormatBody(ItemTooltipData data, ILocalizedTextSource text)
+        {
             if (!data.IsValid) return string.Empty;
 
             var builder = new StringBuilder();
@@ -135,7 +163,23 @@ namespace ChibiFantasy.UI
 
             if (data.DescriptionKey.IsValid)
             {
-                builder.Append('\n').Append(data.DescriptionKey);
+                builder.Append('\n').Append(LocalizedText.Resolve(text, data.DescriptionKey));
+            }
+
+            if (data.IsUsable)
+            {
+                // The authored classification, not a guess from the category: an item is
+                // usable because content said so and configured an effect.
+                builder.Append("\nUse: ").Append(data.UseType);
+            }
+
+            if (data.HasWarpDestination)
+            {
+                // The destination's own name where the map could be resolved, its id
+                // otherwise. No town name is written here or anywhere else in the UI.
+                builder.Append("\nWarp to: ").Append(data.WarpDestinationName.IsValid
+                    ? LocalizedText.Resolve(text, data.WarpDestinationName)
+                    : data.WarpDestination.ToString());
             }
 
             if (data.HasLevelRequirement)

@@ -17,6 +17,8 @@ namespace ChibiFantasy.Tests.EditMode
     internal abstract class ItemContainerTestBase
     {
         protected DefinitionRegistry<ItemDefinition> Items;
+        protected DefinitionRegistry<StatusEffectDefinition> StatusEffects;
+        protected DefinitionRegistry<MapDefinition> Maps;
         protected OwnerId Owner;
         private List<Object> _created;
 
@@ -36,6 +38,8 @@ namespace ChibiFantasy.Tests.EditMode
         public void SetUp()
         {
             Items = new DefinitionRegistry<ItemDefinition>();
+            StatusEffects = new DefinitionRegistry<StatusEffectDefinition>();
+            Maps = new DefinitionRegistry<MapDefinition>();
             _created = new List<Object>();
             Owner = new OwnerId("account:test");
 
@@ -86,6 +90,67 @@ namespace ChibiFantasy.Tests.EditMode
 
             _created.Add(definition);
             Items.Register(definition);
+            return definition;
+        }
+
+        /// <summary>
+        /// Authors a usable item exactly as content would.
+        /// </summary>
+        /// <remarks>
+        /// Every figure -- the amount, the duration, the destination -- is a FIXTURE VALUE
+        /// set on the definition. Nothing in <c>ItemUseService</c> knows any of them, which
+        /// is the property these tests exist to hold.
+        /// </remarks>
+        protected ItemDefinition AddUsable(string id, ItemUseType useType,
+            ItemUseEffect[] effects, bool usable = true, bool stackable = true,
+            int maxStack = 99, ItemUseTarget target = ItemUseTarget.Self)
+        {
+            var definition = ScriptableObject.CreateInstance<ItemDefinition>();
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"" + id + "\"},\"_stackable\":" + (stackable ? "true" : "false")
+                + ",\"_maxStackSize\":" + maxStack + ",\"_category\":" + (int)ItemCategory.Consumable
+                + ",\"_usable\":" + (usable ? "true" : "false")
+                + ",\"_useType\":" + (int)useType
+                + ",\"_useTarget\":" + (int)target + "}",
+                definition);
+
+            SetPrivate(definition, "_useEffects", effects ?? new ItemUseEffect[0]);
+
+            _created.Add(definition);
+            Items.Register(definition);
+            return definition;
+        }
+
+        /// <summary>Authors a status effect a buff item can grant.</summary>
+        protected StatusEffectDefinition AddStatusEffect(string id, float duration,
+            StatModifier[] modifiers = null, int maxStacks = 1)
+        {
+            var definition = ScriptableObject.CreateInstance<StatusEffectDefinition>();
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"" + id + "\"},\"_category\":" + (int)StatusEffectCategory.Buff
+                + ",\"_durationSeconds\":" + duration.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + ",\"_maxStacks\":" + maxStacks + "}", definition);
+
+            if (modifiers != null) SetPrivate(definition, "_statModifiers", modifiers);
+
+            _created.Add(definition);
+            StatusEffects.Register(definition);
+            return definition;
+        }
+
+        /// <summary>Authors a map a warp scroll can point at.</summary>
+        protected MapDefinition AddMap(string id, MapCategory category, bool isTown,
+            bool isBossArea = false, string nameKey = null)
+        {
+            var definition = ScriptableObject.CreateInstance<MapDefinition>();
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"" + id + "\"},\"_category\":" + (int)category
+                + ",\"_isTown\":" + (isTown ? "true" : "false")
+                + ",\"_isBossArea\":" + (isBossArea ? "true" : "false")
+                + ",\"_nameKey\":{\"_key\":\"" + (nameKey ?? id + ".name") + "\"}}", definition);
+
+            _created.Add(definition);
+            Maps.Register(definition);
             return definition;
         }
 

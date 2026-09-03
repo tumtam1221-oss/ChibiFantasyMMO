@@ -85,6 +85,16 @@
                     "interactions": "",
                     "initialStateCheck": false,
                     "priority": 0
+                },
+                {
+                    "name": "CancelInteraction",
+                    "type": "Button",
+                    "id": "9d4f5a66-b185-4cad-9e7f-5a4b2c6d8e95",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false,
+                    "priority": 0
                 }
             ],
             "bindings": [
@@ -228,6 +238,17 @@
                     "processors": "",
                     "groups": "",
                     "action": "ToggleStorage",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "ae5a6b77-c296-4bde-8fa0-6b5c3d7e9fa6",
+                    "path": "<Keyboard>/escape",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "CancelInteraction",
                     "isComposite": false,
                     "isPartOfComposite": false
                 }

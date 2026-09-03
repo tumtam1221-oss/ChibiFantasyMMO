@@ -190,7 +190,7 @@ namespace ChibiFantasy.Tests.EditMode
             _controller.OnInventoryClicked(0);
 
             Assert.That(_inventory.Revision, Is.EqualTo(before),
-                "using consumables is not part of this phase and must not be invented here");
+                "the fixture potion is not authored usable, so there is nothing to do");
             Assert.That(_inventory.GetSlot(0).Quantity, Is.EqualTo(3));
         }
 
@@ -241,7 +241,7 @@ namespace ChibiFantasy.Tests.EditMode
             _controller.OnInventoryClicked(0);
             _controller.OnInventoryClicked(0);
 
-            Assert.That(_controller.LastTransferResult.IsAccepted, Is.True);
+            Assert.That(_controller.LastContainerResult.IsAccepted, Is.True);
             Assert.That(_inventory.GetSlot(0).IsEmpty, Is.True);
             Assert.That(_storage.CountOf(new DefinitionId(Potion)), Is.EqualTo(5));
 

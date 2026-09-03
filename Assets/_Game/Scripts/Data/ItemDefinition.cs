@@ -47,6 +47,16 @@ namespace ChibiFantasy.Data
         [SerializeField] private bool _droppable = true;
         [SerializeField] private bool _usable;
 
+        [Header("Use")]
+        [Tooltip("What using this item is for. None means it cannot be used.")]
+        [SerializeField] private ItemUseType _useType = ItemUseType.None;
+
+        [Tooltip("Who it acts on. Only Self is executable today.")]
+        [SerializeField] private ItemUseTarget _useTarget = ItemUseTarget.Self;
+
+        [Tooltip("What it does, in authored order. Empty means nothing happens.")]
+        [SerializeField] private ItemUseEffect[] _useEffects = new ItemUseEffect[0];
+
         public LocalizationKey NameKey => _nameKey;
 
         public LocalizationKey DescriptionKey => _descriptionKey;
@@ -71,6 +81,37 @@ namespace ChibiFantasy.Data
 
         public bool Droppable => _droppable;
 
+        /// <summary>
+        /// Whether a player may use this item at all.
+        /// </summary>
+        /// <remarks>Authored separately from <see cref="UseType"/> so content can disable a
+        /// configured item without deleting its configuration -- an event consumable turned
+        /// off, a quest item that becomes inert. The use service demands both.</remarks>
         public bool Usable => _usable;
+
+        /// <summary>
+        /// What using this item is for.
+        /// </summary>
+        /// <remarks>The item's authored classification, checked against
+        /// <see cref="UseEffects"/> rather than trusted blindly. See
+        /// <see cref="ItemUseType"/>.</remarks>
+        public ItemUseType UseType => _useType;
+
+        /// <summary>Who it acts on. See <see cref="ItemUseTarget"/>.</summary>
+        public ItemUseTarget UseTarget => _useTarget;
+
+        /// <summary>
+        /// What it does, in authored order.
+        /// </summary>
+        /// <remarks>
+        /// Order is the authored order and is preserved on execution, because a food that
+        /// restores health and then grants a buff scaled off it must not run backwards.
+        ///
+        /// Never null: an item authored before this field existed reads as an empty array,
+        /// which is refused as unusable rather than crashing a save.
+        /// </remarks>
+        public ItemUseEffect[] UseEffects => _useEffects ?? NoEffects;
+
+        private static readonly ItemUseEffect[] NoEffects = new ItemUseEffect[0];
     }
 }
