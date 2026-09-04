@@ -209,6 +209,46 @@ namespace ChibiFantasy.Backend
                 : 0;
         }
 
+        /// <summary>
+        /// The raw token at a key, unparsed.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="Int"/> reads integers, which was all Phase 15's payload of ids and
+        /// counts contained. Spawn positions and respawn delays are decimals, and rather
+        /// than teach this deliberately small scanner a float type -- and with it a locale
+        /// question it has no business having an opinion on -- the caller takes the token
+        /// and parses it with the culture it wants.
+        ///
+        /// Returns empty for a missing key, a string value or anything that is not a bare
+        /// number, so a caller's own fallback applies.
+        /// </remarks>
+        public string Raw(string key)
+        {
+            int value = ValueStart(key);
+
+            if (value < 0) return string.Empty;
+
+            char first = _json[value];
+
+            if (first == '"' || first == '{' || first == '[') return string.Empty;
+
+            int end = value;
+
+            while (end < _json.Length)
+            {
+                char c = _json[end];
+
+                bool numeric = char.IsDigit(c) || c == '-' || c == '+' || c == '.'
+                    || c == 'e' || c == 'E';
+
+                if (!numeric) break;
+
+                end++;
+            }
+
+            return end > value ? _json.Substring(value, end - value) : string.Empty;
+        }
+
         /// <summary>The boolean at a key. Missing reads as false.</summary>
         public bool Bool(string key)
         {

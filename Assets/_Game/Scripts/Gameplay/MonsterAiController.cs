@@ -211,8 +211,9 @@ namespace ChibiFantasy.Gameplay
         /// whole targeting policy: a threat table, taunts, party hate and boss aggro are
         /// later systems, and this is the single method they replace.
         ///
-        /// A passive monster never picks anything, so it only fights back once something
-        /// else sets its target.
+        /// A passive or defensive monster never picks anything, so it only fights back once
+        /// something else sets its target -- which is what the retaliation seam on the world
+        /// runtime does when one of them is attacked.
         /// </remarks>
         public ICombatant SelectTarget(IReadOnlyList<ICombatant> candidates)
         {
@@ -220,7 +221,20 @@ namespace ChibiFantasy.Gameplay
 
             MonsterDefinition definition = _monster.Definition;
 
-            if (definition.AggressionType == MonsterAggressionType.Passive) return null;
+            // Passive and Defensive never pick a target from proximity. The difference
+            // between them is what happens when they are hit, which is not this method's
+            // question: retaliation arrives through MonsterRuntimeState.SetTarget, and
+            // ResolveTarget honours an existing target whatever the aggression type.
+            //
+            // Aggressive and AssistOnly continue to acquire on sight. AssistOnly's real
+            // semantics -- joining a fight a neighbour is already in -- are not implemented
+            // anywhere in this project, and inventing them here would be a balance decision
+            // made by accident, so its existing behaviour is preserved unchanged.
+            if (definition.AggressionType == MonsterAggressionType.Passive
+                || definition.AggressionType == MonsterAggressionType.Defensive)
+            {
+                return null;
+            }
 
             float range = definition.DetectionRange;
             if (range <= 0f) return null;

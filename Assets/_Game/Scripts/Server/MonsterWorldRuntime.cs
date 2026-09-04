@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using ChibiFantasy.Contracts;
 using ChibiFantasy.Core;
 using ChibiFantasy.Data;
 using ChibiFantasy.Gameplay;
@@ -85,6 +86,34 @@ namespace ChibiFantasy.Server
         }
     }
 
+    /// <summary>What applying a spawn configuration did.</summary>
+    public readonly struct SpawnConfigurationResult
+    {
+        public SpawnConfigurationResult(int accepted, int rejected, int preserved)
+        {
+            Accepted = accepted;
+            Rejected = rejected;
+            Preserved = preserved;
+        }
+
+        /// <summary>Nests that became live spawn points.</summary>
+        public int Accepted { get; }
+
+        /// <summary>Rows refused by validation. Counted so an operator can see them.</summary>
+        public int Rejected { get; }
+
+        /// <summary>Monsters already standing that the reload left alone.</summary>
+        public int Preserved { get; }
+
+        public bool IsApplied => Accepted > 0;
+
+        public override string ToString()
+        {
+            return Accepted + " accepted, " + Rejected + " rejected, "
+                + Preserved + " preserved";
+        }
+    }
+
     /// <summary>
     /// The monsters on this world server: who exists, what they are doing, and who they are.
     /// </summary>
@@ -144,6 +173,26 @@ namespace ChibiFantasy.Server
 
         /// <summary>Reused per spawner, so retiring allocates nothing in a steady state.</summary>
         private readonly List<string> _retiring = new List<string>();
+
+        /// <summary>
+        /// The spawners a configuration reload owns, by the database row that made them.
+        /// </summary>
+        /// <remarks>
+        /// Keyed by row id so a reload can find the nest it is changing and edit it in
+        /// place. Spawners added by <see cref="AddSpawnPoint"/> from authored content are
+        /// deliberately absent: a configuration reload manages only its own nests and never
+        /// touches an authored one.
+        /// </remarks>
+        private readonly Dictionary<string, MonsterSpawnService> _configured =
+            new Dictionary<string, MonsterSpawnService>();
+
+        /// <summary>
+        /// How many each configured nest should start with, by the same row id.
+        /// </summary>
+        /// <remarks>Kept beside the spawners rather than inside Phase 10's
+        /// <c>MonsterSpawnPoint</c>, which has no field for it and should not grow one for a
+        /// value only the initial fill uses.</remarks>
+        private readonly Dictionary<string, int> _initialCounts = new Dictionary<string, int>();
 
         /// <param name="players">Where the players are. Read, never written.</param>
         /// <param name="definitions">Authored monsters. No monster exists without one.</param>
@@ -307,6 +356,11 @@ namespace ChibiFantasy.Server
             for (int i = 0; i < _spawners.Count; i++)
             {
                 int due = _spawners[i].Tick(deltaSeconds);
+
+                // A retired nest still runs its timers down -- it simply never replaces
+                // anything, which is what "no longer configured" has to mean for a nest
+                // whose monsters are still standing.
+                if (_spawners[i].IsRetired) continue;
 
                 for (int n = 0; n < due; n++)
                 {
@@ -472,6 +526,235 @@ namespace ChibiFantasy.Server
             }
 
             return MonsterDefeatService.Resolve(living.State, killer, drops, loot, participants);
+        }
+
+        /// <summary>
+        /// Tells a monster it was attacked, so a defensive one can fight back.
+        /// </summary>
+        /// <remarks>
+        /// <b>The retaliation seam, and the whole of Defensive.</b> Passive and Defensive
+        /// both refuse to acquire a target from proximity; what separates them is this call.
+        /// A defensive monster that is hit acquires its attacker, and from there the
+        /// existing state machine chases and strikes exactly as it would for an aggressive
+        /// one -- no second AI, no second combat path.
+        ///
+        /// <b>Called by the server after combat resolved, never by a client.</b> There is
+        /// no message that reaches it and no connection id in its signature. A client cannot
+        /// hand a monster a target, which is what stops a player pointing a boss at somebody
+        /// else.
+        ///
+        /// <b>Passive is left alone deliberately.</b> The brief's initial definition is
+        /// "never auto-aggro, never initiate an attack", and being struck does not make a
+        /// passive creature initiate. Aggressive and AssistOnly already acquire on sight, so
+        /// telling them again changes nothing -- but an attacker out of their notice is
+        /// still worth acquiring, which is why they are not excluded.
+        ///
+        /// Returns whether a target was actually taken, so a caller can log a retaliation
+        /// without inferring it.
+        /// </remarks>
+        public bool NotifyAttacked(InstanceId monster, InstanceId attacker)
+        {
+            if (!TryGetMonster(monster, out LivingMonster living)) return false;
+
+            // A corpse does not retaliate, and neither does a monster attacked by nobody.
+            if (!living.IsAlive || !attacker.IsValid) return false;
+
+            if (living.State.Definition == null) return false;
+
+            if (living.State.Definition.AggressionType == MonsterAggressionType.Passive)
+            {
+                return false;
+            }
+
+            // Already fighting somebody. Switching to whoever hit last would let two
+            // players drag a monster back and forth, and target-swapping policy is a
+            // threat-table decision this project has not made.
+            if (living.State.HasTarget) return false;
+
+            // The attacker has to be something this server holds, on the same map. An id
+            // that resolves to nothing is not a target, however it arrived.
+            if (!TryResolve(attacker, out ICombatant combatant) || !combatant.IsAlive())
+            {
+                return false;
+            }
+
+            if (!TryGetMap(attacker, out DefinitionId attackerMap)
+                || attackerMap != living.Map)
+            {
+                return false;
+            }
+
+            living.State.SetTarget(attacker);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Replaces this map's spawn points with a validated configuration.
+        /// </summary>
+        /// <remarks>
+        /// <b>Existing monsters are never destroyed by a reload.</b> Removing a nest stops
+        /// it producing more; the ones already standing live out their lives normally. A
+        /// designer unticking a box should not delete the monster a player is mid-fight
+        /// with, and a reload that killed everything would make configuration changes
+        /// something nobody dares do on a live server.
+        ///
+        /// <b>Nothing invalid gets in.</b> Every row is put through
+        /// <see cref="SpawnConfigurationValidator"/> first, and a refused row is counted and
+        /// skipped rather than corrected. If the whole configuration is unusable the runtime
+        /// is left exactly as it was -- a bad reload is a no-op, not an empty map.
+        ///
+        /// <b>Not a client-reachable call.</b> No connection id, no message, no route. An
+        /// operator changes the database and an administrator triggers a reload; a player
+        /// has no path to either.
+        /// </remarks>
+        public SpawnConfigurationResult ApplyConfiguration(MapSpawnConfiguration configuration,
+            IDefinitionRegistry<MapDefinition> maps)
+        {
+            if (configuration == null || _definitions == null || !configuration.Map.IsValid)
+            {
+                return new SpawnConfigurationResult(0, 0, 0);
+            }
+
+            var rows = new List<MonsterSpawnConfiguration>();
+            int rejected = 0;
+
+            for (int i = 0; i < configuration.SpawnPoints.Count; i++)
+            {
+                MonsterSpawnConfiguration row = configuration.SpawnPoints[i];
+
+                // A payload about one map may only configure that map. A row for somewhere
+                // else is a disagreement between what was asked for and what came back, and
+                // applying it would let one map's reload edit another map's nests.
+                if (row.Map != configuration.Map)
+                {
+                    rejected++;
+
+                    continue;
+                }
+
+                // A row with no id cannot be found again on the next reload, so it would
+                // spawn a second nest every time somebody pressed reload.
+                if (string.IsNullOrEmpty(row.SpawnPointId)
+                    || !SpawnConfigurationValidator.Validate(row, maps, _definitions).IsAccepted)
+                {
+                    rejected++;
+
+                    continue;
+                }
+
+                rows.Add(row);
+            }
+
+            if (rows.Count == 0 && rejected > 0)
+            {
+                // Every row was bad. Leaving the runtime alone is safer than emptying a map
+                // because somebody broke a spreadsheet.
+                return new SpawnConfigurationResult(0, rejected, PreservedOn(configuration.Map));
+            }
+
+            var named = new HashSet<string>();
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                MonsterSpawnConfiguration row = rows[i];
+
+                named.Add(row.SpawnPointId);
+
+                var point = new MonsterSpawnPoint(row.Monster,
+                    new CombatPosition(row.X, row.Y, row.Z), row.Radius, row.MaxAlive,
+                    row.RespawnSeconds, row.Map);
+
+                _initialCounts[row.SpawnPointId] = row.InitialCount;
+
+                if (_configured.TryGetValue(row.SpawnPointId,
+                    out MonsterSpawnService existing))
+                {
+                    // Edited in place. The spawner object is what remembers which monsters
+                    // came from this nest and how far their respawn timers have run;
+                    // replacing it would forget both, so the map would double and every
+                    // pending respawn would restart.
+                    existing.Reconfigure(point);
+
+                    continue;
+                }
+
+                var spawner = new MonsterSpawnService(point, _maxHealthStat);
+
+                _configured[row.SpawnPointId] = spawner;
+                _spawners.Add(spawner);
+            }
+
+            // A nest the configuration no longer names stops producing. It is kept rather
+            // than dropped, because dropping it would strand the monsters it already made:
+            // they are ticked, moved, and retired through their own spawner.
+            foreach (KeyValuePair<string, MonsterSpawnService> pair in _configured)
+            {
+                if (named.Contains(pair.Key)) continue;
+
+                if (pair.Value.Point.Map != configuration.Map) continue;
+
+                pair.Value.Retire();
+            }
+
+            return new SpawnConfigurationResult(rows.Count, rejected,
+                PreservedOn(configuration.Map));
+        }
+
+        /// <summary>Monsters already standing on a map, which a reload never disturbs.</summary>
+        private int PreservedOn(DefinitionId map)
+        {
+            int preserved = 0;
+
+            foreach (KeyValuePair<string, LivingMonster> pair in _byInstance)
+            {
+                if (pair.Value.Map == map) preserved++;
+            }
+
+            return preserved;
+        }
+
+        /// <summary>
+        /// Fills each nest to the count its configuration asked for.
+        /// </summary>
+        /// <remarks>
+        /// Distinct from <see cref="PopulateAll"/>, which fills to capacity. A nest may be
+        /// configured to start with fewer than it can hold -- twenty Porings in a clearing
+        /// that tops out at twenty is one setting, five Orcs in a camp that holds five is
+        /// another, and a map that starts half full is a legitimate third.
+        ///
+        /// Never exceeds max alive, because the spawn service refuses beyond its own
+        /// capacity and this asks for the smaller of the two numbers.
+        /// </remarks>
+        public int PopulateToConfiguredCount()
+        {
+            int spawned = 0;
+
+            foreach (KeyValuePair<string, MonsterSpawnService> pair in _configured)
+            {
+                MonsterSpawnService spawner = pair.Value;
+
+                if (spawner.IsRetired) continue;
+
+                int wanted = spawner.Point.MaxAlive;
+
+                if (_initialCounts.TryGetValue(pair.Key, out int configured)
+                    && configured < wanted)
+                {
+                    wanted = configured;
+                }
+
+                // Counts what is already standing, so calling this after a reload tops a
+                // nest up rather than doubling it.
+                while (spawner.AliveCount < wanted)
+                {
+                    if (!TrySpawnFrom(spawner)) break;
+
+                    spawned++;
+                }
+            }
+
+            return spawned;
         }
 
         public bool TryGetMonster(InstanceId instance, out LivingMonster monster)

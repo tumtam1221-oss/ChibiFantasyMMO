@@ -96,7 +96,7 @@ namespace ChibiFantasy.Gameplay
         private readonly List<MonsterRuntimeState> _alive = new List<MonsterRuntimeState>();
         private readonly List<float> _pendingRespawns = new List<float>();
 
-        private readonly MonsterSpawnPoint _point;
+        private MonsterSpawnPoint _point;
         private readonly DefinitionId _maxHealthStat;
 
         /// <summary>
@@ -114,6 +114,42 @@ namespace ChibiFantasy.Gameplay
         }
 
         public MonsterSpawnPoint Point => _point;
+
+        /// <summary>
+        /// Whether this point has stopped producing monsters.
+        /// </summary>
+        /// <remarks>
+        /// Set when configuration stops naming a nest. The ones it already spawned are
+        /// deliberately left alone -- they keep ticking, keep fighting, and are retired
+        /// normally when they die; they are simply never replaced. Deleting them instead
+        /// would mean an operator unticking a box kills the monster somebody is mid-fight
+        /// with, and this spawner is also what keeps them ticking at all.
+        /// </remarks>
+        public bool IsRetired { get; private set; }
+
+        /// <summary>Stops this point spawning anything further.</summary>
+        public void Retire()
+        {
+            IsRetired = true;
+        }
+
+        /// <summary>
+        /// Points this spawner at a changed configuration, keeping its population.
+        /// </summary>
+        /// <remarks>
+        /// A reload edits the nest in place rather than replacing the object, because the
+        /// object is what remembers which monsters came from here and how far their respawn
+        /// timers have run. Rebuilding it would forget both -- the map would double, and
+        /// every pending respawn would restart.
+        ///
+        /// A lowered maximum is honoured without killing anybody: <see cref="TrySpawn"/>
+        /// already refuses past capacity, so the surplus simply is not replaced as it dies.
+        /// </remarks>
+        public void Reconfigure(in MonsterSpawnPoint point)
+        {
+            _point = point;
+            IsRetired = false;
+        }
 
         /// <summary>Everything currently alive from this point.</summary>
         public IReadOnlyList<MonsterRuntimeState> Alive => _alive;

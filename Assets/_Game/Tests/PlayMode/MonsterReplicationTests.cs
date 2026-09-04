@@ -65,6 +65,7 @@ namespace ChibiFantasy.Tests.PlayMode
         private NetworkManager _client;
         private MonsterWorldRuntime _runtime;
         private MonsterReplicationService _replication;
+        private DefinitionRegistry<MapDefinition> _maps;
         private readonly List<Object> _created = new List<Object>();
         private ushort _port;
 
@@ -124,6 +125,9 @@ namespace ChibiFantasy.Tests.PlayMode
             var monsters = new DefinitionRegistry<MonsterDefinition>();
             monsters.Register(Monster(Grunt));
 
+            _maps = new DefinitionRegistry<MapDefinition>();
+            _maps.Register(Map(HomeMap));
+
             _runtime = new MonsterWorldRuntime(
                 new WorldCharacterRegistry(new FakeStore(), spawns),
                 monsters, new DefinitionId(MaxHp), new CombatTeam(2));
@@ -153,6 +157,18 @@ namespace ChibiFantasy.Tests.PlayMode
             }
 
             _created.Clear();
+        }
+
+        private MapDefinition Map(string id)
+        {
+            var definition = ScriptableObject.CreateInstance<MapDefinition>();
+
+            JsonUtility.FromJsonOverwrite("{\"_id\":{\"_value\":\"" + id + "\"}}",
+                definition);
+
+            _created.Add(definition);
+
+            return definition;
         }
 
         private MonsterDefinition Monster(string id)
@@ -392,6 +408,119 @@ namespace ChibiFantasy.Tests.PlayMode
         }
 
         // ---- lifecycle -------------------------------------------------------------------------------
+
+        // ---- 41-48: what the database configured is what the client sees -----------------
+
+        /// <summary>One nest, exactly as a row of monster_spawn_point describes it.</summary>
+        private static MapSpawnConfiguration Configured(int maxAlive = 1, int initial = 1)
+        {
+            return new MapSpawnConfiguration(new DefinitionId(HomeMap), new[]
+            {
+                new MonsterSpawnConfiguration("row-1", new DefinitionId(HomeMap),
+                    new DefinitionId(Grunt), 3f, 0f, 4f, 0f, initial, maxAlive, 0f),
+            }, null);
+        }
+
+        [UnityTest]
+        public IEnumerator AMonsterConfiguredInTheDatabaseReplicatesToTheClient()
+        {
+            yield return StartServerAndClient();
+
+            SpawnConfigurationResult applied =
+                _runtime.ApplyConfiguration(Configured(), _maps);
+
+            Assert.That(applied.Accepted, Is.EqualTo(1), "configuration was not applied");
+            Assert.That(_runtime.PopulateToConfiguredCount(), Is.EqualTo(1));
+            Assert.That(_replication.Synchronise(), Is.EqualTo(1));
+
+            yield return Until(() => ClientObserved() != null);
+
+            MonsterNetworkEntity observed = ClientObserved();
+
+            Assert.That(observed, Is.Not.Null,
+                "a monster that exists only because of a database row must still be a "
+                + "real replicated monster");
+            Assert.That(observed.Definition.Value, Is.EqualTo(Grunt));
+            Assert.That(observed.Map.Value, Is.EqualTo(HomeMap));
+
+            // The position came from the configuration, through the server, to the client.
+            yield return Until(() => ClientObserved() != null && ClientObserved().X != 0f);
+
+            Assert.That(ClientObserved().X, Is.EqualTo(3f).Within(0.001f));
+            Assert.That(ClientObserved().Z, Is.EqualTo(4f).Within(0.001f));
+        }
+
+        [UnityTest]
+        public IEnumerator ReloadingConfigurationDoesNotRespawnWhatTheClientAlreadySees()
+        {
+            yield return StartServerAndClient();
+
+            _runtime.ApplyConfiguration(Configured(), _maps);
+            _runtime.PopulateToConfiguredCount();
+            _replication.Synchronise();
+
+            yield return Until(() => ClientObserved() != null);
+
+            MonsterNetworkEntity before = ClientObserved();
+
+            Assert.That(before, Is.Not.Null, "precondition");
+
+            int objectId = before.NetworkObject.ObjectId;
+
+            _runtime.ApplyConfiguration(Configured(), _maps);
+
+            Assert.That(_runtime.PopulateToConfiguredCount(), Is.Zero);
+            Assert.That(_replication.Synchronise(), Is.Zero,
+                "a reload that respawned everything would flicker every monster on every "
+                + "client");
+
+            yield return null;
+
+            Assert.That(_replication.SpawnedCount, Is.EqualTo(1));
+            Assert.That(ClientObserved(), Is.Not.Null);
+            Assert.That(ClientObserved().NetworkObject.ObjectId, Is.EqualTo(objectId),
+                "it is the same object, not a replacement");
+        }
+
+        [UnityTest]
+        public IEnumerator ARaisedMaxAliveSpawnsTheDifferenceAndReplicatesIt()
+        {
+            yield return StartServerAndClient();
+
+            _runtime.ApplyConfiguration(Configured(), _maps);
+            _runtime.PopulateToConfiguredCount();
+            _replication.Synchronise();
+
+            yield return Until(() => _replication.SpawnedCount == 1);
+
+            _runtime.ApplyConfiguration(Configured(maxAlive: 3, initial: 3), _maps);
+
+            Assert.That(_runtime.PopulateToConfiguredCount(), Is.EqualTo(2),
+                "only the difference, not a fresh three");
+            Assert.That(_replication.Synchronise(), Is.EqualTo(2));
+
+            yield return Until(() => CountObserved() == 3);
+
+            Assert.That(CountObserved(), Is.EqualTo(3),
+                "an operator raising a number in the database is visible to players");
+        }
+
+        /// <summary>How many monsters the client can currently see.</summary>
+        private int CountObserved()
+        {
+            int count = 0;
+
+            foreach (KeyValuePair<int, NetworkObject> pair in _client.ClientManager.Objects.Spawned)
+            {
+                if (pair.Value != null
+                    && pair.Value.GetComponent<MonsterNetworkEntity>() != null)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
 
         [UnityTest]
         public IEnumerator SynchronisingTwiceDoesNotSpawnTwice()

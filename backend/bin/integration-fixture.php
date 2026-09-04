@@ -62,7 +62,7 @@ $pdo->exec('SET FOREIGN_KEY_CHECKS = 0');
 
 foreach (['account_session_token', 'account_session', 'request_result', 'login_attempt',
           '`character`', 'server_channel', 'server_definition', 'account_credential',
-          'account'] as $table) {
+          'account', 'monster_spawn_point', 'monster_ai_configuration'] as $table) {
     $pdo->exec("DELETE FROM {$table}");
 }
 
@@ -107,6 +107,73 @@ $pdo->prepare(
     ':name' => 'Itest',
 ]);
 
+// Monster spawn configuration for the same map the character stands on, so a live world
+// server reading /api/world/spawn-configuration finds something real.
+//
+// Three rows on purpose. Two are valid and differ in every field a designer would change,
+// which is what proves the numbers travel rather than defaults. The third is valid SQL and
+// invalid configuration -- it asks for more monsters than the nest holds -- because the
+// endpoint reporting a named rejection is a behaviour a live test should cover, and it is
+// the kind of mistake a spreadsheet actually produces.
+$spawn = $pdo->prepare(
+    'INSERT INTO monster_spawn_point
+        (spawn_point_id, map_definition_id, monster_definition_id,
+         position_x, position_y, position_z, spawn_radius,
+         initial_spawn_count, max_alive, respawn_seconds, enabled,
+         spawn_group_id, created_at, updated_at)
+     VALUES (:id, :map, :monster, :x, :y, :z, :radius,
+             :initial, :max_alive, :respawn, :enabled, :grp, NOW(3), NOW(3))'
+);
+
+foreach ([
+    ['itest-spawn-a', 'monster.poring', 12.5, 0.0, -7.25, 4.0, 2, 5, 30.0, 1, 'itest-group'],
+    ['itest-spawn-b', 'monster.lunatic', -3.0, 1.5, 8.0, 0.0, 1, 1, 0.0, 1, null],
+    ['itest-spawn-over', 'monster.poring', 0.0, 0.0, 0.0, 0.0, 9, 2, 10.0, 1, null],
+    ['itest-spawn-off', 'monster.hidden', 0.0, 0.0, 0.0, 0.0, 1, 1, 0.0, 0, null],
+] as [$id, $monster, $x, $y, $z, $radius, $initial, $maxAlive, $respawn, $enabled, $group]) {
+    $spawn->execute([
+        ':id'        => $id,
+        ':map'       => 'map.town',
+        ':monster'   => $monster,
+        ':x'         => $x,
+        ':y'         => $y,
+        ':z'         => $z,
+        ':radius'    => $radius,
+        ':initial'   => $initial,
+        ':max_alive' => $maxAlive,
+        ':respawn'   => $respawn,
+        ':enabled'   => $enabled,
+        ':grp'       => $group,
+    ]);
+}
+
+// One AI override per behaviour worth distinguishing, including the defensive one this
+// phase completed. Nulls are left where nothing is overridden, which is the case the
+// endpoint has to carry as "use the authored value" rather than as zero.
+$ai = $pdo->prepare(
+    'INSERT INTO monster_ai_configuration
+        (monster_definition_id, aggression_type, detection_range, chase_range,
+         attack_range, attack_cooldown, move_speed, enabled, created_at, updated_at)
+     VALUES (:monster, :aggression, :detection, :chase, :attack_range, :cooldown,
+             :speed, 1, NOW(3), NOW(3))'
+);
+
+foreach ([
+    ['monster.poring', 0, 0.0, null, null, null, 1.5],
+    ['monster.lunatic', 1, 9.0, 18.0, 1.75, 2.5, 3.25],
+    ['monster.hidden', 2, 14.0, null, null, null, null],
+] as [$monster, $aggression, $detection, $chase, $attackRange, $cooldown, $speed]) {
+    $ai->execute([
+        ':monster'      => $monster,
+        ':aggression'   => $aggression,
+        ':detection'    => $detection,
+        ':chase'        => $chase,
+        ':attack_range' => $attackRange,
+        ':cooldown'     => $cooldown,
+        ':speed'        => $speed,
+    ]);
+}
+
 $storage = __DIR__ . '/../storage';
 
 if (!is_dir($storage) && !mkdir($storage, 0770, true) && !is_dir($storage)) {
@@ -137,4 +204,6 @@ echo "  account   {$accountId}\n";
 echo "  server    {$serverId}\n";
 echo "  channel   {$channelId}\n";
 echo "  character {$characterId}\n";
+echo "  spawns    4 rows on map.town (one invalid on purpose, one disabled)\n";
+echo "  ai        3 monster_ai_configuration rows\n";
 echo "  credential written to storage/integration-fixture.json (gitignored)\n";

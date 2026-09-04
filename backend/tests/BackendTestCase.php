@@ -59,6 +59,10 @@ abstract class BackendTestCase extends TestCase
         'guild_member',
         'guild_rank',
         'guild',
+        // Phase 17.13 monster configuration. Referenced by DefinitionId only, so
+        // they have no foreign keys and their position here does not matter.
+        'monster_spawn_point',
+        'monster_ai_configuration',
         // Phase 17 character state. Children of `character`, so before it.
         'character_save_revision',
         'character_skill',

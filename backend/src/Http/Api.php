@@ -16,6 +16,7 @@ use ChibiFantasy\Session\SessionRepository;
 use ChibiFantasy\Session\SessionService;
 use ChibiFantasy\Session\VersionPolicy;
 use ChibiFantasy\Support\Env;
+use ChibiFantasy\World\MonsterSpawnRepository;
 use PDO;
 
 /**
@@ -44,6 +45,7 @@ final class Api
     private readonly DirectoryRepository $directory;
     private readonly CharacterRepository $characters;
     private readonly CharacterStateRepository $characterState;
+    private readonly MonsterSpawnRepository $monsterSpawns;
     private readonly IdempotencyStore $idempotency;
 
     public function __construct(private readonly PDO $pdo)
@@ -54,6 +56,7 @@ final class Api
         $this->directory = new DirectoryRepository($pdo);
         $this->characters = new CharacterRepository($pdo);
         $this->characterState = new CharacterStateRepository($pdo);
+        $this->monsterSpawns = new MonsterSpawnRepository($pdo);
         $this->idempotency = new IdempotencyStore($pdo);
         $this->flow = new SessionService(
             $pdo,
@@ -134,6 +137,9 @@ final class Api
 
             $request->method === 'POST' && $path === '/api/character/state'
                 => $this->saveCharacterState($request, $requestId),
+
+            $request->method === 'GET' && $path === '/api/world/spawn-configuration'
+                => $this->spawnConfiguration($request, $requestId),
 
             $request->method === 'GET' && $path === '/api/health'
                 => Response::ok(['status' => 'ok']),
@@ -492,6 +498,49 @@ final class Api
         $body['request_id'] = $requestId;
 
         return Response::ok($body);
+    }
+
+    /**
+     * The monster spawn and AI configuration for one map.
+     *
+     * **Read-only, and deliberately unauthenticated.** A world server has no player
+     * session and no credential of its own -- by design, since Phase 16 kept every
+     * secret out of Unity -- so it cannot present a bearer token for its own startup
+     * read. The alternatives were to invent a server credential and ship it with the
+     * build, or to make this endpoint readable.
+     *
+     * Readable is the safer of the two. Spawn configuration is level design, not a
+     * secret: any player learns where the monsters are by walking the map. A
+     * credential in a client build, by contrast, is a credential in every player's
+     * hands. This carries no account data, no character data and no token, and there
+     * is no write path -- a client that calls it learns where monsters spawn, which
+     * it was going to find out anyway, and can change nothing.
+     *
+     * Rejected rows are reported alongside the accepted ones rather than dropped, so
+     * a misconfigured nest appears in an operator's log instead of silently failing
+     * to populate.
+     */
+    private function spawnConfiguration(Request $request, string $requestId): Response
+    {
+        $mapId = (string) $request->query('map_id', '');
+
+        if ($mapId === '') {
+            return Response::problem(
+                ApiProblem::validation('invalid_map_id', 'error.field_required'),
+                $requestId
+            );
+        }
+
+        $spawns = $this->monsterSpawns->loadSpawnPoints($mapId);
+        $ai = $this->monsterSpawns->loadAiConfiguration();
+
+        return Response::ok([
+            'map_id'         => $mapId,
+            'spawn_points'   => $spawns['points'],
+            'ai_configurations' => $ai['configurations'],
+            'rejected_spawn_points' => $spawns['rejected'],
+            'rejected_ai_configurations' => $ai['rejected'],
+        ]);
     }
 
     /**
