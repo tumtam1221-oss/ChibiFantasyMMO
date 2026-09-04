@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using ChibiFantasy.Backend;
 using ChibiFantasy.Contracts;
 using ChibiFantasy.Core;
@@ -59,6 +60,19 @@ namespace ChibiFantasy.Server
         [Tooltip("Start listening as soon as this component wakes.")]
         [SerializeField] private bool _startOnAwake = true;
 
+        [Header("World content")]
+        [Tooltip("The world's authored content. Absent means session-only, no simulation.")]
+        [SerializeField] private WorldContentCatalogue _content;
+
+        [Tooltip("How far a basic attack reaches, in metres.")]
+        [SerializeField] private float _meleeReachMetres = 2.5f;
+
+        [Tooltip("The team monsters fight on. Players are team one.")]
+        [SerializeField] private int _monsterTeam = 2;
+
+        [Tooltip("The networked character object the world spawns per player.")]
+        [SerializeField] private FishNet.Object.NetworkObject _characterPrefab;
+
         /// <summary>
         /// Spawn points, so arrivals resolve from authored data rather than coordinates.
         /// </summary>
@@ -96,9 +110,33 @@ namespace ChibiFantasy.Server
         /// <summary>How many world ticks have run. For diagnostics.</summary>
         public long Ticks => Simulation == null ? 0L : Simulation.Ticks;
 
+        /// <summary>
+        /// Whether a character may be admitted into a world that can hold them.
+        /// </summary>
+        /// <remarks>
+        /// <b>Listening and ready are different things.</b> A socket is open long before a
+        /// world exists, and a player admitted into a world with no content is a player who
+        /// is disconnected a moment later for having nowhere to stand. One flag rather than a
+        /// state machine, because two states is not a state machine.
+        /// </remarks>
+        public bool IsWorldReady { get; private set; }
+
+        /// <summary>What content validation refused, if it did. For an operator's log.</summary>
+        /// <remarks>Content faults only -- ids, missing formulas, unplaceable spawns. No
+        /// address, no credential and no token ever reaches this list.</remarks>
+        public IReadOnlyList<string> ContentFaults => _contentFaults;
+
+        /// <summary>Loads monster nests from the backend. Null on a world with no source.</summary>
+        public MonsterConfigurationLoader MonsterConfiguration { get; private set; }
+
+        private readonly List<string> _contentFaults = new List<string>();
+
         public ServerId Server => new ServerId(_serverId);
 
         public ChannelId Channel => new ChannelId(_channelId);
+
+        /// <summary>The team players fight on. Monsters are the other one.</summary>
+        private static CombatTeam PlayerTeam => new CombatTeam(1);
 
         public bool IsListening { get; private set; }
 
@@ -124,16 +162,23 @@ namespace ChibiFantasy.Server
         /// <remarks>Separated from <see cref="Awake"/> so a test or an editor harness can
         /// compose the same graph with a different authority and never open a socket.</remarks>
         public void Compose(IWorldSessionAuthority authority = null,
-            VersionRequirement required = default)
+            VersionRequirement required = default,
+            ICharacterStateStore characters = null,
+            IMonsterSpawnConfigurationSource spawnConfiguration = null)
         {
             Registry = new WorldConnectionRegistry();
 
             if (authority == null)
             {
                 // Composed on the transport's own side of the line: this file names no
-                // transport, no URL scheme and no HTTP type.
-                authority = BackendAuthority.OverHttp(_apiBaseAddress, _apiTimeoutSeconds,
-                    out _authorityLifetime);
+                // transport, no URL scheme and no HTTP type. One connection serves the
+                // session authority, the character store and the monster configuration.
+                authority = BackendAuthority.WorldServicesOverHttp(_apiBaseAddress,
+                    _apiTimeoutSeconds, out ICharacterStateStore store,
+                    out IMonsterSpawnConfigurationSource nests, out _authorityLifetime);
+
+                characters = characters ?? store;
+                spawnConfiguration = spawnConfiguration ?? nests;
             }
 
             Coordinator = new WorldEntryCoordinator(authority, Registry, required);
@@ -150,7 +195,140 @@ namespace ChibiFantasy.Server
 
             _networkManager.ServerManager.SetAuthenticator(_authenticator);
             _networkManager.ServerManager.OnRemoteConnectionState += OnRemoteConnectionState;
+
+            ComposeWorld(characters, spawnConfiguration);
         }
+
+        /// <summary>
+        /// Builds the world this process simulates, from authored content.
+        /// </summary>
+        /// <remarks>
+        /// <b>The order is the point.</b> Content is validated before a registry is built, a
+        /// registry before an authority, every authority before the simulation, and the
+        /// simulation before <see cref="IsWorldReady"/> is set -- which is what admission
+        /// waits on. A player therefore cannot arrive in a world that is still assembling.
+        ///
+        /// <b>Refusing is a real outcome.</b> Content that does not validate leaves the world
+        /// unready and the reasons in <see cref="ContentFaults"/>. The socket may still be
+        /// listening -- this process is a session authority too -- but nobody is admitted
+        /// into a world that cannot hold them, and nothing invents a fallback definition to
+        /// paper over it.
+        ///
+        /// <b>Every number comes from the catalogue.</b> No definition id appears below;
+        /// which stat is the health ceiling and how fast a character walks are content.
+        /// </remarks>
+        private void ComposeWorld(ICharacterStateStore characters,
+            IMonsterSpawnConfigurationSource spawnConfiguration)
+        {
+            IsWorldReady = false;
+            _contentFaults.Clear();
+
+            // Nothing of the previous world survives a recomposition. Leaving a simulation
+            // standing behind a world that was refused is worse than having none: it would
+            // keep ticking, keep saving characters, and answer to nobody.
+            Simulation = null;
+            Characters = null;
+            MonsterConfiguration = null;
+
+            // A session-only process: it admits, places and releases, and simulates nothing.
+            // Legitimate, and not a fault.
+            if (_content == null) return;
+
+            if (!_content.Validate(_contentFaults))
+            {
+                Debug.LogError("[world] content refused; the world will not start. "
+                    + string.Join("; ", _contentFaults));
+
+                return;
+            }
+
+            if (characters == null)
+            {
+                Refuse("no character store: a world cannot load anybody");
+
+                return;
+            }
+
+            if (_characterPrefab == null)
+            {
+                Refuse("no character prefab: an admitted player would have no object");
+
+                return;
+            }
+
+            DefinitionRegistry<StatDefinition> stats = _content.BuildStats();
+            DefinitionRegistry<MapDefinition> maps = _content.BuildMaps();
+            DefinitionRegistry<ItemDefinition> items = _content.BuildItems();
+            DefinitionRegistry<StatusEffectDefinition> effects = _content.BuildStatusEffects();
+            DefinitionRegistry<SkillDefinition> skills = _content.BuildSkills();
+
+            _spawnPoints = _content.BuildSpawnPoints();
+
+            var players = new WorldCharacterRegistry(characters, _spawnPoints, items);
+
+            var monsters = new MonsterWorldRuntime(players, _content.BuildMonsters(),
+                _content.MaxHealthStat, new CombatTeam(_monsterTeam));
+
+            var movement = new CharacterMovementAuthority(players, _ => true, maps,
+                _content.WalkMetresPerSecond);
+
+            var commands = new CombatCommandAuthority(players, _ => true, monsters);
+
+            var combat = new ServerCombatPipeline(commands, monsters, null,
+                BasicAttackRules.Melee(_content.AttackStat, _content.DefenceStat, 1,
+                    _meleeReachMetres),
+                default, skills, default, effects);
+
+            // A command handled between ticks settles the world immediately, so a second
+            // command in the same frame is never resolved against state the first one
+            // invalidated. The lambda closes over the simulation assembled just below.
+            var requests = new CharacterCombatRequestHandler(combat,
+                () => Simulation?.Settle());
+
+            var replication = new CharacterReplicationService(_networkManager, players,
+                _characterPrefab, requests, movement);
+
+            var status = new CharacterStatusAuthority(players, effects, replication);
+
+            replication.UseStatus(status);
+
+            replication.UseInventory(new CharacterInventoryAuthority(players, _ => true,
+                items, replication));
+
+            var stat = new CharacterStatAuthority(players, _content.Formulas, stats, effects,
+                new EquipmentModifierResolver.Context(items),
+                _content.MaxHealthStat, _content.MaxManaStat);
+
+            Simulation = new WorldSimulation(players, replication, status, stat, movement,
+                combat, monsters);
+
+            Characters = players;
+            Replication = replication;
+
+            if (spawnConfiguration != null)
+            {
+                // Monster nests are runtime configuration and live in the database; the
+                // monsters themselves are authored content. That split is preserved.
+                MonsterConfiguration = new MonsterConfigurationLoader(spawnConfiguration,
+                    monsters, maps);
+            }
+
+            IsWorldReady = true;
+        }
+
+        /// <summary>Records why the world will not start, and says so once.</summary>
+        private void Refuse(string fault)
+        {
+            _contentFaults.Add(fault);
+
+            Debug.LogError("[world] " + fault);
+        }
+
+        /// <summary>The live characters this world holds, or null when unready.</summary>
+        public WorldCharacterRegistry Characters { get; private set; }
+
+        /// <summary>What spawns and publishes character objects, or null when unready.</summary>
+        public CharacterReplicationService Replication { get; private set; }
 
         /// <summary>
         /// Supplies the composed world this server is to run.
@@ -260,6 +438,18 @@ namespace ChibiFantasy.Server
         /// </remarks>
         private void OnAdmitted(NetworkConnection connection, WorldJoinOutcome outcome)
         {
+            // A world that is still assembling, or whose content was refused, has nowhere to
+            // put anybody. Better to turn a player away at the door than to admit them into
+            // a world that cannot hold them.
+            if (_content != null && !IsWorldReady)
+            {
+                Debug.LogWarning("[world] refusing entry: the world is not ready");
+
+                connection.Disconnect(immediately: false);
+
+                return;
+            }
+
             SpawnPointDefinition spawn = Coordinator.ResolveSpawn(outcome.Admission, _spawnPoints);
 
             if (spawn == null)
@@ -285,6 +475,20 @@ namespace ChibiFantasy.Server
 
             // Connecting becomes Ready, and the authority's session becomes Active.
             Coordinator.ConfirmArrival(connection.ClientId);
+
+            // And into the simulation, which computes their stats before anything is
+            // published -- so the first state a client receives is already correct.
+            if (Simulation != null)
+            {
+                WorldSpawnResult admitted = Simulation.Admit(connection.ClientId,
+                    outcome.Admission, PlayerTeam);
+
+                if (!admitted.IsSpawned)
+                {
+                    Debug.LogWarning("[world] could not place " + outcome.Admission.Character
+                        + ": " + admitted.Reason);
+                }
+            }
         }
 
         /// <summary>
@@ -297,6 +501,10 @@ namespace ChibiFantasy.Server
             RemoteConnectionStateArgs args)
         {
             if (args.ConnectionState != RemoteConnectionState.Stopped) return;
+
+            // The world first, so the character is saved and forgotten before the session
+            // that owns it is handed back.
+            Simulation?.Release(connection.ClientId);
 
             Coordinator?.Leave(connection.ClientId);
         }

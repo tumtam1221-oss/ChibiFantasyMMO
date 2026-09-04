@@ -1,0 +1,51 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 18350cc79c3163a43bfe83fba9ffcdfb, type: 3}
+  m_Name: monster_training_slime
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.MonsterDefinition
+  _id:
+    _value: monster.training_slime
+  _nameKey:
+    _key: monster.training_slime.name
+  _level: 1
+  _rank: 0
+  _baseStats:
+  - _stat:
+      _value: stat.max_hp
+    _value: 40
+  - _stat:
+      _value: stat.atk
+    _value: 6
+  - _stat:
+      _value: stat.def
+    _value: 2
+  _element: 0
+  _movementType: 1
+  _aggressionType: 0
+  _model:
+    _address: 
+  _animatorController:
+    _address: 
+  _lootTable:
+    _value: 
+  _experienceReward: 12
+  _currencyReward: 3
+  _respawn:
+    _respawnDelaySeconds: 15
+    _maxAliveInArea: 4
+  _detectionRange: 6
+  _attackRange: 1.5
+  _attackCooldownSeconds: 2
+  _leashRange: 14
+  _moveSpeed: 1.5
+  _allowedMaps:
+  - _value: map.harbor_town

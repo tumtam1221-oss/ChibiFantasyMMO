@@ -39,5 +39,38 @@ namespace ChibiFantasy.Backend
 
             return new HttpWorldSessionAuthority(transport);
         }
+
+        /// <summary>
+        /// Everything a running world server needs from the backend, over one transport.
+        /// </summary>
+        /// <remarks>
+        /// <b>One connection, three seams.</b> The session authority, the character store and
+        /// the monster spawn configuration all speak to the same API; opening three
+        /// transports for them would triple the sockets and give an operator three timeouts
+        /// to tune for one service.
+        ///
+        /// <b>The token source is the authority itself.</b> It is the thing that resolved a
+        /// session in the first place, so it is the only thing that honestly knows the token
+        /// a character save must present. Passing tokens around any other way would mean a
+        /// second copy of a secret.
+        ///
+        /// The caller still learns no transport type -- it receives three interfaces and one
+        /// thing to dispose, exactly as <see cref="OverHttp"/> intends.
+        /// </remarks>
+        public static IWorldSessionAuthority WorldServicesOverHttp(string baseAddress,
+            int timeoutSeconds, out ICharacterStateStore characters,
+            out IMonsterSpawnConfigurationSource spawns, out IDisposable lifetime)
+        {
+            var transport = new UnityWebRequestTransport(baseAddress, timeoutSeconds);
+
+            lifetime = transport;
+
+            var authority = new HttpWorldSessionAuthority(transport);
+
+            characters = new HttpCharacterStateStore(transport, authority);
+            spawns = new HttpMonsterSpawnConfigurationSource(transport);
+
+            return authority;
+        }
     }
 }

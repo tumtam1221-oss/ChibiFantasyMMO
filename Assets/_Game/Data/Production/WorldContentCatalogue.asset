@@ -1,0 +1,52 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 68869ebf18295924fa9b10bdab180977, type: 3}
+  m_Name: WorldContentCatalogue
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.WorldContentCatalogue
+  _stats:
+  - {fileID: 11400000, guid: 195a11fe464f89f4e974a1362d30ec99, type: 2}
+  - {fileID: 11400000, guid: e438c0341b7ebe946ae9a9e2f90fcfc9, type: 2}
+  - {fileID: 11400000, guid: df8d9ccedf366064f9b5a304468a8dc1, type: 2}
+  - {fileID: 11400000, guid: 323e789d1083d00448391d86a7bc5b82, type: 2}
+  - {fileID: 11400000, guid: 822fd2a35d8f16c47bc299283c72fa63, type: 2}
+  - {fileID: 11400000, guid: 605c091110c417843a599ad0da6faf2a, type: 2}
+  - {fileID: 11400000, guid: 1cd87dc8068d13840ba9281e93982009, type: 2}
+  - {fileID: 11400000, guid: 956178d25f095c24c8b59d6eeb500505, type: 2}
+  - {fileID: 11400000, guid: a4becb1d5fb0eab4ead92a902acf68b9, type: 2}
+  - {fileID: 11400000, guid: d6b92e94336634140b9a9f6e259cd802, type: 2}
+  _formulas:
+  - {fileID: 11400000, guid: 1bd7ab784fe674c4ba48dc47c0372b04, type: 2}
+  - {fileID: 11400000, guid: da54c21f386cd5744a8889848054d4ad, type: 2}
+  - {fileID: 11400000, guid: f77c94043718240418b58e334b3f5454, type: 2}
+  - {fileID: 11400000, guid: d692b3d5e49cb4f42b6212acaa941dea, type: 2}
+  _classes:
+  - {fileID: 11400000, guid: 6292b803958f99c48b93eca32d602347, type: 2}
+  _progressions:
+  - {fileID: 11400000, guid: 92ffde6fbd230464193d5f0f1cce45c8, type: 2}
+  _maps:
+  - {fileID: 11400000, guid: c4aa9260ebbf35a48b0420d4f18577d5, type: 2}
+  _spawnPoints:
+  - {fileID: 11400000, guid: 237e52f3c384d8e4a90c8951c316302a, type: 2}
+  _monsters:
+  - {fileID: 11400000, guid: 10930e6afcf62524da5ecbecfc81bc89, type: 2}
+  _skills: []
+  _statusEffects: []
+  _items: []
+  _maxHealthStat:
+    _value: stat.max_hp
+  _maxManaStat:
+    _value: stat.max_mp
+  _attackStat:
+    _value: stat.atk
+  _defenceStat:
+    _value: stat.def
+  _walkMetresPerSecond: 4
