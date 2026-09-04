@@ -48,6 +48,7 @@ namespace ChibiFantasy.Client.UI
 
         private IAccountApi _api;
         private ISessionAuthority _authority;
+        private ISessionCatalogueSink _catalogue;
         private SessionDirectory _directory;
         private SessionConfiguration _configuration;
 
@@ -102,6 +103,11 @@ namespace ChibiFantasy.Client.UI
         {
             _api = api;
             _authority = authority;
+
+            // An authority with its own source of truth -- a server-side one, a fixture --
+            // does not implement this and is simply never told anything.
+            _catalogue = authority as ISessionCatalogueSink;
+
             _directory = directory;
             _versions = versions;
             _required = required;
@@ -187,6 +193,10 @@ namespace ChibiFantasy.Client.UI
 
             _account = authenticated.Value;
 
+            // Before the domain is asked anything: the status it is about to check is the
+            // one the authority just reported, not one this controller decided.
+            _catalogue?.ObserveAccount(_account);
+
             LastLoginResult = SessionFlowService.TryLogin(_account, request, _required,
                 FlowContext);
 
@@ -221,6 +231,8 @@ namespace ChibiFantasy.Client.UI
             }
 
             if (servers.Value != null) _serverInfo.AddRange(servers.Value);
+
+            _catalogue?.ObserveServers(_serverInfo);
 
             Refresh();
             return true;
@@ -260,6 +272,8 @@ namespace ChibiFantasy.Client.UI
             }
 
             if (channels.Value != null) _channelInfo.AddRange(channels.Value);
+
+            _catalogue?.ObserveChannels(_channelInfo);
 
             Refresh();
             return true;
@@ -303,6 +317,8 @@ namespace ChibiFantasy.Client.UI
             }
 
             if (characters.Value != null) _characterInfo.AddRange(characters.Value);
+
+            _catalogue?.ObserveCharacters(_characterInfo);
 
             Refresh();
             return true;

@@ -46,11 +46,21 @@ namespace ChibiFantasy.Backend
         /// <summary>The session the last login issued.</summary>
         public SessionId Session { get; private set; }
 
+        /// <summary>
+        /// The server the last character list was fetched for.
+        /// </summary>
+        /// <remarks>Remembered so <see cref="OwnsCharacter"/> can re-read <em>that</em> list.
+        /// The endpoint is scoped by server, and asking it without one returns an empty list
+        /// -- which reads as "owns nothing" when what actually happened is that the wrong
+        /// question was asked.</remarks>
+        private ServerId _charactersServer;
+
         /// <summary>Forgets the token. Called on sign-out or when a session is refused.</summary>
         public void ClearSession()
         {
             SessionToken = null;
             Session = SessionId.None;
+            _charactersServer = default;
         }
 
         // ---- IAccountApi -----------------------------------------------------------
@@ -207,6 +217,8 @@ namespace ChibiFantasy.Backend
             HttpExchange exchange = _transport.Send("GET",
                 "/api/characters?server_id=" + Escape(server.Value), null, SessionToken);
 
+            if (server.IsValid) _charactersServer = server;
+
             if (!exchange.Reached)
             {
                 return ApiResult<IReadOnlyList<CharacterSelectEntry>>.Failed(
@@ -251,8 +263,12 @@ namespace ChibiFantasy.Backend
         /// </remarks>
         public ApiResult<bool> OwnsCharacter(AccountId account, CharacterId character)
         {
+            // Asking with no server would query an empty scope and get an empty list back,
+            // which is not an answer about ownership. Nothing known is not permission.
+            if (!_charactersServer.IsValid) return ApiResult<bool>.Ok(false);
+
             ApiResult<IReadOnlyList<CharacterSelectEntry>> characters =
-                GetCharacters(account, default);
+                GetCharacters(account, _charactersServer);
 
             if (!characters.IsOk)
             {

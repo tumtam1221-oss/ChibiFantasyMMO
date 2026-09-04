@@ -9,6 +9,9 @@
         "ChibiFantasy.Gameplay",
         "ChibiFantasy.Network",
         "ChibiFantasy.Server",
+        "ChibiFantasy.Client",
+        "ChibiFantasy.UI",
+        "Unity.TextMeshPro",
         "FishNet.Runtime",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"

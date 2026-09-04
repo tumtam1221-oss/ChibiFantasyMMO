@@ -10,7 +10,8 @@
         "ChibiFantasy.Backend",
         "ChibiFantasy.UI",
         "FishNet.Runtime",
-        "Unity.InputSystem"
+        "Unity.InputSystem",
+        "Unity.TextMeshPro"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
