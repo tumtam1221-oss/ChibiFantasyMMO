@@ -70,7 +70,15 @@ namespace ChibiFantasy.Gameplay
         ResourcePoolUnavailable = 17,
 
         /// <summary>The skill has not finished cooling down.</summary>
-        OnCooldown = 18
+        OnCooldown = 18,
+
+        /// <summary>
+        /// A control effect on the caster forbids skills right now.
+        /// </summary>
+        /// <remarks>Silence, as <see cref="ControlEffectType"/> already names it. Which
+        /// effect silenced them is deliberately not reported: a caster needs to know they
+        /// cannot cast, and the effect is already on their own status bar.</remarks>
+        Silenced = 19
     }
 
     /// <summary>

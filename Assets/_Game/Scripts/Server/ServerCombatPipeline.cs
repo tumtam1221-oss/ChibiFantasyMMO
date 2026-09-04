@@ -152,6 +152,12 @@ namespace ChibiFantasy.Server
         private readonly IDefinitionRegistry<SkillDefinition> _skills;
         private readonly SkillExecutionRules _skillRules;
 
+        /// <summary>Authored status effects, or null on a world with no status content.</summary>
+        /// <remarks>Passed through to the skill context, where it answers two questions the
+        /// pipeline itself never asks: whether the caster is silenced, and what an effect a
+        /// skill applies actually is.</remarks>
+        private readonly IDefinitionRegistry<StatusEffectDefinition> _statusEffects;
+
         /// <summary>Per-character swing timing, so asking twice does not hit twice.</summary>
         private readonly Dictionary<string, AttackStateMachine> _attacks =
             new Dictionary<string, AttackStateMachine>();
@@ -178,7 +184,8 @@ namespace ChibiFantasy.Server
             MonsterWorldRuntime monsters, MonsterRewardAuthority rewards,
             in BasicAttackRules basicAttack, AttackTiming timing = default,
             IDefinitionRegistry<SkillDefinition> skills = null,
-            SkillExecutionRules skillRules = default)
+            SkillExecutionRules skillRules = default,
+            IDefinitionRegistry<StatusEffectDefinition> statusEffects = null)
         {
             _commands = commands;
             _monsters = monsters;
@@ -187,6 +194,7 @@ namespace ChibiFantasy.Server
             _timing = timing;
             _skills = skills;
             _skillRules = skillRules;
+            _statusEffects = statusEffects;
         }
 
         /// <summary>How many characters this pipeline is tracking timing for.</summary>
@@ -294,8 +302,12 @@ namespace ChibiFantasy.Server
 
             SkillCooldownState cooldowns = CooldownsFor(resolution.Attacker);
 
+            // The caster's own status list and the authored effects, so the validator can
+            // ask whether they are silenced and the executor can resolve what a skill
+            // applies. Neither rule is restated here -- both live where they already lived.
             var context = new SkillUseContext(_skills, resolution.Attacker.Skills,
-                resolution.Attacker.Domain.Progression.Level, cooldowns);
+                resolution.Attacker.Domain.Progression.Level, cooldowns, _statusEffects,
+                resolution.Attacker.Status);
 
             SkillUseRequest request = CombatCommandAuthority.ToSkillRequest(resolution,
                 command);

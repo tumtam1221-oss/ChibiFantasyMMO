@@ -105,6 +105,12 @@ namespace ChibiFantasy.Server
             // fabricated derived block would look authoritative and be wrong.
             Combatant = new CharacterCombatant(character, null, ResourceLimits.None, team);
             Combatant.Position = location == null ? default : location.Position;
+
+            // One status list per character, pointed at from the combatant rather than
+            // duplicated inside it. A skill applying a debuff and a validator asking about
+            // silence therefore read the same list.
+            Status = new StatusEffectRuntimeState(character.Identity.CharacterId);
+            Combatant.Status = Status;
         }
 
         public int ConnectionId { get; internal set; }
@@ -166,6 +172,23 @@ namespace ChibiFantasy.Server
         /// neither of which should be handed a second model of the same character.
         /// </remarks>
         public CharacterCombatant Combatant { get; }
+
+        /// <summary>
+        /// Every status effect on this character, and everything it refuses.
+        /// </summary>
+        /// <remarks>
+        /// <b>Phase 12's runtime, held rather than reimplemented.</b> It already knows how to
+        /// stack, refresh, expire and refuse; what was missing was somewhere for a live
+        /// character to keep one. This is that place, and it is the only one -- the
+        /// combatant points at this same object, so there is no arrangement in which a
+        /// character has two different sets of buffs.
+        ///
+        /// <b>Server-owned and in memory.</b> Nothing persists it: there is no status table
+        /// and temporary combat state is not written to the database, so leaving the world
+        /// ends every effect. That is the current policy rather than an oversight, and it is
+        /// pinned by a test.
+        /// </remarks>
+        public StatusEffectRuntimeState Status { get; }
 
         public CharacterId Character => Domain.Identity.CharacterId;
 

@@ -24,12 +24,16 @@ namespace ChibiFantasy.Gameplay
     {
         public SkillUseContext(IDefinitionRegistry<SkillDefinition> skills,
             CharacterSkillsState learnedSkills, int casterLevel,
-            SkillCooldownState cooldowns = null)
+            SkillCooldownState cooldowns = null,
+            IDefinitionRegistry<StatusEffectDefinition> statusEffects = null,
+            StatusEffectRuntimeState casterStatus = null)
         {
             Skills = skills;
             LearnedSkills = learnedSkills;
             CasterLevel = casterLevel;
             Cooldowns = cooldowns;
+            StatusEffects = statusEffects;
+            CasterStatus = casterStatus;
         }
 
         /// <summary>Where skill definitions are resolved from.</summary>
@@ -43,6 +47,22 @@ namespace ChibiFantasy.Gameplay
 
         /// <summary>Runtime cooldowns, or null when they are not tracked.</summary>
         public SkillCooldownState Cooldowns { get; }
+
+        /// <summary>
+        /// Where status effects are resolved from, or null on a world with no status content.
+        /// </summary>
+        /// <remarks>Needed to answer what an applied effect <em>is</em> -- whether it
+        /// silences, and what category it belongs to. Optional, because a server composed
+        /// without status content silences nobody rather than guessing.</remarks>
+        public IDefinitionRegistry<StatusEffectDefinition> StatusEffects { get; }
+
+        /// <summary>
+        /// The caster's status effects, or null when nothing tracks them.
+        /// </summary>
+        /// <remarks>The one runtime state the server already owns, read here rather than
+        /// copied. Absent means no control effect can be in force, which is the honest
+        /// answer for a caller that keeps no status at all.</remarks>
+        public StatusEffectRuntimeState CasterStatus { get; }
     }
 
     /// <summary>
@@ -130,6 +150,20 @@ namespace ChibiFantasy.Gameplay
             {
                 return SkillUseEligibility.Rejected(
                     SkillUseRejection.LevelTooLow, definition, rank);
+            }
+
+            // --- control effects: asked of the status runtime, never re-implemented ------
+            //
+            // Which effect silences is authored on StatusEffectDefinition.ControlEffect, so
+            // a second silencing effect written tomorrow is refused here with no code
+            // change and no list of effect ids anywhere. A caster with no status state
+            // tracked is not silenced, rather than being refused for lack of information.
+            if (context.CasterStatus != null && context.StatusEffects != null
+                && context.CasterStatus.HasControl(ControlEffectType.Silence,
+                    context.StatusEffects))
+            {
+                return SkillUseEligibility.Rejected(
+                    SkillUseRejection.Silenced, definition, rank);
             }
 
             // --- target type -> combat relationship -------------------------------

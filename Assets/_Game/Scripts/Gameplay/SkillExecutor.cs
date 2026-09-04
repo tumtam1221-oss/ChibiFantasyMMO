@@ -87,8 +87,13 @@ namespace ChibiFantasy.Gameplay
     /// its attack power. One formula, one place to rebalance, one thing for a server to
     /// reproduce.
     ///
-    /// <b>Unsupported is never silent.</b> Status effects and stat modifiers have no
-    /// runtime yet and are reported as such. Nothing pretends they applied.
+    /// <b>Unsupported is never silent.</b> An effect kind with nothing to act on is
+    /// reported as unsupported. Nothing pretends it applied.
+    ///
+    /// <b>Status effects go through the one service that owns them.</b> Whether an effect
+    /// may land -- immunity included -- is <see cref="StatusEffectService"/>'s decision and
+    /// is not re-asked here; this supplies the target and records what came back. A second
+    /// apply path would be a second place for an immunity to be forgotten.
     /// </remarks>
     public static class SkillExecutor
     {
@@ -143,7 +148,8 @@ namespace ChibiFantasy.Gameplay
 
             for (int i = 0; i < outcomes.Length; i++)
             {
-                outcomes[i] = ApplyEffect(effects[i], caster, target, rules);
+                outcomes[i] = ApplyEffect(effects[i], caster, target, rules, request.Skill,
+                    context);
             }
 
             int healthAfter = target.CurrentHealth;
@@ -154,7 +160,8 @@ namespace ChibiFantasy.Gameplay
 
         /// <summary>Dispatches one authored effect onto the existing state.</summary>
         private static SkillEffectOutcome ApplyEffect(in SkillEffect effect, ICombatant caster,
-            ICombatant target, in SkillExecutionRules rules)
+            ICombatant target, in SkillExecutionRules rules, DefinitionId skill,
+            in SkillUseContext context)
         {
             switch (effect.Kind)
             {
@@ -168,9 +175,7 @@ namespace ChibiFantasy.Gameplay
                     return ApplyResource(effect, caster, target);
 
                 case SkillEffectKind.ApplyStatusEffect:
-                    // The definition exists; no runtime that could hold an active status does.
-                    return SkillEffectOutcome.Unsupported(effect.Kind,
-                        "No status-effect runtime exists yet; nothing was applied.");
+                    return ApplyStatus(effect, target, skill, context);
 
                 case SkillEffectKind.ModifyStat:
                     // StatModifier is consumed by DerivedStatsCalculator at calculation
@@ -183,6 +188,56 @@ namespace ChibiFantasy.Gameplay
                     return SkillEffectOutcome.Unsupported(effect.Kind,
                         "Effect kind has no runtime implementation.");
             }
+        }
+
+        /// <summary>
+        /// Asks the status service to put an authored effect on the target.
+        /// </summary>
+        /// <remarks>
+        /// <b>The skill is the source.</b> <see cref="ActiveStatusEffect.Source"/> is what
+        /// granted an effect, so recording the skill is what later lets exactly this
+        /// skill's contribution be taken back without guessing.
+        ///
+        /// <b>A refusal is reported, not swallowed.</b> An immune target produces an
+        /// outcome saying so. A caller that saw "applied" for an effect an immunity
+        /// rejected would show a debuff icon for a debuff that never landed, which is the
+        /// precise failure the immunity exists to prevent.
+        ///
+        /// <b>Duration and stacks are the definition's.</b> Nothing is passed in, so a
+        /// skill cannot lengthen an effect beyond what the effect itself authorises.
+        /// </remarks>
+        private static SkillEffectOutcome ApplyStatus(in SkillEffect effect, ICombatant target,
+            DefinitionId skill, in SkillUseContext context)
+        {
+            if (context.StatusEffects == null)
+            {
+                return SkillEffectOutcome.Unsupported(effect.Kind,
+                    "This world has no status-effect content; nothing was applied.");
+            }
+
+            StatusEffectRuntimeState status = (target as IStatusEffectTarget)?.Status;
+
+            if (status == null)
+            {
+                return SkillEffectOutcome.Unsupported(effect.Kind,
+                    "The target carries no status effects; nothing was applied.");
+            }
+
+            StatusApplyResult applied = StatusEffectService.TryApply(status, effect.Reference,
+                skill, context.StatusEffects);
+
+            if (applied.IsAccepted)
+            {
+                // Stacks, read as a count going from nothing to what landed, so the outcome
+                // registers as a real mutation rather than as a no-op.
+                return SkillEffectOutcome.Applied(effect.Kind, applied.Stacks, 0,
+                    applied.Stacks);
+            }
+
+            // Failed, not Unsupported: the effect is supported and was refused. An immune
+            // target must be distinguishable from a world with no status content at all.
+            return SkillEffectOutcome.Failed(effect.Kind,
+                "Status effect refused: " + applied.Reason);
         }
 
         private static SkillEffectOutcome ApplyDamage(in SkillEffect effect, ICombatant caster,

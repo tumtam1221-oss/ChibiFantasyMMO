@@ -303,6 +303,13 @@ namespace ChibiFantasy.Client.UI
         {
             if (widget == null) return;
 
+            // Detached first, because Destroy is deferred to the end of the frame: a row
+            // rebuilt mid-frame would otherwise hold the old icons and the new ones at the
+            // same time, and anything reading the hierarchy -- a layout group, a test --
+            // would see both. Immediate destruction has no such gap, but doing this in both
+            // modes keeps them behaving identically.
+            widget.transform.SetParent(null, false);
+
             if (Application.isPlaying) Object.Destroy(widget);
             else Object.DestroyImmediate(widget);
         }

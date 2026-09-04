@@ -33,7 +33,8 @@ namespace ChibiFantasy.Gameplay
     /// of a fight, not of a person: the same character is an ally in a party and an enemy
     /// in a duel.
     /// </remarks>
-    public sealed class CharacterCombatant : ICombatant, ICombatantResourcePool
+    public sealed class CharacterCombatant : ICombatant, ICombatantResourcePool,
+        IStatusEffectTarget
     {
         private readonly Character _character;
         private readonly InstanceId _combatantId;
@@ -62,6 +63,23 @@ namespace ChibiFantasy.Gameplay
         public CombatTeam Team { get; set; }
 
         public CombatPosition Position { get; set; }
+
+        /// <summary>
+        /// The status effects on this character, or null when nothing tracks them.
+        /// </summary>
+        /// <remarks>
+        /// <b>A reference, not a copy.</b> The world holds one
+        /// <see cref="StatusEffectRuntimeState"/> per character and points this at it, so a
+        /// skill that applies a debuff and a validator that asks about silence are looking
+        /// at the same list. A combatant that owned its own would be a second status
+        /// container, and the two would disagree the first time one was ticked.
+        ///
+        /// Settable because the combatant is built before the world decides whether it
+        /// tracks status at all -- a combat sandbox with no status runtime leaves it null
+        /// and every status effect reports itself unsupported rather than silently landing
+        /// nowhere.
+        /// </remarks>
+        public StatusEffectRuntimeState Status { get; set; }
 
         public int CurrentHealth => _character.Resources.CurrentHealth;
 

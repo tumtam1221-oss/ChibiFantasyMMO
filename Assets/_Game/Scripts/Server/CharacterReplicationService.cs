@@ -40,6 +40,9 @@ namespace ChibiFantasy.Server
         private readonly ICharacterMovementRequestSink _movement;
         private ICharacterInventoryRequestSink _inventory;
 
+        /// <summary>Where a spawning character's first status snapshot is built from.</summary>
+        private ICharacterStatusSource _status;
+
         private readonly Dictionary<string, NetworkObject> _spawned =
             new Dictionary<string, NetworkObject>();
 
@@ -83,6 +86,11 @@ namespace ChibiFantasy.Server
         /// built first. Composing it afterwards is honest about that; a constructor taking
         /// each other would not be buildable at all.
         /// </remarks>
+        public void UseStatus(ICharacterStatusSource status)
+        {
+            _status = status;
+        }
+
         public void UseInventory(ICharacterInventoryRequestSink inventory)
         {
             _inventory = inventory;
@@ -173,6 +181,7 @@ namespace ChibiFantasy.Server
             entity.ServerUseCombatSink(_combat);
             entity.ServerUseMovementSink(_movement);
             entity.ServerUseInventorySink(_inventory);
+            entity.ServerUseStatusSource(_status);
 
             // Identity, including the two visual facts a client needs to draw somebody:
             // which of the two approved models they are, and what to write above them. Both

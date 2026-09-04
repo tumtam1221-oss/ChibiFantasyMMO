@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using ChibiFantasy.Core;
 using ChibiFantasy.Data;
 using ChibiFantasy.Network;
 using ChibiFantasy.UI;
@@ -33,6 +34,8 @@ namespace ChibiFantasy.Client.UI
         private TextMeshProUGUI _experience;
         private Image _healthFill;
         private RectTransform _statusAnchor;
+        private StatusEffectBar _statusBar;
+        private IDefinitionRegistry<StatusEffectDefinition> _effects;
         private bool _built;
 
         /// <summary>Raised when the player asks for their bag.</summary>
@@ -43,17 +46,24 @@ namespace ChibiFantasy.Client.UI
 
         public bool IsBound => _presenter.IsBound;
 
-        /// <summary>
-        /// Where buff and debuff icons will go.
-        /// </summary>
-        /// <remarks>
-        /// An anchor and nothing else. Status effects are not replicated -- there is no
-        /// network representation of them anywhere in this project -- so there is nothing to
-        /// draw, and drawing a made-up row of icons would be a lie about what the server
-        /// knows. The space is reserved so the gate that replicates them has somewhere to
-        /// put them, and the absence is reported rather than hidden.
-        /// </remarks>
+        /// <summary>Where the buff and debuff rows live.</summary>
+        /// <remarks>Reserved by 18.5 and filled in by 18.7. The bar under it draws the
+        /// owner-scoped snapshot the server sends; nothing here decides what is on it.</remarks>
         public RectTransform StatusEffectAnchor => _statusAnchor;
+
+        /// <summary>The buff and debuff rows, for a test to read.</summary>
+        public StatusEffectBar StatusEffects => _statusBar;
+
+        /// <summary>
+        /// Supplies the authored status effects the bar resolves names and icons from.
+        /// </summary>
+        /// <remarks>Content, not state. Given once by whoever composes the world screens,
+        /// for the same reason the inventory panel is given an item registry: the wire
+        /// carries ids and the client already has the definitions.</remarks>
+        public void UseStatusEffects(IDefinitionRegistry<StatusEffectDefinition> effects)
+        {
+            _effects = effects;
+        }
 
         /// <summary>Binds the character this client owns.</summary>
         public bool Bind(CharacterNetworkEntity entity)
@@ -61,6 +71,10 @@ namespace ChibiFantasy.Client.UI
             EnsureBuilt();
 
             bool bound = _presenter.Bind(entity);
+
+            // The status bar binds through the same call, so the vitals and the buffs can
+            // never end up pointed at different characters.
+            if (_statusBar != null) _statusBar.Bind(entity, _effects);
 
             Repaint();
 
@@ -70,6 +84,8 @@ namespace ChibiFantasy.Client.UI
         public void Unbind()
         {
             _presenter.Unbind();
+
+            if (_statusBar != null) _statusBar.Unbind();
 
             Repaint();
         }
@@ -152,9 +168,12 @@ namespace ChibiFantasy.Client.UI
             _experience.color = UiFactory.Muted;
             Row(_experience.rectTransform, -70f, 24f);
 
-            // Reserved, empty, and documented above.
+            // Under the vitals, which is where a player already looks.
             _statusAnchor = UiFactory.CreateAnchored("StatusEffects", _panel,
                 new Vector2(0f, 0f), new Vector2(340f, 28f), new Vector2(10f, 6f));
+
+            _statusBar = _statusAnchor.gameObject.AddComponent<StatusEffectBar>();
+            _statusBar.Compose(_statusAnchor);
 
             Button bag = UiFactory.CreateButton("Inventory", root, "Inventory",
                 out TextMeshProUGUI _);

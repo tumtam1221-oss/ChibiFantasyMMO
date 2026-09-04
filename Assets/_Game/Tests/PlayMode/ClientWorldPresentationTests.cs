@@ -191,10 +191,17 @@ namespace ChibiFantasy.Tests.PlayMode
             Assert.That(a.Hud.Current.Level,
                 Is.EqualTo(character.Domain.Progression.Level));
 
-            // The space status effects will occupy exists and is empty, because nothing
-            // replicates them yet. Reported as a limitation rather than drawn as a guess.
+            // The space status effects occupy. 18.5 reserved it and asserted it was empty
+            // because nothing replicated them; 18.7 filled it with the buff and debuff rows.
+            // The assertion is restated rather than dropped: the rows exist, and they carry
+            // no icons for a character the server has said nothing about.
             Assert.That(a.Hud.StatusEffectAnchor, Is.Not.Null);
-            Assert.That(a.Hud.StatusEffectAnchor.childCount, Is.Zero);
+            Assert.That(a.Hud.StatusEffects, Is.Not.Null);
+            Assert.That(a.Hud.StatusEffects.BuffRow, Is.Not.Null);
+            Assert.That(a.Hud.StatusEffects.DebuffRow, Is.Not.Null);
+            Assert.That(a.Hud.StatusEffects.BuffRow.childCount, Is.Zero,
+                "an unbuffed character must not be drawn as buffed");
+            Assert.That(a.Hud.StatusEffects.DebuffRow.childCount, Is.Zero);
         }
 
         // ---- F: the HUD follows the server ----------------------------------------------------------

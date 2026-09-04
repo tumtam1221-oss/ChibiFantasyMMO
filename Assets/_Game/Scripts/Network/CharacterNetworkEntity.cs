@@ -86,6 +86,22 @@ namespace ChibiFantasy.Network
     /// and an animator to a network object is presentation work, so this prefab is the
     /// network identity alone and a model becomes a child of it when that gate arrives.
     /// </remarks>
+    /// <summary>
+    /// Where a character's current status effects are read from, on the server.
+    /// </summary>
+    /// <remarks>
+    /// Read-only by design: there is no Apply and no Remove here. Status is decided by the
+    /// server's own status service and this exists solely so the owner's first snapshot can
+    /// be built at the moment the owner becomes able to receive one -- the timing the
+    /// inventory snapshot already learned the hard way.
+    /// </remarks>
+    public interface ICharacterStatusSource
+    {
+        /// <summary>Builds the current status of the character on a connection.</summary>
+        /// <returns>False when that connection has no character.</returns>
+        bool TryBuildStatusSnapshot(int clientId, out StatusSnapshot snapshot);
+    }
+
     public sealed class CharacterNetworkEntity : NetworkBehaviour
     {
         private readonly SyncVar<string> _characterId = new SyncVar<string>();
@@ -133,6 +149,14 @@ namespace ChibiFantasy.Network
         private ICharacterInventoryRequestSink _inventory;
 
         /// <summary>
+        /// Where the owner's status is read from. Server-side only, and never sent anywhere.
+        /// </summary>
+        /// <remarks>There is no matching request sink, and that is the point: no client
+        /// message applies, removes, refreshes or expires a status effect, so there is no
+        /// method on this object for one to arrive through.</remarks>
+        private ICharacterStatusSource _status;
+
+        /// <summary>
         /// The last inventory the server sent this client.
         /// </summary>
         /// <remarks>
@@ -144,6 +168,16 @@ namespace ChibiFantasy.Network
 
         /// <summary>Raised on the owning client when a new snapshot arrives.</summary>
         public event System.Action<InventorySnapshot> InventoryChanged;
+
+        /// <summary>
+        /// The last status the server sent this client.
+        /// </summary>
+        /// <remarks>Held rather than only raised, so a bar built after the message landed
+        /// still has something to draw. The same arrangement as the inventory.</remarks>
+        public StatusSnapshot Status { get; private set; }
+
+        /// <summary>Raised on the owning client when a new status snapshot arrives.</summary>
+        public event System.Action<StatusSnapshot> StatusChanged;
 
         /// <summary>Which character this is, as the server knows it.</summary>
         public CharacterId Character => new CharacterId(_characterId.Value);
@@ -204,6 +238,13 @@ namespace ChibiFantasy.Network
             _inventory = sink;
         }
 
+        /// <summary>Points this object at where the server keeps this character's status.</summary>
+        [Server]
+        public void ServerUseStatusSource(ICharacterStatusSource source)
+        {
+            _status = source;
+        }
+
         /// <summary>
         /// Sends one client its own inventory.
         /// </summary>
@@ -243,12 +284,23 @@ namespace ChibiFantasy.Network
         {
             base.OnSpawnServer(connection);
 
-            if (_inventory == null || connection == null || connection != Owner) return;
+            if (connection == null || connection != Owner) return;
 
-            if (_inventory.TryBuildSnapshot(connection.ClientId,
+            if (_inventory != null && _inventory.TryBuildSnapshot(connection.ClientId,
                 out InventorySnapshot snapshot))
             {
                 TargetPublishInventory(connection, snapshot);
+            }
+
+            // Status goes out here for exactly the reason the bag does: a target message is
+            // refused while its recipient is not yet an observer, so a snapshot sent at
+            // spawn reaches nobody -- silently, because a refused target call is a warning
+            // rather than a failure. A player reconnecting into a debuff would arrive with a
+            // clean status bar and no way to find out otherwise until it expired.
+            if (_status != null && _status.TryBuildStatusSnapshot(connection.ClientId,
+                out StatusSnapshot statuses))
+            {
+                TargetPublishStatus(connection, statuses);
             }
         }
 
@@ -261,6 +313,36 @@ namespace ChibiFantasy.Network
             if (Owner == null || !Owner.IsActive) return;
 
             TargetPublishInventory(Owner, snapshot);
+        }
+
+        /// <summary>
+        /// Sends one client its own status effects.
+        /// </summary>
+        /// <remarks>
+        /// <b>A target message, for the same reason the bag is one.</b> What a player is
+        /// buffed with tells an opponent what they are immune to and when their defensive
+        /// window closes. A SyncVar would hand that to every observer, and this project has
+        /// no observer scoping to prevent it.
+        ///
+        /// <b>Whole state every time.</b> The client replaces what it had, so it never
+        /// maintains a status list of its own and a dropped removal cannot leave a debuff on
+        /// screen forever.
+        /// </remarks>
+        [TargetRpc]
+        private void TargetPublishStatus(NetworkConnection connection, StatusSnapshot snapshot)
+        {
+            Status = snapshot;
+
+            StatusChanged?.Invoke(snapshot);
+        }
+
+        /// <summary>Sends the owning connection its current status effects.</summary>
+        [Server]
+        public void ServerPublishStatus(in StatusSnapshot snapshot)
+        {
+            if (Owner == null || !Owner.IsActive) return;
+
+            TargetPublishStatus(Owner, snapshot);
         }
 
         /// <summary>Publishes who this object represents.</summary>
