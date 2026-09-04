@@ -56,10 +56,14 @@ namespace ChibiFantasy.Data
         [Tooltip("Highest killer level this entry applies to. Zero means no ceiling.")]
         [SerializeField] private int _maxKillerLevel;
 
+        [Tooltip("Lowest MonsterRank that may drop this. Normal (0) means any monster.")]
+        [SerializeField] private int _minMonsterRank;
+
         public DropEntry(DefinitionId item, int minQuantity, int maxQuantity, float chance = 0f,
             DefinitionId rarityOverride = default, int minKillerLevel = 0, int maxKillerLevel = 0,
-            bool enabled = true)
+            bool enabled = true, MonsterRank minMonsterRank = MonsterRank.Normal)
         {
+            _minMonsterRank = (int)minMonsterRank;
             _item = item;
             _minQuantity = minQuantity;
             _maxQuantity = maxQuantity;
@@ -132,6 +136,24 @@ namespace ChibiFantasy.Data
 
         public int MaxKillerLevel => _maxKillerLevel;
 
+        /// <summary>
+        /// The lowest <see cref="MonsterRank"/> allowed to drop this.
+        /// </summary>
+        /// <remarks>
+        /// How a Devil Fruit becomes World Boss-only without a second boss classification
+        /// and without a special-case drop generator: it is one more condition on an
+        /// ordinary row, checked by the ordinary resolver.
+        ///
+        /// <c>Normal</c> is zero, so every entry authored before this existed keeps dropping
+        /// from every monster -- the same defaulting reasoning as <c>_disabled</c>. Stored as
+        /// an int because that is what Unity serializes for an enum field anyway, and it
+        /// keeps a future <c>drop_entry.min_monster_rank</c> column a straight mapping.
+        /// </remarks>
+        public MonsterRank MinMonsterRank => (MonsterRank)_minMonsterRank;
+
+        /// <summary>Whether this entry is restricted to anything above an ordinary monster.</summary>
+        public bool IsRankRestricted => _minMonsterRank > (int)MonsterRank.Normal;
+
         public bool IsValid => _item.IsValid && _minQuantity > 0 && IsChanceValid;
 
         /// <summary>
@@ -148,10 +170,24 @@ namespace ChibiFantasy.Data
             return true;
         }
 
+        /// <summary>
+        /// Whether a monster of this rank is allowed to drop the entry.
+        /// </summary>
+        /// <remarks>
+        /// A floor rather than an exact match, so a World Boss also drops what a Boss drops.
+        /// Ranks are ordered by intent -- Normal, Elite, MiniBoss, Boss, WorldBoss -- and
+        /// this is the one place that ordering means anything.
+        /// </remarks>
+        public bool AppliesToRank(MonsterRank rank)
+        {
+            return (int)rank >= _minMonsterRank;
+        }
+
         public override string ToString()
         {
             return _item + " x" + _minQuantity + ".." + MaxQuantity
-                + (IsGuaranteed ? " (always)" : " @" + _chance);
+                + (IsGuaranteed ? " (always)" : " @" + _chance)
+                + (IsRankRestricted ? " [" + MinMonsterRank + "+]" : string.Empty);
         }
     }
 

@@ -478,6 +478,34 @@ namespace ChibiFantasy.Gameplay
             return room > int.MaxValue ? int.MaxValue : (int)room;
         }
 
+        /// <summary>
+        /// Puts a saved item back in the slot it was saved in.
+        /// </summary>
+        /// <remarks>
+        /// <b>For loading, and only for loading.</b> <see cref="Add"/> is how an item enters
+        /// a bag during play: it finds a slot, stacks where it can and reports a remainder.
+        /// None of that is wanted when restoring, where the answer is already known and
+        /// re-deriving it would silently rearrange a bag the player arranged -- and would
+        /// merge two stacks that the database deliberately kept apart.
+        ///
+        /// It refuses rather than overwrites. An occupied slot means two rows claim the same
+        /// place, which is a data problem an operator must see rather than one item quietly
+        /// replacing another.
+        /// </remarks>
+        /// <returns>Whether the item was placed.</returns>
+        public bool Restore(int index, GameInstance instance)
+        {
+            if (instance == null || !IsValidIndex(index)) return false;
+
+            if (_slots[index] != null) return false;
+
+            _slots[index] = instance;
+
+            Advance();
+
+            return true;
+        }
+
         /// <summary>Empties every slot. Runtime and test convenience; identities are not reused.</summary>
         public void Clear()
         {

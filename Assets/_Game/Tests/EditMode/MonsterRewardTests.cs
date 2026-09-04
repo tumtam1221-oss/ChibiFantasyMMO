@@ -860,15 +860,14 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(result.IsGranted, Is.True);
             Assert.That(result.ExperienceGranted, Is.EqualTo(50));
 
-            foreach (System.Reflection.PropertyInfo property in
-                typeof(MonsterRewardResult).GetProperties())
-            {
-                string name = property.Name.ToLowerInvariant();
+            // This authority is composed with no loot registry, so nothing can drop at all.
+            Assert.That(result.HasLoot, Is.False);
 
-                Assert.That(name, Does.Not.Contain("loot"), property.Name);
-                Assert.That(name, Does.Not.Contain("item"), property.Name);
-                Assert.That(name, Does.Not.Contain("drop"), property.Name);
-            }
+            // The point this test has always made: experience never puts an item anywhere.
+            // Since 17.15 a kill may leave a pile on the ground, but a pile is not an item
+            // and a bag is only ever filled by a pickup.
+            Assert.That(killer.Inventory, Is.Null.Or.Property("OccupiedSlots").Zero,
+                "a kill must not put anything in anybody's bag");
         }
 
         [Test]

@@ -38,6 +38,9 @@ namespace ChibiFantasy.Tests.EditMode
 
         private const string MaxHp = "stat.maxhp";
         private const string Monster = "monster.itest-reward";
+        private const string DropTable = "drop.itest-reward";
+        private const string Coin = "item.itest-coin";
+        private const int Capacity = 12;
         private const int MaxLevel = 60;
         private const int LevelCost = 1000;
 
@@ -151,7 +154,45 @@ namespace ChibiFantasy.Tests.EditMode
             var spawns = new DefinitionRegistry<SpawnPointDefinition>();
             spawns.Register(Spawn());
 
-            return new WorldCharacterRegistry(_store, spawns);
+            return new WorldCharacterRegistry(_store, spawns, ItemRegistry(), Capacity);
+        }
+
+        /// <summary>The authored items this fixture can drop.</summary>
+        private DefinitionRegistry<ItemDefinition> ItemRegistry()
+        {
+            var items = new DefinitionRegistry<ItemDefinition>();
+
+            var coin = ScriptableObject.CreateInstance<ItemDefinition>();
+
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"" + Coin + "\"},\"_stackable\":true,"
+                + "\"_maxStackSize\":999}", coin);
+
+            _created.Add(coin);
+            items.Register(coin);
+
+            return items;
+        }
+
+        /// <summary>A table that always drops one coin, so the roll is not what is on trial.</summary>
+        private DefinitionRegistry<DropTableDefinition> DropTableRegistry()
+        {
+            var tables = new DefinitionRegistry<DropTableDefinition>();
+
+            var table = ScriptableObject.CreateInstance<DropTableDefinition>();
+
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"" + DropTable + "\"},\"_maxEntries\":0}", table);
+
+            SetPrivate(table, "_entries", new[]
+            {
+                new DropEntry(new DefinitionId(Coin), 1, 1),
+            });
+
+            _created.Add(table);
+            tables.Register(table);
+
+            return tables;
         }
 
         private LivingCharacter Enter(WorldCharacterRegistry registry, int connectionId = 1)
@@ -174,13 +215,24 @@ namespace ChibiFantasy.Tests.EditMode
         private MonsterRewardAuthority NewAuthority(WorldCharacterRegistry registry,
             out MonsterWorldRuntime runtime)
         {
+            return NewAuthority(registry, out runtime, out _);
+        }
+
+        private MonsterRewardAuthority NewAuthority(WorldCharacterRegistry registry,
+            out MonsterWorldRuntime runtime, out MonsterLootRegistry loot)
+        {
             var monsters = new DefinitionRegistry<MonsterDefinition>();
             monsters.Register(MonsterDefinitionFor(Monster, experience: 250));
 
             runtime = new MonsterWorldRuntime(registry, monsters, new DefinitionId(MaxHp),
                 new CombatTeam(2));
 
-            return new MonsterRewardAuthority(runtime, registry, Curve());
+            DefinitionRegistry<ItemDefinition> items = ItemRegistry();
+
+            loot = new MonsterLootRegistry(registry, items);
+
+            return new MonsterRewardAuthority(runtime, registry, Curve(), loot, items,
+                DropTableRegistry());
         }
 
         private LivingMonster Corpse(MonsterWorldRuntime runtime)
@@ -304,6 +356,170 @@ namespace ChibiFantasy.Tests.EditMode
                 Is.EqualTo(granted.ExperienceAfter));
         }
 
+        // ---- loot reaches MySQL exactly once -----------------------------------------------------
+
+        [Test]
+        public void APickedUpItemSurvivesAReloadExactlyOnce()
+        {
+            WorldCharacterRegistry registry = NewRegistry();
+            LivingCharacter character = Enter(registry);
+
+            int before = CoinsIn(character);
+
+            MonsterRewardAuthority rewards = NewAuthority(registry,
+                out MonsterWorldRuntime runtime, out MonsterLootRegistry loot);
+
+            MonsterRewardResult granted = rewards.Grant(Corpse(runtime).Instance,
+                character.Combatant.CombatantId);
+
+            Assert.That(granted.HasLoot, Is.True, "nothing dropped: " + granted);
+
+            LootPickupOutcome taken = loot.Pickup(granted.LootPile, 0,
+                new CharacterId(RewardCharacter));
+
+            Assert.That(taken.IsAccepted, Is.True, taken.ToString());
+            Assert.That(taken.IsPersisted, Is.True,
+                "the real PHP save refused: " + taken.PersistenceFailure);
+
+            // Only MySQL can answer this part.
+            CharacterPersistenceResult reloaded = _store.Load(_api.Session);
+
+            Assert.That(reloaded.IsOk, Is.True, reloaded.Detail);
+            Assert.That(CoinsIn(reloaded.Character), Is.EqualTo(before + 1),
+                "one coin, in the database, after a real round trip");
+
+            // And the item kept its own identity rather than being minted again.
+            Assert.That(FindCoin(reloaded.Character).Instance.Value,
+                Is.EqualTo(FindCoin(character).Instance.Value));
+        }
+
+        [Test]
+        public void ARetriedPickupLeavesTheDatabaseExactlyAsItWas()
+        {
+            WorldCharacterRegistry registry = NewRegistry();
+            LivingCharacter character = Enter(registry);
+
+            MonsterRewardAuthority rewards = NewAuthority(registry,
+                out MonsterWorldRuntime runtime, out MonsterLootRegistry loot);
+
+            MonsterRewardResult granted = rewards.Grant(Corpse(runtime).Instance,
+                character.Combatant.CombatantId);
+
+            Assert.That(loot.Pickup(granted.LootPile, 0,
+                new CharacterId(RewardCharacter)).IsPersisted, Is.True);
+
+            CharacterPersistenceResult afterFirst = _store.Load(_api.Session);
+
+            // The same request again -- a repeated packet, a retried tick, a reconnect.
+            LootPickupOutcome retry = loot.Pickup(granted.LootPile, 0,
+                new CharacterId(RewardCharacter));
+
+            Assert.That(retry.IsAccepted, Is.False);
+            Assert.That(registry.Save(character).IsOk, Is.True);
+
+            CharacterPersistenceResult afterRetry = _store.Load(_api.Session);
+
+            Assert.That(CoinsIn(afterRetry.Character),
+                Is.EqualTo(CoinsIn(afterFirst.Character)),
+                "a retry that added an item would be the duplication bug this gate exists "
+                + "to prevent");
+        }
+
+        [Test]
+        public void ABagArrangedInOneSessionComesBackTheSameWayInTheNext()
+        {
+            WorldCharacterRegistry first = NewRegistry();
+            LivingCharacter character = Enter(first);
+
+            MonsterRewardAuthority rewards = NewAuthority(first,
+                out MonsterWorldRuntime runtime, out MonsterLootRegistry loot);
+
+            MonsterRewardResult granted = rewards.Grant(Corpse(runtime).Instance,
+                character.Combatant.CombatantId);
+
+            loot.Pickup(granted.LootPile, 0, new CharacterId(RewardCharacter));
+
+            int slot = SlotOfCoin(character);
+            int coins = CoinsIn(character);
+
+            Assert.That(slot, Is.GreaterThanOrEqualTo(0), "precondition: a coin is in the bag");
+
+            // A second world server, the same database. This is what a player logging back
+            // in actually gets.
+            WorldCharacterRegistry second = NewRegistry();
+            LivingCharacter returned = Enter(second, connectionId: 2);
+
+            Assert.That(returned.Inventory, Is.Not.Null);
+            Assert.That(CoinsIn(returned), Is.EqualTo(coins));
+            Assert.That(SlotOfCoin(returned), Is.EqualTo(slot),
+                "the bag arrives arranged as it was left");
+            Assert.That(returned.Inventory.Capacity, Is.EqualTo(Capacity));
+        }
+
+        private static int CoinsIn(LivingCharacter character)
+        {
+            return character.Inventory == null
+                ? 0
+                : character.Inventory.CountOf(new DefinitionId(Coin));
+        }
+
+        private static int CoinsIn(PersistedCharacter row)
+        {
+            var total = 0;
+
+            for (int i = 0; i < row.Items.Count; i++)
+            {
+                if (row.Items[i].Item.Value == Coin) total += row.Items[i].Quantity;
+            }
+
+            return total;
+        }
+
+        private static PersistedItem FindCoin(PersistedCharacter row)
+        {
+            for (int i = 0; i < row.Items.Count; i++)
+            {
+                if (row.Items[i].Item.Value == Coin) return row.Items[i];
+            }
+
+            Assert.Fail("no coin in the persisted bag");
+
+            return default;
+        }
+
+        private static PersistedItem FindCoin(LivingCharacter character)
+        {
+            IReadOnlyList<ItemSlot> slots = character.Inventory.Slots;
+
+            for (int i = 0; i < slots.Count; i++)
+            {
+                if (slots[i].Content != null && slots[i].DefinitionId.Value == Coin)
+                {
+                    return new PersistedItem(slots[i].InstanceId, slots[i].DefinitionId, 1,
+                        slots[i].Index);
+                }
+            }
+
+            Assert.Fail("no coin in the live bag");
+
+            return default;
+        }
+
+        private static int SlotOfCoin(LivingCharacter character)
+        {
+            IReadOnlyList<ItemSlot> slots = character.Inventory.Slots;
+
+            for (int i = 0; i < slots.Count; i++)
+            {
+                if (slots[i].Content != null && slots[i].DefinitionId.Value == Coin)
+                {
+                    return slots[i].Index;
+                }
+            }
+
+            return -1;
+        }
+
         // ---- fixtures ------------------------------------------------------------------------------
 
         private CharacterProgressionDefinition Curve()
@@ -349,6 +565,7 @@ namespace ChibiFantasy.Tests.EditMode
             JsonUtility.FromJsonOverwrite(
                 "{\"_id\":{\"_value\":\"" + id + "\"},\"_level\":5,\"_aggressionType\":2,"
                 + "\"_experienceReward\":" + experience + ",\"_attackRange\":2,"
+                + "\"_lootTable\":{\"_value\":\"" + DropTable + "\"},"
                 + "\"_respawn\":{\"_respawnDelaySeconds\":0,\"_maxAliveInArea\":1}}",
                 definition);
 

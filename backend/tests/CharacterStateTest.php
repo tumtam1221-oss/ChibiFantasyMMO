@@ -379,4 +379,167 @@ final class CharacterStateTest extends BackendTestCase
         // Bryn's character is untouched.
         self::assertSame(0, $this->states->load('acc-b', 'char-b1')['experience']);
     }
+
+    // ---- inventory ------------------------------------------------------------
+
+    /**
+     * @param list<array{instance_id:string,item_id:string,quantity:int,slot:int}> $items
+     * @return array<string,mixed>
+     */
+    private function stateWithBag(array $items, int $capacity = 30): array
+    {
+        $state = $this->sampleState();
+        $state['items'] = $items;
+        $state['inventory_capacity'] = $capacity;
+
+        return $state;
+    }
+
+    public function testABagSurvivesTheRoundTripWithSlotsIntact(): void
+    {
+        $this->states->save('acc-a', 'char-a1', $this->stateWithBag([
+            ['instance_id' => 'item-1', 'item_id' => 'item.coin', 'quantity' => 250, 'slot' => 0],
+            ['instance_id' => 'item-2', 'item_id' => 'item.relic', 'quantity' => 1, 'slot' => 3],
+        ]), null);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(2, $loaded['items']);
+        self::assertSame(30, $loaded['inventory_capacity']);
+
+        // Ordered by slot, because a player arranges their bag and expects to find it.
+        self::assertSame(0, $loaded['items'][0]['slot']);
+        self::assertSame('item-1', $loaded['items'][0]['instance_id']);
+        self::assertSame(250, $loaded['items'][0]['quantity']);
+        self::assertSame(3, $loaded['items'][1]['slot']);
+        self::assertSame('item.relic', $loaded['items'][1]['item_id']);
+    }
+
+    public function testSavingTwiceLeavesOneCopyOfAnItemAndNotTwo(): void
+    {
+        $bag = [['instance_id' => 'item-1', 'item_id' => 'item.coin', 'quantity' => 5, 'slot' => 0]];
+
+        $first = $this->states->save('acc-a', 'char-a1', $this->stateWithBag($bag), null);
+        $this->states->save('acc-a', 'char-a1', $this->stateWithBag($bag),
+            $first['save_revision']);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(1, $loaded['items']);
+
+        // The unique key on container_slot.instance_id is what makes this a database
+        // guarantee rather than an application convention.
+        $rows = (int) $this->pdo
+            ->query("SELECT COUNT(*) FROM container_slot WHERE instance_id = 'item-1'")
+            ->fetchColumn();
+
+        self::assertSame(1, $rows);
+    }
+
+    public function testAnItemThatMovedSlotIsNotDuplicated(): void
+    {
+        $first = $this->states->save('acc-a', 'char-a1', $this->stateWithBag([
+            ['instance_id' => 'item-1', 'item_id' => 'item.coin', 'quantity' => 5, 'slot' => 0],
+        ]), null);
+
+        $this->states->save('acc-a', 'char-a1', $this->stateWithBag([
+            ['instance_id' => 'item-1', 'item_id' => 'item.coin', 'quantity' => 9, 'slot' => 7],
+        ]), $first['save_revision']);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(1, $loaded['items']);
+        self::assertSame(7, $loaded['items'][0]['slot']);
+        self::assertSame(9, $loaded['items'][0]['quantity']);
+    }
+
+    public function testASaveCarryingNoCapacityLeavesAnExistingBagAlone(): void
+    {
+        $first = $this->states->save('acc-a', 'char-a1', $this->stateWithBag([
+            ['instance_id' => 'item-1', 'item_id' => 'item.coin', 'quantity' => 5, 'slot' => 0],
+        ]), null);
+
+        // A world server composed without an item registry sends no inventory at all.
+        // That must not be read as "this character's bag is now empty".
+        $this->states->save('acc-a', 'char-a1', $this->sampleState(), $first['save_revision']);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(1, $loaded['items'],
+            'a misconfigured server must not delete a player\'s belongings');
+    }
+
+    public function testAnItemBeyondTheBagIsRefusedRatherThanPlacedSomewhereElse(): void
+    {
+        $this->states->save('acc-a', 'char-a1', $this->stateWithBag([
+            ['instance_id' => 'item-1', 'item_id' => 'item.coin', 'quantity' => 5, 'slot' => 0],
+            ['instance_id' => 'item-2', 'item_id' => 'item.relic', 'quantity' => 1, 'slot' => 99],
+        ], 10), null);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(1, $loaded['items']);
+        self::assertSame('item-1', $loaded['items'][0]['instance_id']);
+    }
+
+    public function testAMalformedItemRowIsSkippedAndTheRestOfTheBagStillSaves(): void
+    {
+        $this->states->save('acc-a', 'char-a1', $this->stateWithBag([
+            ['instance_id' => '', 'item_id' => 'item.coin', 'quantity' => 5, 'slot' => 0],
+            ['instance_id' => 'item-2', 'item_id' => '', 'quantity' => 5, 'slot' => 1],
+            ['instance_id' => 'item-3', 'item_id' => 'item.hide', 'quantity' => 2, 'slot' => 2],
+        ]), null);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(1, $loaded['items']);
+        self::assertSame('item-3', $loaded['items'][0]['instance_id']);
+    }
+
+    public function testARefusedSaveWritesNoItemEither(): void
+    {
+        $this->states->save('acc-a', 'char-a1', $this->stateWithBag([
+            ['instance_id' => 'item-1', 'item_id' => 'item.coin', 'quantity' => 5, 'slot' => 0],
+        ]), null);
+
+        // A stale revision is refused whole: the item from this attempt must not survive.
+        $refused = $this->states->save('acc-a', 'char-a1', $this->stateWithBag([
+            ['instance_id' => 'item-2', 'item_id' => 'item.relic', 'quantity' => 1, 'slot' => 1],
+        ]), 99);
+
+        self::assertFalse($refused['ok']);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(1, $loaded['items']);
+        self::assertSame('item-1', $loaded['items'][0]['instance_id']);
+    }
+
+    public function testAnItemCannotBeWrittenIntoAnotherAccountsCharacter(): void
+    {
+        $refused = $this->states->save('acc-b', 'char-a1', $this->stateWithBag([
+            ['instance_id' => 'item-1', 'item_id' => 'item.coin', 'quantity' => 5, 'slot' => 0],
+        ]), null);
+
+        self::assertFalse($refused['ok']);
+
+        $rows = (int) $this->pdo
+            ->query("SELECT COUNT(*) FROM item_instance WHERE instance_id = 'item-1'")
+            ->fetchColumn();
+
+        self::assertSame(0, $rows);
+    }
+
+    public function testTheItemBelongsToTheAccountTheSessionResolvedTo(): void
+    {
+        $this->states->save('acc-a', 'char-a1', $this->stateWithBag([
+            ['instance_id' => 'item-1', 'item_id' => 'item.coin', 'quantity' => 5, 'slot' => 0],
+        ]), null);
+
+        $owner = (string) $this->pdo
+            ->query("SELECT owner_id FROM item_instance WHERE instance_id = 'item-1'")
+            ->fetchColumn();
+
+        self::assertSame('acc-a', $owner);
+    }
 }

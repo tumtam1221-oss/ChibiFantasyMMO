@@ -364,6 +364,13 @@ namespace ChibiFantasy.Tests.EditMode
                 if (normalized.Contains("/Client/UI/QuestUiController.cs")) continue;
                 if (normalized.Contains("/Gameplay/")) continue;
 
+                // The server's own loot authority. 17.15 made the authoritative pickup path
+                // a server one rather than a UI one, which is stricter than what this test
+                // was written to enforce: a client controller can be bypassed, and this
+                // cannot. It is named explicitly, and the test below holds the list at one
+                // so a second server-side pickup path is still caught.
+                if (normalized.Contains("/Server/MonsterLootRegistry.cs")) continue;
+
                 string source = System.IO.File.ReadAllText(file);
 
                 Assert.That(source, Does.Not.Contain("QuestService.TryTurnIn"),
@@ -373,6 +380,29 @@ namespace ChibiFantasy.Tests.EditMode
                 Assert.That(source, Does.Not.Contain("LootPickupService.TryPickUp"),
                     normalized + " takes loot outside the command boundary");
             }
+        }
+
+        [Test]
+        public void Exactly_one_server_file_may_take_loot()
+        {
+            // The exemption above is a named file, not a directory. If a second server class
+            // starts taking loot, there are two places that decide whether a pickup is
+            // legitimate -- which is how the two disagree.
+            string[] files = System.IO.Directory.GetFiles("Assets/_Game/Scripts/Server",
+                "*.cs", System.IO.SearchOption.AllDirectories);
+
+            var takers = new System.Collections.Generic.List<string>();
+
+            foreach (string file in files)
+            {
+                if (System.IO.File.ReadAllText(file).Contains("LootPickupService.TryPickUp"))
+                {
+                    takers.Add(file.Replace('\\', '/'));
+                }
+            }
+
+            Assert.That(takers, Has.Count.EqualTo(1), string.Join(", ", takers));
+            Assert.That(takers[0], Does.EndWith("/Server/MonsterLootRegistry.cs"));
         }
 
         [Test]

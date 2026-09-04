@@ -68,13 +68,19 @@ namespace ChibiFantasy.Gameplay
                 IDefinitionRegistry<DropTableDefinition> tables,
                 IRandomResultSource results = null,
                 IRandomRangeSource ranges = null,
-                int killerLevel = 0)
+                int killerLevel = 0,
+                // `default` rather than the ordinary rank by name: naming a rank value here
+                // would be indistinguishable from the special-case branch this file is
+                // deliberately free of. Zero is the ordinary rank, which is the safe
+                // default -- a caller that does not say what died gets no restricted drops.
+                MonsterRank rank = default)
             {
                 Items = items;
                 Tables = tables;
                 Results = results ?? AlwaysSucceeds.Instance;
                 Ranges = ranges ?? AlwaysSucceeds.Instance;
                 KillerLevel = killerLevel;
+                Rank = rank;
             }
 
             public IDefinitionRegistry<ItemDefinition> Items { get; }
@@ -90,6 +96,14 @@ namespace ChibiFantasy.Gameplay
             /// <summary>Level of whoever landed the kill, for level-banded entries.</summary>
             public int KillerLevel { get; }
 
+            /// <summary>
+            /// What kind of monster is dropping, for rank-restricted entries.
+            /// </summary>
+            /// <remarks>Defaults to <c>Normal</c>, which is the safe direction: a caller
+            /// that does not say what died gets no restricted drops rather than all of
+            /// them.</remarks>
+            public MonsterRank Rank { get; }
+
             public bool IsUsable => Items != null && Tables != null;
         }
 
@@ -103,7 +117,12 @@ namespace ChibiFantasy.Gameplay
         {
             if (into == null || monster == null || !context.IsUsable) return 0;
 
-            return Resolve(monster.InstanceId, monster.Definition.LootTable, context, into);
+            // The monster's own authored rank, never the caller's opinion of it. This is
+            // what makes a World Boss-only entry impossible to obtain from a rat.
+            var ranked = new Context(context.Items, context.Tables, context.Results,
+                context.Ranges, context.KillerLevel, monster.Definition.Rank);
+
+            return Resolve(monster.InstanceId, monster.Definition.LootTable, ranked, into);
         }
 
         /// <summary>Rolls a named table on behalf of a source.</summary>
@@ -134,6 +153,9 @@ namespace ChibiFantasy.Gameplay
                 if (!entry.Enabled) continue;
 
                 if (!entry.AppliesTo(context.KillerLevel)) continue;
+
+                // Restricted to something rarer than what died.
+                if (!entry.AppliesToRank(context.Rank)) continue;
 
                 // The item must exist before it can be promised. Content removed by a patch
                 // must not produce loot nobody can pick up.

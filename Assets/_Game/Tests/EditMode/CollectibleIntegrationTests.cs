@@ -217,10 +217,37 @@ namespace ChibiFantasy.Tests.EditMode
             {
                 Assert.That(code, Does.Not.Contain("DevilFruit"), "no fruit branch");
                 Assert.That(code, Does.Not.Contain("Card"), "no card branch");
-                Assert.That(code, Does.Not.Contain("WorldBoss"), "no boss branch");
-                Assert.That(code, Does.Not.Contain("MonsterRank"));
                 Assert.That(code, Does.Not.Contain("ItemCategory"));
+
+                // No rank is named. 17.15 gave the resolver a rank gate, which means it
+                // mentions the MonsterRank type -- but naming the type is how a general
+                // condition is expressed, while naming a value is what a special case looks
+                // like. "if the monster is a WorldBoss" would be the branch this test has
+                // always existed to forbid, so every value stays forbidden.
+                Assert.That(code, Does.Not.Contain("MonsterRank.Normal"), "no rank branch");
+                Assert.That(code, Does.Not.Contain("MonsterRank.Elite"), "no rank branch");
+                Assert.That(code, Does.Not.Contain("MonsterRank.MiniBoss"), "no rank branch");
+                Assert.That(code, Does.Not.Contain("MonsterRank.Boss"), "no rank branch");
+                Assert.That(code, Does.Not.Contain("WorldBoss"), "no boss branch");
             }
+        }
+
+        [Test]
+        public void The_rank_gate_is_one_general_condition_and_not_a_list_of_kinds()
+        {
+            // What the resolver actually does with a rank: asks the entry, once. If this
+            // ever becomes a comparison against a particular rank, the previous test is
+            // reading a file that has grown the branch it forbids.
+            var asks = 0;
+
+            foreach (string code in DevilFruitTests.CodeLines(
+                "Assets/_Game/Scripts/Gameplay/DropResolver.cs"))
+            {
+                if (code.Contains("AppliesToRank")) asks++;
+            }
+
+            Assert.That(asks, Is.EqualTo(1),
+                "exactly one rank question, asked of the authored row");
         }
 
         [Test]

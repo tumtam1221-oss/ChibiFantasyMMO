@@ -80,8 +80,9 @@ namespace ChibiFantasy.Server
         internal LivingCharacter(int connectionId, SessionId session, AccountId account,
             ServerId server, ChannelId channel, Character character, CharacterSkillsState skills,
             CharacterLocationState location, SpawnPointDefinition spawn, int saveRevision,
-            CombatTeam team)
+            CombatTeam team, ItemContainerState inventory = null)
         {
+            Inventory = inventory;
             ConnectionId = connectionId;
             Session = session;
             Account = account;
@@ -124,6 +125,20 @@ namespace ChibiFantasy.Server
 
         /// <summary>Phase 11's location state, the one the travel system moves.</summary>
         public CharacterLocationState Location { get; }
+
+        /// <summary>
+        /// The character's bag: Phase 08's container, not a server-side copy of one.
+        /// </summary>
+        /// <remarks>
+        /// <b>The authoritative inventory.</b> Loot arrives here and nowhere else, through
+        /// <c>LootPickupService</c>, using the stacking and capacity rules Phase 08 already
+        /// defines. There is no loot container and no second stacking algorithm.
+        ///
+        /// Null on a server composed without an item registry -- a world that cannot resolve
+        /// an item definition cannot honestly hold items, and a bag that silently accepted
+        /// unknown ids would be worse than none. Every caller checks.
+        /// </remarks>
+        public ItemContainerState Inventory { get; }
 
         public SpawnPointDefinition Spawn { get; }
 
@@ -258,6 +273,8 @@ namespace ChibiFantasy.Server
     {
         private readonly ICharacterStateStore _store;
         private readonly IDefinitionRegistry<SpawnPointDefinition> _spawnPoints;
+        private readonly IDefinitionRegistry<ItemDefinition> _items;
+        private readonly int _defaultInventoryCapacity;
 
         private readonly Dictionary<int, LivingCharacter> _byConnection =
             new Dictionary<int, LivingCharacter>();
@@ -265,11 +282,27 @@ namespace ChibiFantasy.Server
         private readonly Dictionary<string, LivingCharacter> _byCharacter =
             new Dictionary<string, LivingCharacter>();
 
+        /// <param name="store">Where characters are loaded from and written back to.</param>
+        /// <param name="spawnPoints">Authored spawns, so arrivals resolve from content.</param>
+        /// <param name="items">
+        /// Authored items, needed to rebuild a bag. Optional: a world composed without one
+        /// gives every character a null inventory, which is the honest answer for a server
+        /// that cannot resolve an item id -- and it keeps every caller written before
+        /// inventories were loaded working unchanged.
+        /// </param>
+        /// <param name="defaultInventoryCapacity">
+        /// Slots for a character whose row carries no capacity of its own. A number here
+        /// rather than in every row, so raising it later is one change.
+        /// </param>
         public WorldCharacterRegistry(ICharacterStateStore store,
-            IDefinitionRegistry<SpawnPointDefinition> spawnPoints)
+            IDefinitionRegistry<SpawnPointDefinition> spawnPoints,
+            IDefinitionRegistry<ItemDefinition> items = null,
+            int defaultInventoryCapacity = 30)
         {
             _store = store;
             _spawnPoints = spawnPoints;
+            _items = items;
+            _defaultInventoryCapacity = defaultInventoryCapacity;
         }
 
         public int Count => _byConnection.Count;
@@ -339,9 +372,17 @@ namespace ChibiFantasy.Server
                     "spawn " + spawn.Id + " refused the arrival");
             }
 
+            // The bag is rebuilt from the same row the rest of the character came from, in
+            // the slots it was saved in.
+            ItemContainerState inventory = _items == null
+                ? null
+                : PersistedCharacterMapper.ToInventory(loaded.Character,
+                    new OwnerId(admission.Account.Value), _items,
+                    _defaultInventoryCapacity);
+
             var living = new LivingCharacter(connectionId, admission.Session, admission.Account,
                 admission.Server, admission.Channel, domain.Character, domain.Skills, location,
-                spawn, loaded.Character.SaveRevision, team);
+                spawn, loaded.Character.SaveRevision, team, inventory);
 
             living.Combatant.SetLimits(limits);
 
@@ -430,7 +471,7 @@ namespace ChibiFantasy.Server
 
             PersistedCharacter row = PersistedCharacterMapper.ToPersisted(living.Domain,
                 living.Skills, living.Location, living.Server, living.Account,
-                living.SaveRevision);
+                living.SaveRevision, living.Inventory);
 
             CharacterPersistenceResult result = _store.Save(living.Session, row,
                 living.SaveRevision);

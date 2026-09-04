@@ -47,6 +47,51 @@ namespace ChibiFantasy.Contracts
     }
 
     /// <summary>
+    /// One owned item, as the database holds it.
+    /// </summary>
+    /// <remarks>
+    /// <b>The slot is part of the row, not derived.</b> A player arranges their bag and
+    /// expects to find it as they left it, so where an item sits is persisted state rather
+    /// than something recomputed by re-adding everything on load.
+    ///
+    /// The lock state travels as an int for the same reason every other enum here does: the
+    /// database column is a number, and the domain decides what the numbers mean.
+    /// </remarks>
+    public readonly struct PersistedItem
+    {
+        public PersistedItem(InstanceId instance, DefinitionId item, int quantity,
+            int slotIndex, int lockState = 0)
+        {
+            Instance = instance;
+            Item = item;
+            Quantity = quantity;
+            SlotIndex = slotIndex;
+            LockState = lockState;
+        }
+
+        /// <summary>The item's own identity, minted when it was created and never reused.</summary>
+        public InstanceId Instance { get; }
+
+        public DefinitionId Item { get; }
+
+        public int Quantity { get; }
+
+        /// <summary>Where it sits in the container.</summary>
+        public int SlotIndex { get; }
+
+        /// <summary>Mirrors <c>ItemLockState</c>: 0 Available, 1 Reserved, 2 Listed, 3 Bound.</summary>
+        public int LockState { get; }
+
+        public bool IsValid => Instance.IsValid && Item.IsValid && Quantity > 0
+            && SlotIndex >= 0;
+
+        public override string ToString()
+        {
+            return Item + " x" + Quantity + " @" + SlotIndex;
+        }
+    }
+
+    /// <summary>
     /// A character as the database holds it, before anything turns it into a domain object.
     /// </summary>
     /// <remarks>
@@ -69,8 +114,11 @@ namespace ChibiFantasy.Contracts
             int currentMana, DefinitionId characterClass, DefinitionId job, DefinitionId map,
             DefinitionId spawn, IReadOnlyList<PersistedStat> stats,
             IReadOnlyList<PersistedAppearance> appearance, IReadOnlyList<PersistedSkill> skills,
-            int saveRevision)
+            int saveRevision, IReadOnlyList<PersistedItem> items = null,
+            int inventoryCapacity = 0)
         {
+            Items = items ?? System.Array.Empty<PersistedItem>();
+            InventoryCapacity = inventoryCapacity;
             Character = character;
             Account = account;
             Server = server;
@@ -122,6 +170,23 @@ namespace ChibiFantasy.Contracts
         public IReadOnlyList<PersistedAppearance> Appearance { get; }
 
         public IReadOnlyList<PersistedSkill> Skills { get; }
+
+        /// <summary>
+        /// What is in the character's bag.
+        /// </summary>
+        /// <remarks>Optional on the constructor so that every caller written before items
+        /// were persisted still compiles and still means what it meant: an empty list is
+        /// "this row carries no inventory", which is what a load from before the column
+        /// existed genuinely is.</remarks>
+        public IReadOnlyList<PersistedItem> Items { get; }
+
+        /// <summary>
+        /// How many slots the bag has. Zero means the server's default.
+        /// </summary>
+        /// <remarks>Persisted because capacity is bought and expanded in most games of this
+        /// kind. Zero rather than a number here, so the default lives in one place on the
+        /// server instead of being copied into every row.</remarks>
+        public int InventoryCapacity { get; }
 
         /// <summary>
         /// The revision this was loaded at, presented again when saving.

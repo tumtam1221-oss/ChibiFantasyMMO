@@ -94,6 +94,18 @@ namespace ChibiFantasy.Backend
                     row.Int("level")));
             }
 
+            var items = new List<PersistedItem>();
+
+            foreach (JsonReader row in json.Array("items"))
+            {
+                items.Add(new PersistedItem(
+                    new InstanceId(row.String("instance_id")),
+                    new DefinitionId(row.String("item_id")),
+                    row.Int("quantity"),
+                    row.Int("slot"),
+                    row.Int("lock_state")));
+            }
+
             var persisted = new PersistedCharacter(
                 character,
                 new AccountId(json.String("account_id")),
@@ -111,7 +123,9 @@ namespace ChibiFantasy.Backend
                 stats,
                 appearance,
                 skills,
-                SaveRevisionOf(json));
+                SaveRevisionOf(json),
+                items,
+                json.Int("inventory_capacity"));
 
             return CharacterPersistenceResult.Loaded(persisted);
         }
@@ -173,7 +187,11 @@ namespace ChibiFantasy.Backend
                 .Add("class_id", character.Class.Value)
                 .Add("job_id", character.Job.Value)
                 .Add("map_id", character.Map.Value)
-                .Add("spawn_id", character.Spawn.Value);
+                .Add("spawn_id", character.Spawn.Value)
+                // Zero means "this server carries no inventory", which the API reads as
+                // "leave the bag alone" rather than as "the bag is now empty". A world
+                // composed without an item registry must not delete anybody's belongings.
+                .Add("inventory_capacity", character.InventoryCapacity);
 
             var body = new System.Text.StringBuilder();
 
@@ -197,11 +215,11 @@ namespace ChibiFantasy.Backend
         }
 
         /// <summary>
-        /// Splices the three collections into the state object.
+        /// Splices the four collections into the state object.
         /// </summary>
         /// <remarks><see cref="JsonWriter"/> writes flat objects and one nested object; it
         /// cannot express an array of objects, and teaching it to would be more machinery
-        /// than three arrays justify. The arrays are appended textually, with every value
+        /// than four arrays justify. The arrays are appended textually, with every value
         /// escaped through the writer that produced the rest.</remarks>
         private static string WithCollections(JsonWriter state, PersistedCharacter character)
         {
@@ -244,6 +262,23 @@ namespace ChibiFantasy.Backend
                 builder.Append(new JsonWriter()
                     .Add("skill_id", character.Skills[i].Skill.Value)
                     .Add("level", character.Skills[i].Level)
+                    .ToJson());
+            }
+
+            builder.Append("],\"items\":[");
+
+            for (int i = 0; i < character.Items.Count; i++)
+            {
+                if (i > 0) builder.Append(',');
+
+                PersistedItem item = character.Items[i];
+
+                builder.Append(new JsonWriter()
+                    .Add("instance_id", item.Instance.Value)
+                    .Add("item_id", item.Item.Value)
+                    .Add("quantity", item.Quantity)
+                    .Add("slot", item.SlotIndex)
+                    .Add("lock_state", item.LockState)
                     .ToJson());
             }
 

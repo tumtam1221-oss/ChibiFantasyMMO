@@ -223,7 +223,7 @@ namespace ChibiFantasy.Server
         /// </remarks>
         public static PersistedCharacter ToPersisted(Character character,
             CharacterSkillsState skills, CharacterLocationState location, ServerId server,
-            AccountId account, int saveRevision)
+            AccountId account, int saveRevision, ItemContainerState inventory = null)
         {
             if (character == null) return null;
 
@@ -278,7 +278,98 @@ namespace ChibiFantasy.Server
                 stats,
                 appearance,
                 learned,
-                saveRevision);
+                saveRevision,
+                ItemsOf(inventory),
+                inventory == null ? 0 : inventory.Capacity);
+        }
+
+        /// <summary>
+        /// Reads a bag out as rows, one per occupied slot.
+        /// </summary>
+        /// <remarks>
+        /// <b>Occupied slots only.</b> An empty slot is the absence of a row, not a row
+        /// saying "nothing" -- the same shape the <c>container_slot</c> table already has,
+        /// so nothing has to be translated on the way down.
+        ///
+        /// The slot index travels with each item because a player arranges their bag and
+        /// expects to find it that way. Recomputing positions by re-adding everything on
+        /// load would silently reorder it.
+        /// </remarks>
+        private static IReadOnlyList<PersistedItem> ItemsOf(ItemContainerState inventory)
+        {
+            if (inventory == null) return System.Array.Empty<PersistedItem>();
+
+            var items = new List<PersistedItem>();
+
+            IReadOnlyList<ItemSlot> slots = inventory.Slots;
+
+            for (int i = 0; i < slots.Count; i++)
+            {
+                GameInstance content = slots[i].Content;
+
+                if (content == null) continue;
+
+                // Quantity lives on a stackable ItemInstance; anything else is a single
+                // object, which is the same rule the container itself applies.
+                int quantity = content is ItemInstance stack ? stack.Quantity : 1;
+
+                items.Add(new PersistedItem(content.InstanceId, content.DefinitionId,
+                    quantity, slots[i].Index, (int)content.LockState));
+            }
+
+            return items;
+        }
+
+        /// <summary>
+        /// Rebuilds a bag from rows, each item back in the slot it was saved in.
+        /// </summary>
+        /// <remarks>
+        /// <b>A row the domain refuses is dropped, not thrown on.</b> Loading is the one
+        /// place a bad row must not take a player's whole session down with it: an item
+        /// whose slot is out of range or whose quantity is impossible is left out, and the
+        /// rest of the bag still arrives. The alternative is a character nobody can log in
+        /// as.
+        ///
+        /// Equipment becomes an <c>EquipmentInstance</c> and everything else an
+        /// <c>ItemInstance</c>, decided by the authored definition -- the same rule
+        /// <c>LootPickupService</c> uses when it mints one, so an item is the same kind of
+        /// object however it arrived.
+        /// </remarks>
+        public static ItemContainerState ToInventory(PersistedCharacter persisted,
+            OwnerId owner, IDefinitionRegistry<ItemDefinition> items, int defaultCapacity)
+        {
+            int capacity = persisted != null && persisted.InventoryCapacity > 0
+                ? persisted.InventoryCapacity
+                : defaultCapacity;
+
+            var inventory = new ItemContainerState(owner, capacity);
+
+            if (persisted == null || items == null) return inventory;
+
+            for (int i = 0; i < persisted.Items.Count; i++)
+            {
+                PersistedItem row = persisted.Items[i];
+
+                if (!row.IsValid || row.SlotIndex >= capacity) continue;
+
+                if (!items.TryGet(row.Item, out ItemDefinition definition)
+                    || definition == null)
+                {
+                    // Content the build no longer has. Keeping the row would mean an item
+                    // nobody can name, use or sell.
+                    continue;
+                }
+
+                GameInstance instance = definition is EquipmentDefinition
+                    ? (GameInstance)new EquipmentInstance(row.Instance, row.Item, owner)
+                    : new ItemInstance(row.Instance, row.Item, owner, row.Quantity);
+
+                instance.TrySetLockState((ItemLockState)row.LockState);
+
+                inventory.Restore(row.SlotIndex, instance);
+            }
+
+            return inventory;
         }
     }
 }

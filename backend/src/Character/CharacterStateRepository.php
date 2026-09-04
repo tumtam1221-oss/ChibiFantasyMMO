@@ -85,6 +85,8 @@ final class CharacterStateRepository
             'stats'         => $this->loadStats($characterId),
             'appearance'    => $this->loadAppearance($characterId),
             'skills'        => $this->loadSkills($characterId),
+            'items'         => $this->loadInventory($characterId),
+            'inventory_capacity' => $this->loadInventoryCapacity($characterId),
             'revisions'     => $this->loadRevisions($characterId),
         ];
     }
@@ -144,6 +146,70 @@ final class CharacterStateRepository
             ],
             $statement->fetchAll()
         );
+    }
+
+    /**
+     * What is in a character's bag, in slot order.
+     *
+     * A join rather than a blob: the container is rows, so one item can be located,
+     * locked and moved without rewriting a whole inventory. Ordering by slot means the
+     * bag arrives arranged as the player left it.
+     *
+     * @return list<array{instance_id:string,item_id:string,quantity:int,slot:int,lock_state:int}>
+     */
+    private function loadInventory(string $characterId): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT s.slot_index, i.instance_id, i.definition_id, i.quantity, i.lock_state
+             FROM container_slot s
+             INNER JOIN item_instance i ON i.instance_id = s.instance_id
+             WHERE s.container_id = :cid
+             ORDER BY s.slot_index ASC'
+        );
+
+        $statement->execute([':cid' => $this->containerId($characterId)]);
+
+        return array_map(
+            static fn (array $r): array => [
+                'instance_id' => (string) $r['instance_id'],
+                'item_id'     => (string) $r['definition_id'],
+                'quantity'    => (int) $r['quantity'],
+                'slot'        => (int) $r['slot_index'],
+                'lock_state'  => (int) $r['lock_state'],
+            ],
+            $statement->fetchAll()
+        );
+    }
+
+    /**
+     * How many slots the bag has, or zero for a character that has never had one.
+     *
+     * Zero rather than a number, so the default lives on the server instead of being
+     * copied into every row -- raising it later is then one change, not a migration.
+     */
+    private function loadInventoryCapacity(string $characterId): int
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT capacity FROM item_container WHERE container_id = :cid'
+        );
+
+        $statement->execute([':cid' => $this->containerId($characterId)]);
+
+        $value = $statement->fetchColumn();
+
+        return $value === false ? 0 : (int) $value;
+    }
+
+    /**
+     * A character's inventory container id.
+     *
+     * Derived from the character rather than stored, so there is exactly one inventory
+     * per character and no lookup can return a second one. The account owns the items;
+     * the character owns the bag.
+     */
+    private function containerId(string $characterId): string
+    {
+        return 'inv:' . $characterId;
     }
 
     /**
@@ -257,6 +323,12 @@ final class CharacterStateRepository
             $this->replaceStats($characterId, $state['stats'] ?? []);
             $this->replaceAppearance($characterId, $state['appearance'] ?? []);
             $this->replaceSkills($characterId, $state['skills'] ?? []);
+            $this->writeInventory(
+                $characterId,
+                $accountId,
+                $state['items'] ?? [],
+                (int) ($state['inventory_capacity'] ?? 0)
+            );
             $this->writeRevisions($characterId, $state['revisions'] ?? [], $next);
 
             $this->pdo->commit();
@@ -416,6 +488,108 @@ final class CharacterStateRepository
                 ':cid'   => $characterId,
                 ':skill' => $id,
                 ':level' => max(1, (int) ($skill['level'] ?? 1)),
+            ]);
+        }
+    }
+
+    /**
+     * Writes a character's bag: the container, the item rows, and where each one sits.
+     *
+     * **Slots are replaced; item rows are not deleted.** Emptying and refilling
+     * `container_slot` is safe because a slot row is only ever a placement. Deleting
+     * `item_instance` rows that are no longer in the bag would not be: an item can
+     * legitimately have left the inventory for a trade window or a shop listing, and
+     * this endpoint knows nothing about either. An instance that is no longer placed
+     * stays owned and unplaced, which is exactly what it is.
+     *
+     * **Nothing is written for a payload with no capacity.** A save from a world server
+     * composed without an item registry carries no inventory at all, and must not be
+     * read as "this character's bag is now empty" -- that would delete a player's
+     * belongings because a server was misconfigured.
+     *
+     * Runs inside the caller's transaction, so a bag is never half-written.
+     *
+     * @param list<array{instance_id?:string,item_id?:string,quantity?:int,slot?:int,lock_state?:int}> $items
+     */
+    private function writeInventory(
+        string $characterId,
+        string $accountId,
+        array $items,
+        int $capacity
+    ): void {
+        if ($capacity <= 0) {
+            return;
+        }
+
+        $containerId = $this->containerId($characterId);
+
+        $this->pdo->prepare(
+            'INSERT INTO item_container
+                (container_id, owner_id, kind, capacity, revision, created_at, updated_at)
+             VALUES (:cid, :owner, 0, :capacity, 0, NOW(3), NOW(3))
+             ON DUPLICATE KEY UPDATE
+                capacity = VALUES(capacity),
+                revision = revision + 1,
+                updated_at = NOW(3)'
+        )->execute([
+            ':cid'      => $containerId,
+            ':owner'    => $accountId,
+            ':capacity' => $capacity,
+        ]);
+
+        $this->pdo->prepare('DELETE FROM container_slot WHERE container_id = :cid')
+            ->execute([':cid' => $containerId]);
+
+        if ($items === []) {
+            return;
+        }
+
+        $instance = $this->pdo->prepare(
+            'INSERT INTO item_instance
+                (instance_id, definition_id, owner_id, quantity, lock_state, revision,
+                 created_at, updated_at)
+             VALUES (:iid, :did, :owner, :quantity, :lock, 0, NOW(3), NOW(3))
+             ON DUPLICATE KEY UPDATE
+                definition_id = VALUES(definition_id),
+                owner_id = VALUES(owner_id),
+                quantity = VALUES(quantity),
+                lock_state = VALUES(lock_state),
+                revision = revision + 1,
+                updated_at = NOW(3)'
+        );
+
+        $slot = $this->pdo->prepare(
+            'INSERT INTO container_slot (container_id, slot_index, instance_id)
+             VALUES (:cid, :slot, :iid)'
+        );
+
+        foreach ($items as $item) {
+            $instanceId = (string) ($item['instance_id'] ?? '');
+            $definitionId = (string) ($item['item_id'] ?? '');
+            $slotIndex = (int) ($item['slot'] ?? -1);
+
+            // A row missing an identity, a definition or a place is not an item. Skipped
+            // rather than defaulted: inventing a slot would move somebody's belongings.
+            if ($instanceId === '' || $definitionId === '' || $slotIndex < 0) {
+                continue;
+            }
+
+            if ($slotIndex >= $capacity) {
+                continue;
+            }
+
+            $instance->execute([
+                ':iid'      => $instanceId,
+                ':did'      => $definitionId,
+                ':owner'    => $accountId,
+                ':quantity' => max(1, (int) ($item['quantity'] ?? 1)),
+                ':lock'     => max(0, min(3, (int) ($item['lock_state'] ?? 0))),
+            ]);
+
+            $slot->execute([
+                ':cid'  => $containerId,
+                ':slot' => $slotIndex,
+                ':iid'  => $instanceId,
             ]);
         }
     }
