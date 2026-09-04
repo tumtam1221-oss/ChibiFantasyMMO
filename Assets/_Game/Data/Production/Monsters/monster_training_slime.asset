@@ -28,6 +28,9 @@ MonoBehaviour:
   - _stat:
       _value: stat.def
     _value: 2
+  - _stat:
+      _value: stat.mdef
+    _value: 3
   _element: 0
   _movementType: 1
   _aggressionType: 0

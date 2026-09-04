@@ -23,11 +23,15 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 956178d25f095c24c8b59d6eeb500505, type: 2}
   - {fileID: 11400000, guid: a4becb1d5fb0eab4ead92a902acf68b9, type: 2}
   - {fileID: 11400000, guid: d6b92e94336634140b9a9f6e259cd802, type: 2}
+  - {fileID: 11400000, guid: 0083f78f868c3ec4eafa4af129b53925, type: 2}
+  - {fileID: 11400000, guid: e44be6adf59b1a84bab8da907a9755eb, type: 2}
   _formulas:
   - {fileID: 11400000, guid: 1bd7ab784fe674c4ba48dc47c0372b04, type: 2}
   - {fileID: 11400000, guid: da54c21f386cd5744a8889848054d4ad, type: 2}
   - {fileID: 11400000, guid: f77c94043718240418b58e334b3f5454, type: 2}
   - {fileID: 11400000, guid: d692b3d5e49cb4f42b6212acaa941dea, type: 2}
+  - {fileID: 11400000, guid: 970181efbb2972f4b8fbcbc343a54a71, type: 2}
+  - {fileID: 11400000, guid: c9b4f57e68cf3204fb7b6135b7fc26ed, type: 2}
   _classes:
   - {fileID: 11400000, guid: 6292b803958f99c48b93eca32d602347, type: 2}
   _progressions:
@@ -38,7 +42,8 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 237e52f3c384d8e4a90c8951c316302a, type: 2}
   _monsters:
   - {fileID: 11400000, guid: 10930e6afcf62524da5ecbecfc81bc89, type: 2}
-  _skills: []
+  _skills:
+  - {fileID: 11400000, guid: 00d6db5004cf501458f5a0a5e57b388f, type: 2}
   _statusEffects: []
   _items: []
   _maxHealthStat:
@@ -49,4 +54,8 @@ MonoBehaviour:
     _value: stat.atk
   _defenceStat:
     _value: stat.def
+  _magicAttackStat:
+    _value: stat.matk
+  _magicDefenceStat:
+    _value: stat.mdef
   _walkMetresPerSecond: 4

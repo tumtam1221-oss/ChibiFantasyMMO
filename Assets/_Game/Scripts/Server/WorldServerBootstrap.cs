@@ -131,6 +131,12 @@ namespace ChibiFantasy.Server
 
         private readonly List<string> _contentFaults = new List<string>();
 
+        /// <summary>Floor under a resolved blow, shared by basic attacks and skills.</summary>
+        /// <remarks>One value rather than two literals: whether a hopeless attack chips for
+        /// one is a single balance decision, and a spell and a sword should not be able to
+        /// disagree about it by accident.</remarks>
+        private const int MinimumDamage = 1;
+
         public ServerId Server => new ServerId(_serverId);
 
         public ChannelId Channel => new ChannelId(_channelId);
@@ -274,10 +280,17 @@ namespace ChibiFantasy.Server
 
             var commands = new CombatCommandAuthority(players, _ => true, monsters);
 
+            // What resists a skill, named from content. Physical and magic differ here by
+            // which stat answers them and nowhere else -- the arithmetic below this line is
+            // the same subtraction a basic attack uses, and a skill that authors no damage
+            // type is resisted by armour exactly as it always was.
+            var skillRules = new SkillExecutionRules(_content.DefenceStat,
+                _content.MagicDefenceStat, MinimumDamage);
+
             var combat = new ServerCombatPipeline(commands, monsters, null,
-                BasicAttackRules.Melee(_content.AttackStat, _content.DefenceStat, 1,
-                    _meleeReachMetres),
-                default, skills, default, effects);
+                BasicAttackRules.Melee(_content.AttackStat, _content.DefenceStat,
+                    MinimumDamage, _meleeReachMetres),
+                default, skills, skillRules, effects);
 
             // A command handled between ticks settles the world immediately, so a second
             // command in the same frame is never resolved against state the first one

@@ -77,6 +77,12 @@ namespace ChibiFantasy.Data
         [Tooltip("Which derived stat resists physical damage.")]
         [SerializeField] private DefinitionId _defenceStat;
 
+        [Tooltip("Which derived stat a magic skill's damage scales from.")]
+        [SerializeField] private DefinitionId _magicAttackStat;
+
+        [Tooltip("Which derived stat resists magic damage.")]
+        [SerializeField] private DefinitionId _magicDefenceStat;
+
         [Header("World rules")]
         [Tooltip("Authored walking speed in metres per second. The movement authority's "
             + "budget, never a client's.")]
@@ -89,6 +95,16 @@ namespace ChibiFantasy.Data
         public DefinitionId AttackStat => _attackStat;
 
         public DefinitionId DefenceStat => _defenceStat;
+
+        /// <summary>Which derived stat magic damage scales from.</summary>
+        /// <remarks>Named here rather than in a skill: a skill authors how hard it hits and
+        /// what resists it, never which of this world's stats is "magic attack".</remarks>
+        public DefinitionId MagicAttackStat => _magicAttackStat;
+
+        /// <summary>Which derived stat answers magic damage.</summary>
+        /// <remarks>The one place the world says what resists a spell. Combat code reads it
+        /// through <c>SkillExecutionRules</c> and names no stat itself.</remarks>
+        public DefinitionId MagicDefenceStat => _magicDefenceStat;
 
         public float WalkMetresPerSecond => _walkMetresPerSecond <= 0f
             ? 1f
@@ -155,6 +171,8 @@ namespace ChibiFantasy.Data
             RequireStat(_maxManaStat, "maximum mana", stats, faults);
             RequireStat(_attackStat, "attack", stats, faults);
             RequireStat(_defenceStat, "defence", stats, faults);
+            RequireStat(_magicAttackStat, "magic attack", stats, faults);
+            RequireStat(_magicDefenceStat, "magic defence", stats, faults);
 
             // --- a formula naming a stat nobody defined produces nothing, silently --------
             for (var i = 0; i < _formulas.Length; i++)
@@ -185,6 +203,8 @@ namespace ChibiFantasy.Data
             RequireFormulaFor(_maxManaStat, faults);
             RequireFormulaFor(_attackStat, faults);
             RequireFormulaFor(_defenceStat, faults);
+            RequireFormulaFor(_magicAttackStat, faults);
+            RequireFormulaFor(_magicDefenceStat, faults);
 
             // --- somewhere for a player to arrive -----------------------------------------
             DefinitionRegistry<MapDefinition> maps = Build(_maps);

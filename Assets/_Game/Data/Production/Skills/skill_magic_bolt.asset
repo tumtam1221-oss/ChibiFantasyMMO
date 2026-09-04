@@ -1,0 +1,108 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0c8a460d67bf6aa49ab75a939baa879e, type: 3}
+  m_Name: skill_magic_bolt
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.SkillDefinition
+  _id:
+    _value: skill.magic_bolt
+  _nameKey:
+    _key: skill.magic_bolt.name
+  _descriptionKey:
+    _key: skill.magic_bolt.desc
+  _icon:
+    _address: 
+  _category: 1
+  _targetType: 3
+  _maxLevel: 3
+  _resourceType: 1
+  _baseResourceCost: 6
+  _cooldownSeconds: 3
+  _castTimeSeconds: 0
+  _range: 8
+  _requiredClass:
+    _value: 
+  _requiredJob:
+    _value: 
+  _prerequisites: []
+  _levels:
+  - _level: 1
+    _requiredCharacterLevel: 1
+    _resourceCost: 6
+    _cooldownSeconds: 3
+    _effects:
+    - _kind: 1
+      _reference:
+        _value: 
+      _element: 0
+      _damageType: 2
+      _resource: 0
+      _flatAmount: 4
+      _scaling:
+      - _source:
+          _value: stat.matk
+        _numerator: 1
+        _denominator: 1
+      _statModifier:
+        _stat:
+          _value: 
+        _kind: 0
+        _value: 0
+  - _level: 2
+    _requiredCharacterLevel: 5
+    _resourceCost: 8
+    _cooldownSeconds: 3
+    _effects:
+    - _kind: 1
+      _reference:
+        _value: 
+      _element: 0
+      _damageType: 2
+      _resource: 0
+      _flatAmount: 8
+      _scaling:
+      - _source:
+          _value: stat.matk
+        _numerator: 1
+        _denominator: 1
+      _statModifier:
+        _stat:
+          _value: 
+        _kind: 0
+        _value: 0
+  - _level: 3
+    _requiredCharacterLevel: 9
+    _resourceCost: 10
+    _cooldownSeconds: 3
+    _effects:
+    - _kind: 1
+      _reference:
+        _value: 
+      _element: 0
+      _damageType: 2
+      _resource: 0
+      _flatAmount: 12
+      _scaling:
+      - _source:
+          _value: stat.matk
+        _numerator: 1
+        _denominator: 1
+      _statModifier:
+        _stat:
+          _value: 
+        _kind: 0
+        _value: 0
+  _animation:
+    _address: 
+  _visualEffect:
+    _address: 
+  _soundEffect:
+    _address: 
