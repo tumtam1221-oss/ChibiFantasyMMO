@@ -68,7 +68,11 @@ namespace ChibiFantasy.Server
 
         private NetworkManager _networkManager;
         private WorldAuthenticator _authenticator;
-        private UnityWebRequestTransport _transport;
+        /// <summary>Whatever the authority is holding open. Disposed on shutdown.</summary>
+        /// <remarks>An <c>IDisposable</c> and not a transport: this assembly does not know
+        /// that HTTP exists, which is the boundary rule and was an audit finding when this
+        /// field named a concrete transport.</remarks>
+        private System.IDisposable _authorityLifetime;
 
         /// <summary>The connection registry, exposed for diagnostics and tests.</summary>
         public WorldConnectionRegistry Registry { get; private set; }
@@ -109,8 +113,10 @@ namespace ChibiFantasy.Server
 
             if (authority == null)
             {
-                _transport = new UnityWebRequestTransport(_apiBaseAddress, _apiTimeoutSeconds);
-                authority = new HttpWorldSessionAuthority(_transport);
+                // Composed on the transport's own side of the line: this file names no
+                // transport, no URL scheme and no HTTP type.
+                authority = BackendAuthority.OverHttp(_apiBaseAddress, _apiTimeoutSeconds,
+                    out _authorityLifetime);
             }
 
             Coordinator = new WorldEntryCoordinator(authority, Registry, required);
@@ -181,7 +187,7 @@ namespace ChibiFantasy.Server
 
             StopServer();
 
-            _transport?.Dispose();
+            _authorityLifetime?.Dispose();
         }
 
         private void OnApplicationQuit()

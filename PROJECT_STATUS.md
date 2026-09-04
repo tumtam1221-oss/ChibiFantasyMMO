@@ -134,26 +134,46 @@ decision and add those patterns back at that time.
 
 | # | Decision | Why it blocks work | Should be decided before |
 |---|---|---|---|
-| 1 | **Networking model** — authoritative server vs. client-authoritative; Netcode for GameObjects vs. Mirror vs. Fish-Net vs. a custom/dedicated backend. | Determines ownership, tick rate, prediction/reconciliation and how the character controller is written. | Any `Scripts/Network` or character-movement code |
+| 1 | ~~Networking model~~ | — | **DECIDED, Phase 16.** Server-authoritative, FishNet 4.7.2 (`com.firstgeargames.fishnet`, pinned tag). The client is authoritative for nothing: identity comes from the account API, placement from authored spawn definitions. Proven by a real loopback connection in `FishNetWorldEntryTests`. See `docs/NETWORKING.md`. |
 | 2 | **Input System vs. legacy Input Manager.** | Every input call site depends on it; migration is a rewrite. | Any character controller or UI input |
-| 3 | **Backend & database** — hosting, auth provider, persistence store, and how login / server-select / channel-select actually resolve. | Defines the entire pre-gameplay scene flow. | Login flow implementation |
+| 3 | ~~Backend & database~~ | — | **DECIDED, Phases 15–16.** PHP 8.2+ API over MySQL 8.0+, own auth (`password_hash`, `random_bytes` session tokens). Twelve endpoints; the full login → server → channel → character → world flow resolves against the database. Verified end to end over real HTTP in `LiveBackendIntegrationTests`. Hosting is still undecided. |
 | 4 | **Asset loading strategy** — Addressables vs. `Resources/` vs. direct references. | Affects folder layout, build size and patching. | First real art/prefab import |
 | 5 | **Tag & layer taxonomy** plus the layer collision matrix. | Physics, targeting and culling depend on it. | First character or world collision work |
 | 6 | **Blender → Unity art pipeline** — `.blend` storage location, FBX vs. glTF, scale/axis/fps convention, rig standard (Humanoid vs. Generic). | Changing the rig standard later means re-rigging every character. | First character mesh |
 | 7 | ~~Git LFS scope for Unity YAML assets~~ | — | **DECIDED 2026-09-02: binary formats only.** See §3. |
 | 8 | **Git remote / backup host**, and whether the host offers enough LFS quota for a project of this size. | Baseline is currently single-machine. | Any further content work |
-| 9 | **Unity version policy** — stay on 2023.2 Tech Stream or move to an LTS release. | Upgrading after content exists is far riskier. | Substantial content creation |
+| 9 | ~~Unity version policy~~ | — | **SETTLED IN PRACTICE: Unity 6000.3.23f1** (`ProjectSettings/ProjectVersion.txt`), URP 17.3.0. Whether to move to an LTS release remains open, but the project has been on 6000.3 since Phase 02 and all content was authored against it. |
 | 10 | **UI toolkit choice** — uGUI vs. UI Toolkit for the MMO HUD and menus. | uGUI is installed; UI Toolkit would change all UI authoring. | First UI screen |
 
 ---
 
 ## 5. Phase Log
 
-- [x] **Phase 00 — Environment audit.** Unity MCP PASS, Blender MCP PASS,
-      0 console errors, folder scaffold verified complete.
-- [x] **Phase 01 — Foundation / version control.** Git repository initialized,
-      Unity `.gitignore`, Git LFS enabled and tracking binary assets,
-      29 `.gitkeep` files, this document, initial clean baseline commit.
-- [ ] **Phase 02+ — Not authorized.** No gameplay, UI, networking, backend,
-      database, character or world implementation until the corresponding
-      phase is explicitly approved.
+Each phase is one or more commits; the commit messages carry the reasoning and the
+failures found along the way.
+
+- [x] **Phase 00 — Environment audit.** Unity MCP PASS, Blender MCP PASS, 0 console
+      errors, folder scaffold verified.
+- [x] **Phase 01 — Foundation / version control.** Git, Unity `.gitignore`, Git LFS
+      for binary assets, baseline commit.
+- [x] **Phases 02–06 — Characters and content foundation.** Male and female production
+      characters (Humanoid, 21 bones, 4-bone influence limit, FBX round-trip
+      validated), definitions, registries, progression, skills.
+- [x] **Phase 07 — Character controller and combat.** Third-person controller, combat
+      foundation, skill integration, production combat runtime, presentation.
+- [x] **Phase 08 — Inventory, equipment, storage.** Runtime, UI, interaction.
+- [x] **Phase 09 — Equipment enhancement.** Rarity, status stones, enchanting, fusion.
+- [x] **Phase 10 — Monsters, drops, loot, quests.**
+- [x] **Phase 11 — Maps, cities, NPCs, portals, travel.**
+- [x] **Phase 12 — Devil Fruit, cards, pets.**
+- [x] **Phase 13 — Party, guild, trade, player shop, economy.**
+- [x] **Phase 14 — Login, session, server/channel/character select.** Transport-neutral
+      `IAccountApi`; ends deliberately at `WorldEntryState.Authorised`.
+- [x] **Phase 15 — PHP API + MySQL backend.** 10 migrations, 36 tables, 9 endpoints.
+      Schema exists for economy, trade, shop, party and guild; the services for those
+      do not — see the Phase 15 report.
+- [x] **Phase 16 — Real networking.** Production `UnityWebRequest` transport, live PHP
+      integration, session release, FishNet 4.7.2 world entry, authoritative character
+      spawn from authored definitions. `docs/NETWORKING.md`.
+- [ ] **Phase 17+ — Not authorized.** Nothing is replicated yet: no movement, combat,
+      inventory, trade or party crosses the wire.

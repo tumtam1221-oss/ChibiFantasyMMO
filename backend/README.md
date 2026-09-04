@@ -179,7 +179,16 @@ exception message ever reaches a client.
 | `POST` | `/api/session/select-channel` | Bearer | yes |
 | `POST` | `/api/session/select-character` | Bearer | yes |
 | `POST` | `/api/session/enter-world` | Bearer | yes |
+| `GET` | `/api/session` | Bearer | read-only |
+| `POST` | `/api/session/world-ready` | Bearer | idempotent by nature |
+| `POST` | `/api/session/release` | Bearer | idempotent by nature |
 | `GET` | `/api/health` | — | read-only |
+
+The last three arrived in Phase 16. `GET /api/session` is what a dedicated world
+server asks about a connecting client: it resolves a token to the account, character,
+server and channel *the authority recorded*, which is why spoofing any of them is not
+something the world server has to detect. `world-ready` completes the handoff Phase 14
+deliberately left at *Authorised*. `release` is described at the end of this file.
 
 HTTP status carries the category (401 re-authenticate, 409 the world moved, 503 retry) so a
 proxy or monitor can act without parsing the body; `code` carries the precise reason.
@@ -235,6 +244,30 @@ Unity contains no DB host, password, connection string, SQL, PHP or signing secr
 by tests in the EditMode suite. Gameplay stays engine-free and transport-free; only
 `ChibiFantasy.Backend` knows HTTP exists, and only this backend knows SQL exists.
 
-Phase 16 will add the FishNet connection. `enter-world` stops at `world_entry_state: 1`
-(*Authorised*) — the authority has agreed and named everything the world needs, and nothing
-has connected.
+Phase 16 added the FishNet connection. `enter-world` still stops at
+`world_entry_state: 1` (*Authorised*); the world server moves it on to *Ready* by
+calling `world-ready` once the character is actually in. A session left in
+`EnteringWorld` is the correct record of a handoff that did not complete.
+
+See `docs/NETWORKING.md` for the two-connection architecture, the startup sequence
+and the full login-to-world flow.
+
+---
+
+## Releasing a session
+
+The API refuses a second live session on purpose: taking somebody's session away is a
+policy decision, not a side effect of signing in again. Until Phase 16 nothing could
+give one up, so a player who closed the game was locked out of their own account for
+the whole session lifetime — the first live Unity integration run walked into it on
+its second test.
+
+`POST /api/session/release` ends the session and, in the same transaction, hands back
+any character it left marked `InWorld`. A character stranded `InWorld` with no session
+is permanently unplayable and nothing but expiry would fix it. The character row is
+locked before it is read, so a world entry racing a release cannot slip between the
+check and the write.
+
+It is idempotent by nature rather than by an idempotency key: a disconnect callback
+can fire twice and must be harmless without consuming a request id. An already-invalid
+token answers success, because the caller wanted the session gone and it is gone.

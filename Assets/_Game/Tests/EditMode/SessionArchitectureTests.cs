@@ -148,7 +148,19 @@ namespace ChibiFantasy.Tests.EditMode
         /// that this list still has exactly one entry. A second transport, or a stray
         /// <c>http://</c> in <c>HttpAccountApi</c>, still fails.
         /// </remarks>
-        private static readonly string[] TransportImplementations = { "UnityWebRequestTransport.cs" };
+        private static readonly string[] TransportImplementations =
+        {
+            // Opens the connection.
+            "UnityWebRequestTransport.cs",
+
+            // Names it, so that nothing outside Backend has to. It exists because an audit
+            // found the world server constructing a transport itself, which made the Server
+            // assembly an HTTP caller and defeated the authority seam.
+            "BackendAuthority.cs",
+        };
+
+        /// <summary>Files that may actually open a connection. Still exactly one.</summary>
+        private static readonly string[] TransportSenders = { "UnityWebRequestTransport.cs" };
 
         [Test]
         public void No_transport_appears_in_the_backend_seam_either()
@@ -178,10 +190,11 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void Exactly_one_file_implements_a_transport()
         {
-            // The exemption above is only safe while it stays this small. A second entry --
-            // or a second file that opens a socket -- must be a deliberate decision somebody
-            // makes by editing this test, not something that slips in beside it.
-            Assert.That(TransportImplementations.Length, Is.EqualTo(1));
+            // Naming a transport and opening one are different privileges. Two files may
+            // name it; exactly one may send. Either list growing must be a deliberate
+            // decision somebody makes by editing this test, not something that slips in.
+            Assert.That(TransportImplementations.Length, Is.EqualTo(2));
+            Assert.That(TransportSenders.Length, Is.EqualTo(1));
 
             string[] files = System.IO.Directory.GetFiles("Assets/_Game/Scripts/Backend",
                 "*.cs", System.IO.SearchOption.AllDirectories);
@@ -200,7 +213,7 @@ namespace ChibiFantasy.Tests.EditMode
                 }
             }
 
-            Assert.That(senders, Is.EquivalentTo(TransportImplementations),
+            Assert.That(senders, Is.EquivalentTo(TransportSenders),
                 "only the named transport may open a connection");
         }
 
