@@ -15,8 +15,10 @@ declare(strict_types=1);
  *
  * **Guarded like a destructive tool, because it writes an account.** It refuses
  * unless APP_ENV is a development environment, refuses a database whose name looks
- * production-ish, and always targets DB_TEST_DATABASE -- never the development
- * database and never anything else.
+ * production-ish, and targets DB_INTEGRATION_DATABASE -- never the development
+ * database, and no longer the PHPUnit database either: PHPUnit truncates that on
+ * every run, which silently destroyed this account and produced a dozen Unity
+ * failures that looked exactly like an authentication regression.
  *
  *   php bin/integration-fixture.php
  */
@@ -34,7 +36,7 @@ if (!in_array($environment, ['development', 'testing', 'local'], true)) {
     exit(1);
 }
 
-$database = Env::get('DB_TEST_DATABASE', '');
+$database = Env::get('DB_INTEGRATION_DATABASE', '') ?: Env::get('DB_TEST_DATABASE', '');
 
 foreach (['prod', 'production', 'live', 'master'] as $forbidden) {
     if ($database !== '' && str_contains(strtolower($database), $forbidden)) {
@@ -43,7 +45,7 @@ foreach (['prod', 'production', 'live', 'master'] as $forbidden) {
     }
 }
 
-$pdo = Connection::forTests();
+$pdo = Connection::forIntegration();
 
 // Deterministic ids so a re-run replaces the same rows rather than accumulating
 // players nobody deletes. The password is the only thing that changes each time.

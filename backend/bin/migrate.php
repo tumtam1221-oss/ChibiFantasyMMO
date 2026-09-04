@@ -19,10 +19,13 @@ use ChibiFantasy\Database\Migrator;
 
 $args = array_slice($argv, 1);
 $useTest = in_array('--test', $args, true);
+$useIntegration = in_array('--integration', $args, true);
 $statusOnly = in_array('--status', $args, true);
 
 try {
-    $pdo = $useTest ? Connection::forTests() : Connection::get();
+    $pdo = $useIntegration
+        ? Connection::forIntegration()
+        : ($useTest ? Connection::forTests() : Connection::get());
 } catch (\Throwable $e) {
     fwrite(STDERR, 'error: ' . $e->getMessage() . PHP_EOL);
     exit(1);
@@ -30,7 +33,7 @@ try {
 
 $migrator = new Migrator($pdo, dirname(__DIR__) . '/database/migrations');
 
-$target = $useTest ? 'test' : 'application';
+$target = $useIntegration ? 'integration' : ($useTest ? 'test' : 'application');
 
 try {
     if ($statusOnly) {

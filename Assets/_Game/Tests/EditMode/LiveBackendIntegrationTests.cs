@@ -111,10 +111,15 @@ namespace ChibiFantasy.Tests.EditMode
         // ---- the fixture itself ----------------------------------------------------------
 
         [Test]
-        public void TheFixtureLivesInTheTestDatabaseAndNotTheDevelopmentOne()
+        public void TheFixtureLivesInADisposableDatabaseAndNotTheDevelopmentOne()
         {
-            Assert.That(_fixture.Database, Does.Contain("test"),
+            // Phase 17 gave the live run its own database, because PHPUnit truncates the
+            // test one and was silently destroying the account these tests sign in as.
+            // Either disposable database is acceptable; the development one never is.
+            Assert.That(_fixture.Database, Is.Not.Empty);
+            Assert.That(_fixture.Database, Does.Match("(test|integration)"),
                 "an integration run must never write to the development database");
+            Assert.That(_fixture.Database, Does.Not.Contain("_dev"));
         }
 
         // ---- login -----------------------------------------------------------------------

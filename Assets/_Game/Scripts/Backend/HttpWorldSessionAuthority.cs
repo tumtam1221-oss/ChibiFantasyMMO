@@ -22,7 +22,8 @@ namespace ChibiFantasy.Backend
     /// was given. That is the opposite of <see cref="HttpAccountApi"/>, which is one
     /// player's client and holds exactly one.
     /// </remarks>
-    public sealed class HttpWorldSessionAuthority : IWorldSessionAuthority
+    public sealed class HttpWorldSessionAuthority : IWorldSessionAuthority,
+        HttpCharacterStateStore.ITokenSource
     {
         private readonly IHttpTransport _transport;
 
@@ -137,6 +138,27 @@ namespace ChibiFantasy.Backend
                     new DefinitionId(json.String("class_id")),
                     new DefinitionId(json.String("job_id")),
                     new DefinitionId(json.String("appearance_id"))));
+        }
+
+        /// <summary>
+        /// Lends the bearer for a session this server admitted.
+        /// </summary>
+        /// <remarks>
+        /// The character state store needs a token and must not keep its own copy — a second
+        /// place a secret lives is a second place it leaks. It asks here instead, and a
+        /// session this server never admitted has no token to lend, so it cannot be written
+        /// to.
+        ///
+        /// Deliberately not a public property returning the whole table. One session, one
+        /// token, on request.
+        /// </remarks>
+        public bool TryGetToken(SessionId session, out string token)
+        {
+            token = null;
+
+            return session.IsValid
+                && !string.IsNullOrEmpty(session.Value)
+                && _tokens.TryGetValue(session.Value, out token);
         }
 
         public bool ConfirmArrival(SessionId session)

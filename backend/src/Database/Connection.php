@@ -81,6 +81,55 @@ final class Connection
         return self::$shared;
     }
 
+    /**
+     * A handle for the live-integration database.
+     *
+     * **A third database, and it earns its keep.** The Unity integration tests sign in
+     * as an account a seeder creates. That account used to live in DB_TEST_DATABASE,
+     * which PHPUnit truncates on every run -- so running the PHP suite and then the
+     * Unity suite produced a dozen `invalid_credentials` failures that looked exactly
+     * like an authentication regression and were nothing of the sort.
+     *
+     * Separating them removes the ordering trap rather than documenting it. The two
+     * suites can now run in either order, or at the same time.
+     *
+     * Falls back to DB_TEST_DATABASE when unset, so an existing checkout still works;
+     * the fallback is reported by `usesOwnIntegrationDatabase()` so a test can say
+     * which it got.
+     */
+    public static function forIntegration(): PDO
+    {
+        $database = Env::get('DB_INTEGRATION_DATABASE', '');
+
+        if ($database === '') {
+            $database = Env::get('DB_TEST_DATABASE', '');
+        }
+
+        if ($database === '') {
+            throw new \RuntimeException(
+                'Neither DB_INTEGRATION_DATABASE nor DB_TEST_DATABASE is configured.'
+            );
+        }
+
+        if ($database === Env::get('DB_DATABASE')) {
+            throw new \RuntimeException(
+                'The integration database must differ from DB_DATABASE.'
+            );
+        }
+
+        self::$shared = self::open($database);
+
+        return self::$shared;
+    }
+
+    /** Whether the integration database is genuinely its own, rather than the test one. */
+    public static function usesOwnIntegrationDatabase(): bool
+    {
+        $integration = Env::get('DB_INTEGRATION_DATABASE', '');
+
+        return $integration !== '' && $integration !== Env::get('DB_TEST_DATABASE', '');
+    }
+
     private static function open(string $database): PDO
     {
         $host = Env::get('DB_HOST', '127.0.0.1');
