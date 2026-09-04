@@ -323,6 +323,56 @@ namespace ChibiFantasy.Backend
         }
 
         /// <summary>
+        /// The object at a key, as a reader of its own.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="ValueStart"/> deliberately matches keys only at this object's own
+        /// level, so a nested value is unreachable without descending into it. That rule is
+        /// what stops a key inside one object being read as the same key in another, and
+        /// this is how a caller opts into the level below rather than a way around it.
+        ///
+        /// An absent key, or a value that is not an object, reads as empty -- so every
+        /// accessor on the result answers its own "missing" value rather than throwing.
+        /// </remarks>
+        public JsonReader Nested(string key)
+        {
+            int value = ValueStart(key);
+
+            if (value < 0 || _json[value] != '{') return new JsonReader(string.Empty);
+
+            int depth = 0;
+            bool inString = false;
+
+            for (int i = value; i < _json.Length; i++)
+            {
+                char c = _json[i];
+
+                if (inString)
+                {
+                    if (c == '\\') i++;
+                    else if (c == '"') inString = false;
+
+                    continue;
+                }
+
+                if (c == '"') { inString = true; continue; }
+
+                if (c == '{') depth++;
+                else if (c == '}')
+                {
+                    depth--;
+
+                    if (depth == 0)
+                    {
+                        return new JsonReader(_json.Substring(value, i - value + 1));
+                    }
+                }
+            }
+
+            return new JsonReader(string.Empty);
+        }
+
+        /// <summary>
         /// Finds where the value for a key begins, at the top level of this object.
         /// </summary>
         /// <remarks>Skips over nested objects and arrays so a key inside one cannot be

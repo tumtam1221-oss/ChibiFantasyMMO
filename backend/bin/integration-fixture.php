@@ -55,6 +55,20 @@ $serverId    = 'itest-server';
 $channelId   = 'itest-channel';
 $characterId = 'itest-character';
 
+// A second account, for tests that change character state.
+//
+// Character rows are shared mutable state: a test that grants experience moves a level,
+// and a test asserting the seeded level then fails for a reason that has nothing to do
+// with it. A second character on the same account is not enough either -- the character
+// list is itself asserted, so adding a row there breaks a different test. An account of
+// its own is the only thing that isolates a writer completely, and it costs one row.
+$rewardAccountId   = 'itest-reward-account';
+$rewardLogin       = 'itest-reward-player';
+$rewardCharacterId = 'itest-reward-character';
+
+// Its own credential, invented per run like the first one and never echoed.
+$rewardPassword = bin2hex(random_bytes(32));
+
 // 32 bytes of CSPRNG. Long enough that nothing is gained by knowing the shape.
 $password = bin2hex(random_bytes(32));
 
@@ -94,11 +108,16 @@ $pdo->prepare(
 )->execute([':id' => $channelId, ':server' => $serverId, ':name' => 'channel.itest.name']);
 
 $pdo->prepare(
+    // Health and mana are seeded deliberately. Left at the column default of zero the
+    // character loads dead, which is not a state any live test should start from -- a dead
+    // character is refused by combat, by reward eligibility and by anything else that asks
+    // whether it is alive, and every one of those refusals would look like a product bug.
     'INSERT INTO `character`
         (character_id, account_id, server_id, name, gender, level,
+         current_health, current_mana,
          class_definition_id, job_definition_id, map_definition_id,
          appearance_definition_id, availability, revision, created_at, updated_at)
-     VALUES (:cid, :aid, :sid, :name, 2, 12, "class.novice", "job.none",
+     VALUES (:cid, :aid, :sid, :name, 2, 12, 100, 50, "class.novice", "job.none",
              "map.town", "appearance.default", 1, 0, NOW(3), NOW(3))'
 )->execute([
     ':cid'  => $characterId,
@@ -174,6 +193,29 @@ foreach ([
     ]);
 }
 
+(new AccountRepository($pdo))->create(
+    $rewardAccountId,
+    'Integration Progression Player',
+    $rewardLogin,
+    $rewardPassword,
+    AccountRepository::STATUS_ACTIVE
+);
+
+$pdo->prepare(
+    'INSERT INTO `character`
+        (character_id, account_id, server_id, name, gender, level,
+         current_health, current_mana,
+         class_definition_id, job_definition_id, map_definition_id,
+         appearance_definition_id, availability, revision, created_at, updated_at)
+     VALUES (:cid, :aid, :sid, :name, 2, 5, 100, 50, "class.novice", "job.none",
+             "map.town", "appearance.default", 1, 0, NOW(3), NOW(3))'
+)->execute([
+    ':cid'  => $rewardCharacterId,
+    ':aid'  => $rewardAccountId,
+    ':sid'  => $serverId,
+    ':name' => 'Itestreward',
+]);
+
 $storage = __DIR__ . '/../storage';
 
 if (!is_dir($storage) && !mkdir($storage, 0770, true) && !is_dir($storage)) {
@@ -188,6 +230,10 @@ $handoff = [
     'server_id'        => $serverId,
     'channel_id'       => $channelId,
     'character_id'     => $characterId,
+    'reward_login_identifier' => $rewardLogin,
+    'reward_password'         => $rewardPassword,
+    'reward_account_id'       => $rewardAccountId,
+    'reward_character_id'     => $rewardCharacterId,
     'map_id'           => 'map.town',
     'database'         => $database,
 ];
@@ -204,6 +250,8 @@ echo "  account   {$accountId}\n";
 echo "  server    {$serverId}\n";
 echo "  channel   {$channelId}\n";
 echo "  character {$characterId}\n";
+echo "  account   {$rewardAccountId} (progression tests write to this one)\n";
+echo "  character {$rewardCharacterId}\n";
 echo "  spawns    4 rows on map.town (one invalid on purpose, one disabled)\n";
 echo "  ai        3 monster_ai_configuration rows\n";
 echo "  credential written to storage/integration-fixture.json (gitignored)\n";

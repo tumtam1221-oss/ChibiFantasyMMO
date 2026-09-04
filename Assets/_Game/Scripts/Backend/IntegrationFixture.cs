@@ -51,6 +51,10 @@ namespace ChibiFantasy.Backend
             ServerId = json.String("server_id");
             ChannelId = json.String("channel_id");
             CharacterId = json.String("character_id");
+            RewardLoginIdentifier = json.String("reward_login_identifier");
+            RewardPassword = json.String("reward_password");
+            RewardAccountId = json.String("reward_account_id");
+            RewardCharacterId = json.String("reward_character_id");
             MapId = json.String("map_id");
             Database = json.String("database");
         }
@@ -73,6 +77,25 @@ namespace ChibiFantasy.Backend
         public string ChannelId { get; }
 
         public string CharacterId { get; }
+
+        /// <summary>
+        /// A second account and character, for suites that change character state.
+        /// </summary>
+        /// <remarks>
+        /// Character rows are shared mutable state. A suite that grants experience moves a
+        /// level, and a suite asserting the seeded level then fails for a reason that has
+        /// nothing to do with it -- which is exactly what happened. A second character on the
+        /// same account is not enough, because the character list is itself asserted; an
+        /// account of its own isolates the writer completely.
+        /// </remarks>
+        public string RewardLoginIdentifier { get; }
+
+        /// <summary>That account's password for this run. Never logged.</summary>
+        public string RewardPassword { get; }
+
+        public string RewardAccountId { get; }
+
+        public string RewardCharacterId { get; }
 
         public string MapId { get; }
 

@@ -134,6 +134,27 @@ namespace ChibiFantasy.Data
             _revision = _revision.Next();
         }
 
+        /// <summary>
+        /// Whether <see cref="AddExperience"/> would succeed, without applying anything.
+        /// </summary>
+        /// <remarks>
+        /// The same four conditions, asked instead of thrown. A server granting a reward has
+        /// to decide before it consumes a one-time claim, and finding out by catching an
+        /// exception would mean the claim was already spent on a gain that could not be
+        /// applied. The rules are not duplicated in the caller: they are asked here, of the
+        /// type that owns them.
+        /// </remarks>
+        public bool CanAdd(long amount, CharacterProgressionDefinition progression)
+        {
+            if (progression == null) return false;
+
+            if (amount < 0) return false;
+
+            if (!progression.IsLevelInRange(_level)) return false;
+
+            return _experience <= long.MaxValue - amount;
+        }
+
         /// <summary>True when this character has reached the top of the supplied curve.</summary>
         public bool IsAtMaxLevel(CharacterProgressionDefinition progression)
         {

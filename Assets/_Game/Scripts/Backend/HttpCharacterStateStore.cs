@@ -178,7 +178,18 @@ namespace ChibiFantasy.Backend
             var body = new System.Text.StringBuilder();
 
             body.Append("{\"request_id\":\"").Append(RequestId.New().Value).Append("\",");
-            body.Append("\"save_revision\":").Append(expectedSaveRevision).Append(',');
+
+            // A character that has never been saved has no revision, and the API's contract
+            // for that is an absent field -- it then requires that no revision row exists,
+            // which is what makes a first save safe. Sending zero instead says "I read
+            // revision zero", which matches nothing and refuses every first save forever.
+            // The race between two first saves is still caught: the revision table's
+            // primary key lets exactly one of them insert.
+            if (expectedSaveRevision > 0)
+            {
+                body.Append("\"save_revision\":").Append(expectedSaveRevision).Append(',');
+            }
+
             body.Append("\"state\":").Append(WithCollections(state, character));
             body.Append('}');
 
@@ -243,10 +254,19 @@ namespace ChibiFantasy.Backend
 
         private static int SaveRevisionOf(JsonReader json)
         {
-            // The API nests these under "revisions"; the reader is a flat scanner, so the
-            // save revision is read from the top level where the save response puts it, and
-            // falls back to zero for a character that has never been written.
-            return json.Int("save_revision");
+            // Two shapes, one meaning. A save answers with a top-level "save_revision"; a
+            // load nests every revision under "revisions" and calls this one "save".
+            //
+            // Reading only the top level was a real defect: a load reported revision zero
+            // however many times the character had been written, so the first save after a
+            // load presented a revision that matched nothing and was refused as stale --
+            // and stayed refused forever. Nothing noticed until a world server tried to save
+            // a character twice.
+            int top = json.Int("save_revision");
+
+            if (top > 0) return top;
+
+            return json.Nested("revisions").Int("save");
         }
 
         private bool TryToken(SessionId session, out string token)
