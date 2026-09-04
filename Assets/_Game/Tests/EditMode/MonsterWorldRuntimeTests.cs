@@ -645,6 +645,215 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(resolution.Reason, Is.EqualTo(CombatCommandRejection.DifferentMap));
         }
 
+        // ---- 17.11: movement, applied by the server -------------------------------------------
+
+        /// <summary>A runtime that also knows the authored map bounds.</summary>
+        private MonsterWorldRuntime BoundedRuntime(float radius)
+        {
+            var maps = new DefinitionRegistry<MapDefinition>();
+
+            var home = ScriptableObject.CreateInstance<MapDefinition>();
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"" + HomeMap + "\"},\"_movementRadius\":"
+                + Invariant(radius) + "}", home);
+            _local.Add(home);
+            maps.Register(home);
+
+            return new MonsterWorldRuntime(_players, Monsters, new DefinitionId(MaxHp),
+                Enemies, maps);
+        }
+
+        [Test]
+        public void AChasingMonsterIsMovedByTheServerTick()
+        {
+            // Far enough to be noticed (detection 10) but outside attack reach (2), so the
+            // AI settles on Chase rather than Attack.
+            _runtime.AddSpawnPoint(Nest(Grunt, HomeMap));
+            _runtime.PopulateAll();
+
+            AddPlayer("char-runner", HomeMap, x: 8f);
+
+            LivingMonster monster = OnlyMonster();
+
+            // First tick reaches Detect; the AI holds there briefly before committing.
+            _runtime.Tick(0.5f);
+
+            float before = monster.State.Position.X;
+            MonsterTickResult result = _runtime.Tick(1f);
+
+            Assert.That(monster.Ai.State, Is.EqualTo(MonsterAiState.Chase));
+            Assert.That(result.Moved, Is.EqualTo(1));
+            Assert.That(monster.State.Position.X, Is.GreaterThan(before),
+                "the server moved it, and nothing asked it to");
+        }
+
+        [Test]
+        public void MovingAMonsterDoesNotTouchThePlayerItChases()
+        {
+            _runtime.AddSpawnPoint(Nest(Grunt, HomeMap));
+            _runtime.PopulateAll();
+
+            LivingCharacter player = AddPlayer("char-runner", HomeMap, x: 8f);
+
+            CombatPosition positionBefore = player.Location.Position;
+            int healthBefore = player.Combatant.CurrentHealth;
+
+            _runtime.Tick(0.5f);
+            _runtime.Tick(1f);
+
+            Assert.That(player.Location.Position, Is.EqualTo(positionBefore),
+                "a monster moving must never move a player");
+            Assert.That(player.Combatant.CurrentHealth, Is.EqualTo(healthBefore),
+                "and must never damage one");
+            Assert.That(player.IsDirty, Is.False, "and must not dirty them for saving");
+        }
+
+        [Test]
+        public void AMonsterDoesNotMoveTowardAPlayerOnAnotherMap()
+        {
+            _runtime.AddSpawnPoint(Nest(Grunt, HomeMap));
+            _runtime.PopulateAll();
+
+            AddPlayer("char-elsewhere", OtherMap, x: 5f);
+
+            LivingMonster monster = OnlyMonster();
+            CombatPosition before = monster.State.Position;
+
+            MonsterTickResult first = _runtime.Tick(0.5f);
+            MonsterTickResult second = _runtime.Tick(1f);
+
+            Assert.That(first.Moved, Is.Zero);
+            Assert.That(second.Moved, Is.Zero);
+            Assert.That(monster.State.Position, Is.EqualTo(before),
+                "coordinates on another map are not a destination");
+        }
+
+        [Test]
+        public void APassiveMonsterNeverMoves()
+        {
+            _runtime.AddSpawnPoint(Nest(Docile, HomeMap));
+            _runtime.PopulateAll();
+
+            AddPlayer("char-passing", HomeMap, x: 3f);
+
+            LivingMonster monster = OnlyMonster();
+            CombatPosition before = monster.State.Position;
+
+            for (int i = 0; i < 5; i++) _runtime.Tick(0.5f);
+
+            Assert.That(monster.State.Position, Is.EqualTo(before),
+                "it never acquires a target, so it never chases");
+        }
+
+        [Test]
+        public void ADeadMonsterIsNotMovedByTheTick()
+        {
+            _runtime.AddSpawnPoint(Nest(Grunt, HomeMap, respawnDelay: 100f));
+            _runtime.PopulateAll();
+
+            AddPlayer("char-runner", HomeMap, x: 8f);
+
+            LivingMonster monster = OnlyMonster();
+            monster.State.ApplyHealthDelta(-10000);
+
+            CombatPosition before = monster.State.Position;
+
+            // Unclaimed, so it is still in the world -- and still must not walk.
+            MonsterTickResult result = _runtime.Tick(1f);
+
+            Assert.That(result.Moved, Is.Zero);
+            Assert.That(monster.State.Position, Is.EqualTo(before));
+        }
+
+        [Test]
+        public void AMonsterInReachStopsWalkingAndSwingsInstead()
+        {
+            _runtime.AddSpawnPoint(Nest(Grunt, HomeMap));
+            _runtime.PopulateAll();
+
+            AddPlayer("char-close", HomeMap, x: 1f);
+
+            LivingMonster monster = OnlyMonster();
+            CombatPosition before = monster.State.Position;
+
+            MonsterTickResult result = _runtime.Tick(0.5f);
+
+            Assert.That(monster.Ai.State, Is.EqualTo(MonsterAiState.Attack));
+            Assert.That(result.Moved, Is.Zero, "a monster in range has arrived");
+            Assert.That(monster.State.Position, Is.EqualTo(before));
+            Assert.That(result.Attacking.Count, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void AMonsterWillNotWalkOutsideTheAuthoredMapRadius()
+        {
+            MonsterWorldRuntime bounded = BoundedRuntime(radius: 3f);
+
+            bounded.AddSpawnPoint(Nest(Grunt, HomeMap, x: 2.5f));
+            bounded.PopulateAll();
+
+            AddPlayer("char-far", HomeMap, x: 9f);
+
+            LivingMonster monster = null;
+
+            foreach (LivingMonster candidate in bounded.All()) monster = candidate;
+
+            Assert.That(monster, Is.Not.Null);
+
+            CombatPosition before = monster.State.Position;
+
+            bounded.Tick(0.5f);
+            bounded.Tick(1f);
+
+            Assert.That(monster.State.Position, Is.EqualTo(before),
+                "the authored bound holds a monster exactly as it holds a player");
+        }
+
+        [Test]
+        public void TickingRepeatedlyIsDeterministic()
+        {
+            _runtime.AddSpawnPoint(Nest(Grunt, HomeMap));
+            _runtime.PopulateAll();
+
+            AddPlayer("char-runner", HomeMap, x: 9f);
+
+            LivingMonster monster = OnlyMonster();
+
+            for (int i = 0; i < 6; i++) _runtime.Tick(0.25f);
+
+            float travelled = monster.State.Position.X;
+
+            Assert.That(travelled, Is.GreaterThan(0f), "it closed some of the distance");
+            Assert.That(travelled, Is.LessThanOrEqualTo(9f), "and never passed the player");
+
+            // Nothing here reads a clock or a random source, so a second identical run lands
+            // in the same place.
+            Assert.That(float.IsNaN(travelled), Is.False);
+        }
+
+        [Test]
+        public void NothingOnTheRuntimeAcceptsAMonsterDestination()
+        {
+            // Teleport-by-command is unrepresentable rather than refused: no public method
+            // takes a position, a destination or a transform.
+            foreach (System.Reflection.MethodInfo method in
+                     typeof(MonsterWorldRuntime).GetMethods(
+                         System.Reflection.BindingFlags.Public
+                         | System.Reflection.BindingFlags.Instance
+                         | System.Reflection.BindingFlags.DeclaredOnly))
+            {
+                foreach (System.Reflection.ParameterInfo parameter in method.GetParameters())
+                {
+                    string name = parameter.Name.ToLowerInvariant();
+
+                    Assert.That(name, Does.Not.Contain("position"), method.Name);
+                    Assert.That(name, Does.Not.Contain("destination"), method.Name);
+                    Assert.That(parameter.ParameterType, Is.Not.EqualTo(typeof(CombatPosition)),
+                        method.Name + " must not accept a position");
+                }
+            }
+        }
+
         // ---- misconfiguration ---------------------------------------------------------------------------
 
         [Test]

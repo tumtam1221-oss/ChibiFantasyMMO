@@ -48,10 +48,12 @@ namespace ChibiFantasy.Server
     /// <summary>What one server tick did to the monsters.</summary>
     public readonly struct MonsterTickResult
     {
-        internal MonsterTickResult(int spawned, int retired, IReadOnlyList<InstanceId> attacking)
+        internal MonsterTickResult(int spawned, int retired, int moved,
+            IReadOnlyList<InstanceId> attacking)
         {
             Spawned = spawned;
             Retired = retired;
+            Moved = moved;
             Attacking = attacking ?? System.Array.Empty<InstanceId>();
         }
 
@@ -60,6 +62,11 @@ namespace ChibiFantasy.Server
 
         /// <summary>How many defeated monsters were cleared away.</summary>
         public int Retired { get; }
+
+        /// <summary>How many monsters actually changed position this tick.</summary>
+        /// <remarks>Chasing and returning monsters only. A monster standing in Idle or
+        /// striking in Attack is working correctly and is not counted.</remarks>
+        public int Moved { get; }
 
         /// <summary>
         /// Monsters whose AI decided to swing this tick.
@@ -73,7 +80,8 @@ namespace ChibiFantasy.Server
 
         public override string ToString()
         {
-            return "+" + Spawned + " -" + Retired + " attacking " + Attacking.Count;
+            return "+" + Spawned + " -" + Retired + " moved " + Moved
+                + " attacking " + Attacking.Count;
         }
     }
 
@@ -109,14 +117,18 @@ namespace ChibiFantasy.Server
     /// <see cref="MonsterRuntimeState"/> is an <c>IRuntimeState</c> rather than an
     /// <c>IPersistentState</c>.
     ///
-    /// <b>It does not move anything.</b> The AI decides a state; stepping a position toward a
-    /// target is the next sub-phase. Doing it here would mean writing movement before the
-    /// networking that reports it, and a monster that moved with nobody able to see it.
+    /// <b>Movement is applied here and decided nowhere near a client.</b> After the AI
+    /// settles a state, <see cref="MonsterMovement.Step"/> advances the position. There is no
+    /// inbound message carrying a monster destination, no method taking one, and no field a
+    /// client could write -- a monster's position is a consequence of server state, never a
+    /// request. That is deliberately not a validated command path: a monster claims nothing,
+    /// so there is nothing to disbelieve.
     /// </remarks>
     public sealed class MonsterWorldRuntime : ICombatantResolver
     {
         private readonly WorldCharacterRegistry _players;
         private readonly IDefinitionRegistry<MonsterDefinition> _definitions;
+        private readonly IDefinitionRegistry<MapDefinition> _maps;
         private readonly DefinitionId _maxHealthStat;
         private readonly CombatTeam _monsterTeam;
 
@@ -144,14 +156,21 @@ namespace ChibiFantasy.Server
         /// an opaque integer precisely so a rival guild or neutral wildlife can be added
         /// without editing an enum.
         /// </param>
+        /// <param name="maps">
+        /// Authored maps, read only for their movement radius. Optional: a null registry, or
+        /// a map with no authored radius, means unbounded -- the same rule players are held
+        /// to, so existing content keeps working and authoring a radius is what turns the
+        /// check on.
+        /// </param>
         public MonsterWorldRuntime(WorldCharacterRegistry players,
             IDefinitionRegistry<MonsterDefinition> definitions, DefinitionId maxHealthStat,
-            CombatTeam monsterTeam)
+            CombatTeam monsterTeam, IDefinitionRegistry<MapDefinition> maps = null)
         {
             _players = players;
             _definitions = definitions;
             _maxHealthStat = maxHealthStat;
             _monsterTeam = monsterTeam;
+            _maps = maps;
         }
 
         public int AliveCount => _byInstance.Count;
@@ -207,9 +226,9 @@ namespace ChibiFantasy.Server
             int retired = Retire();
             int spawned = Respawn(deltaSeconds);
 
-            DriveBehaviour(deltaSeconds);
+            int moved = DriveBehaviour(deltaSeconds);
 
-            return new MonsterTickResult(spawned, retired, _attacking.ToArray());
+            return new MonsterTickResult(spawned, retired, moved, _attacking.ToArray());
         }
 
         /// <summary>
@@ -320,13 +339,17 @@ namespace ChibiFantasy.Server
         /// monsters and six players builds one list rather than forty. The list is reused
         /// across ticks, so a steady-state server allocates nothing here.
         /// </remarks>
-        private void DriveBehaviour(float deltaSeconds)
+        private int DriveBehaviour(float deltaSeconds)
         {
+            int moved = 0;
+
             for (int i = 0; i < _spawners.Count; i++)
             {
                 DefinitionId map = _spawners[i].Point.Map;
 
                 GatherCandidatesOn(map);
+
+                float radius = RadiusOf(map);
 
                 foreach (MonsterRuntimeState state in _spawners[i].Alive)
                 {
@@ -335,11 +358,59 @@ namespace ChibiFantasy.Server
                         continue;
                     }
 
+                    // Decide first, then move. The AI settles a state against the world as it
+                    // is; movement is the consequence, never the cause.
                     living.Ai.Tick(deltaSeconds, _candidates);
 
                     if (living.Ai.WantsToAttack) _attacking.Add(living.Instance);
+
+                    if (MonsterMovement.Step(state, living.Ai.State,
+                        DestinationFor(living, map), deltaSeconds, radius).Moved)
+                    {
+                        moved++;
+                    }
                 }
             }
+
+            return moved;
+        }
+
+        /// <summary>
+        /// Where a chasing monster's target actually is, or null.
+        /// </summary>
+        /// <remarks>
+        /// Resolved from the server's own tables, never from anything a client sent — there
+        /// is no message that carries a monster destination.
+        ///
+        /// Null is returned for a target that has gone, died, or is on another map. A monster
+        /// then does not move this tick and the AI drops it next tick, which is the correct
+        /// order: behaviour notices the loss, movement merely stops.
+        /// </remarks>
+        private CombatPosition? DestinationFor(LivingMonster monster, DefinitionId map)
+        {
+            InstanceId target = monster.State.TargetId;
+
+            if (!target.IsValid) return null;
+
+            if (!TryResolve(target, out ICombatant combatant)) return null;
+
+            if (!combatant.IsAlive()) return null;
+
+            // A target on another map is not a destination. Without this a monster would
+            // walk toward coordinates that mean nothing on the map it is standing on.
+            if (!TryGetMap(target, out DefinitionId targetMap) || targetMap != map) return null;
+
+            return combatant.Position;
+        }
+
+        /// <summary>The authored movement bound for a map, or zero for unbounded.</summary>
+        private float RadiusOf(DefinitionId map)
+        {
+            if (_maps == null || !map.IsValid) return 0f;
+
+            return _maps.TryGet(map, out MapDefinition definition) && definition != null
+                ? definition.MovementRadius
+                : 0f;
         }
 
         /// <summary>
