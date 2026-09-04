@@ -397,8 +397,13 @@ namespace ChibiFantasy.Tests.EditMode
             // comes from the list the authority returned.
             foreach (string file in new[]
                      {
-                         "Assets/_Game/Scripts/Client/UI/SessionScreens.cs",
-                         "Assets/_Game/Scripts/Client/UI/WorldScreens.cs",
+                         "Assets/_Game/Scripts/Client/UI/LoginScreen.cs",
+                         "Assets/_Game/Scripts/Client/UI/ServerSelectScreen.cs",
+                         "Assets/_Game/Scripts/Client/UI/ChannelSelectScreen.cs",
+                         "Assets/_Game/Scripts/Client/UI/CharacterSelectScreen.cs",
+                         "Assets/_Game/Scripts/Client/UI/SessionScreenBase.cs",
+                         "Assets/_Game/Scripts/Client/UI/WorldHudScreen.cs",
+                         "Assets/_Game/Scripts/Client/UI/InventoryScreen.cs",
                          "Assets/_Game/Scripts/Client/UI/ClientFlowDriver.cs",
                      })
             {
@@ -418,8 +423,13 @@ namespace ChibiFantasy.Tests.EditMode
             // ticket. The simplest guarantee is that these files log nothing at all.
             foreach (string file in new[]
                      {
-                         "Assets/_Game/Scripts/Client/UI/SessionScreens.cs",
-                         "Assets/_Game/Scripts/Client/UI/WorldScreens.cs",
+                         "Assets/_Game/Scripts/Client/UI/LoginScreen.cs",
+                         "Assets/_Game/Scripts/Client/UI/ServerSelectScreen.cs",
+                         "Assets/_Game/Scripts/Client/UI/ChannelSelectScreen.cs",
+                         "Assets/_Game/Scripts/Client/UI/CharacterSelectScreen.cs",
+                         "Assets/_Game/Scripts/Client/UI/SessionScreenBase.cs",
+                         "Assets/_Game/Scripts/Client/UI/WorldHudScreen.cs",
+                         "Assets/_Game/Scripts/Client/UI/InventoryScreen.cs",
                          "Assets/_Game/Scripts/Client/UI/NetworkInventoryPresenter.cs",
                          "Assets/_Game/Scripts/Client/UI/CharacterHudPresenter.cs",
                      })
@@ -435,7 +445,7 @@ namespace ChibiFantasy.Tests.EditMode
         public void TheLoginScreenKeepsNoCredentialAndNamesNoTransport()
         {
             string source = System.IO.File.ReadAllText(
-                "Assets/_Game/Scripts/Client/UI/SessionScreens.cs");
+                "Assets/_Game/Scripts/Client/UI/LoginScreen.cs");
 
             // It hands the typed values to a delegate the composition supplies and clears
             // the field. There is no stored password and no HTTP anywhere in the screen.

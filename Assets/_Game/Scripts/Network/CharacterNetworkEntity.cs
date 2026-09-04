@@ -91,6 +91,24 @@ namespace ChibiFantasy.Network
         private readonly SyncVar<string> _characterId = new SyncVar<string>();
         private readonly SyncVar<string> _mapId = new SyncVar<string>();
 
+        /// <summary>
+        /// The two pieces of visual identity everybody may see.
+        /// </summary>
+        /// <remarks>
+        /// <b>Public information, and only that.</b> A name is already above a player's head
+        /// in every MMO and already in the character list; a gender already decides which of
+        /// two approved models is standing there, which is visible the moment the character
+        /// is. Nothing else about appearance is replicated -- hair, face and outfit are not
+        /// on the wire in this project, so a remote player is the base model of their gender.
+        ///
+        /// <b>The gender crosses as an int on purpose.</b> <c>CharacterGender</c> is authored
+        /// vocabulary in Data and this assembly does not reference Data; widening the
+        /// assembly graph so a shadow object could name an enum would be the wrong trade.
+        /// The same choice the inventory snapshot already makes for equipment slots.
+        /// </remarks>
+        private readonly SyncVar<int> _gender = new SyncVar<int>();
+        private readonly SyncVar<string> _displayName = new SyncVar<string>();
+
         private readonly SyncVar<int> _health = new SyncVar<int>();
         private readonly SyncVar<int> _maxHealth = new SyncVar<int>();
         private readonly SyncVar<int> _level = new SyncVar<int>();
@@ -132,6 +150,16 @@ namespace ChibiFantasy.Network
 
         /// <summary>Which map the server has them on.</summary>
         public DefinitionId Map => new DefinitionId(_mapId.Value);
+
+        /// <summary>
+        /// The character's gender, as the numeric value of the authored enum.
+        /// </summary>
+        /// <remarks>Zero means the server said nothing, which a presenter treats as "use the
+        /// fallback" rather than guessing a gender.</remarks>
+        public int GenderCode => _gender.Value;
+
+        /// <summary>The name to show above them, as the server holds it.</summary>
+        public string DisplayName => _displayName.Value ?? string.Empty;
 
         public int Health => _health.Value;
 
@@ -238,11 +266,13 @@ namespace ChibiFantasy.Network
         /// <summary>Publishes who this object represents.</summary>
         [Server]
         public void ServerPublishIdentity(CharacterId character, DefinitionId map,
-            int maxHealth)
+            int maxHealth, int genderCode = 0, string displayName = null)
         {
             _characterId.Value = character.Value ?? string.Empty;
             _mapId.Value = map.Value ?? string.Empty;
             _maxHealth.Value = maxHealth < 0 ? 0 : maxHealth;
+            _gender.Value = genderCode < 0 ? 0 : genderCode;
+            _displayName.Value = displayName ?? string.Empty;
         }
 
         /// <summary>

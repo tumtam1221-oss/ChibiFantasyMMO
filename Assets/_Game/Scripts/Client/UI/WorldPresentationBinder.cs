@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using ChibiFantasy.Client.World;
 using ChibiFantasy.Data;
 using ChibiFantasy.Network;
 using FishNet.Managing;
@@ -25,6 +26,11 @@ namespace ChibiFantasy.Client.UI
     /// <b>Unbinding is deliberate.</b> A screen still holding a destroyed object is where
     /// null-reference noise after a disconnect comes from, so the screens are told the
     /// moment the object goes.
+    ///
+    /// <b>The camera binds here too, and only here.</b> One place decides which character is
+    /// "mine", so the HUD, the bag and the view can never end up pointed at different
+    /// characters -- and a reconnect cannot leave a camera following a corpse while the HUD
+    /// has already moved on.
     /// </remarks>
     public sealed class WorldPresentationBinder : MonoBehaviour
     {
@@ -33,6 +39,7 @@ namespace ChibiFantasy.Client.UI
 
         private WorldHudScreen _hud;
         private InventoryScreen _inventory;
+        private WorldCameraDirector _camera;
         private IDefinitionRegistry<ItemDefinition> _items;
 
         private CharacterNetworkEntity _bound;
@@ -50,11 +57,13 @@ namespace ChibiFantasy.Client.UI
         /// locally -- the snapshot carries ids precisely so definitions do not cross the
         /// wire.</remarks>
         public void Compose(NetworkManager networkManager, WorldHudScreen hud,
-            InventoryScreen inventory, IDefinitionRegistry<ItemDefinition> items)
+            InventoryScreen inventory, IDefinitionRegistry<ItemDefinition> items,
+            WorldCameraDirector camera = null)
         {
             _networkManager = networkManager;
             _hud = hud;
             _inventory = inventory;
+            _camera = camera;
             _items = items;
 
             if (_hud != null) _hud.InventoryRequested += OnInventoryRequested;
@@ -81,6 +90,7 @@ namespace ChibiFantasy.Client.UI
                 _hud?.Unbind();
                 _inventory?.Unbind();
                 _inventory?.SetOpen(false);
+                _camera?.Unbind();
 
                 return;
             }
@@ -89,6 +99,11 @@ namespace ChibiFantasy.Client.UI
 
             _hud?.Bind(owned);
             _inventory?.Bind(owned, _items);
+
+            // The camera goes through the same door as the HUD and the bag, so a reconnect
+            // rebinds all three or none -- a camera bound on its own path would be the one
+            // that kept following a destroyed object.
+            _camera?.Bind(owned);
         }
 
         private void Update()

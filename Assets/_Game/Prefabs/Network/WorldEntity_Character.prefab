@@ -11,6 +11,8 @@ GameObject:
   - component: {fileID: 5608290473388791689}
   - component: {fileID: 3639435068301065108}
   - component: {fileID: 1522415889616342941}
+  - component: {fileID: 3804580116488109400}
+  - component: {fileID: 1801073953638534814}
   m_Layer: 0
   m_Name: WorldEntity_Character
   m_TagString: Untagged
@@ -105,3 +107,33 @@ MonoBehaviour:
   _componentIndexCache: 255
   _addedNetworkObject: {fileID: 3639435068301065108}
   _networkObjectCache: {fileID: 0}
+--- !u!114 &3804580116488109400
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8741372535237540399}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 67aad0a0edbd58340a339d1c4f3f0026, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.CharacterMovementInput
+  _smoothing: 12
+  _sendInterval: 0.05
+  _snapDistance: 4
+--- !u!114 &1801073953638534814
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8741372535237540399}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 80371f4954ff03b44bca249886dc1d71, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.World.CharacterVisualPresenter
+  _catalogue: {fileID: 11400000, guid: bf00725517071764a82aaee0630fa5dc, type: 2}
+  _turnSpeed: 720
+  _deathTilt: 80

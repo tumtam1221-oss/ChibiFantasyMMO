@@ -174,9 +174,18 @@ namespace ChibiFantasy.Server
             entity.ServerUseMovementSink(_movement);
             entity.ServerUseInventorySink(_inventory);
 
+            // Identity, including the two visual facts a client needs to draw somebody:
+            // which of the two approved models they are, and what to write above them. Both
+            // are already public -- the character list shows them before the world loads.
             entity.ServerPublishIdentity(character.Character,
                 character.Location == null ? default : character.Location.CurrentMap,
-                character.Combatant == null ? 0 : character.Combatant.MaxHealth);
+                character.Combatant == null ? 0 : character.Combatant.MaxHealth,
+                character.Domain == null || character.Domain.Identity == null
+                    ? 0
+                    : (int)character.Domain.Identity.Gender,
+                character.Domain == null || character.Domain.Identity == null
+                    ? null
+                    : character.Domain.Identity.Name);
 
             Publish(instance, character);
 

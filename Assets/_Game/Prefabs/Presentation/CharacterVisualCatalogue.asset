@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1e574ce1ad3e12149a61c968e60507fe, type: 3}
+  m_Name: CharacterVisualCatalogue
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.World.CharacterVisualCatalogue
+  _male: {fileID: 919132149155446097, guid: a1d154d338410054e8134dc9e6e42b07, type: 3}
+  _female: {fileID: 919132149155446097, guid: d16093ee2e2c84842b3d76cf24618572, type: 3}
+  _fallback: {fileID: 919132149155446097, guid: a1d154d338410054e8134dc9e6e42b07,
+    type: 3}
+  _locomotion: {fileID: 9100000, guid: 39555be8cb9455a48b3b7653b13bdf46, type: 2}
+  _referenceWalkSpeed: 1.2
+  _moveThreshold: 0.05
+  _nameplateHeight: 1.9
+  _showOwnNameplate: 0

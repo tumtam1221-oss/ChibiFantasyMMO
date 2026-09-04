@@ -1,3 +1,4 @@
+using ChibiFantasy.Client.World;
 using ChibiFantasy.Network;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -37,6 +38,10 @@ namespace ChibiFantasy.Client
 
         [Tooltip("Seconds between movement requests. Zero sends one per frame.")]
         [SerializeField] private float _sendInterval = 0.05f;
+
+        [Tooltip("Metres of disagreement past which the visible character is placed rather "
+            + "than eased. Covers a respawn, a reconnect and a map change.")]
+        [SerializeField] private float _snapDistance = 4f;
 
         private CharacterNetworkEntity _entity;
         private long _sequence;
@@ -80,11 +85,38 @@ namespace ChibiFantasy.Client
         {
             var authoritative = new Vector3(_entity.X, _entity.Y, _entity.Z);
 
-            transform.position = _smoothing <= 0f
-                ? authoritative
-                : Vector3.Lerp(transform.position, authoritative,
-                    1f - Mathf.Exp(-_smoothing * Time.deltaTime));
+            if (_smoothing <= 0f || ShouldSnap(authoritative))
+            {
+                transform.position = authoritative;
+
+                return;
+            }
+
+            transform.position = Vector3.Lerp(transform.position, authoritative,
+                1f - Mathf.Exp(-_smoothing * Time.deltaTime));
         }
+
+        /// <summary>
+        /// Whether the gap is too large to be movement.
+        /// </summary>
+        /// <remarks>
+        /// A respawn, a reconnect and a map change all replicate as one enormous position
+        /// change, and easing towards it would fly the character across the world in front of
+        /// the player -- through walls, for several seconds, looking like a hack. Past the
+        /// threshold the visible character is simply placed where the server says it is.
+        ///
+        /// <b>This is presentation and nothing else.</b> Either branch draws the same
+        /// authoritative position; they differ only in how long the picture takes to agree
+        /// with it.
+        /// </remarks>
+        public bool ShouldSnap(Vector3 authoritative)
+        {
+            return CharacterVisualRules.ShouldSnap(transform.position, authoritative,
+                _snapDistance);
+        }
+
+        /// <summary>The distance past which the visible character is placed, not eased.</summary>
+        public float SnapDistance => _snapDistance;
 
         /// <summary>
         /// The current movement input, as a vector no longer than one.
