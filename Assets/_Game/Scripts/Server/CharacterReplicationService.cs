@@ -37,6 +37,7 @@ namespace ChibiFantasy.Server
         private readonly WorldCharacterRegistry _characters;
         private readonly NetworkObject _prefab;
         private readonly ICharacterCombatRequestSink _combat;
+        private readonly ICharacterMovementRequestSink _movement;
 
         private readonly Dictionary<string, NetworkObject> _spawned =
             new Dictionary<string, NetworkObject>();
@@ -52,14 +53,20 @@ namespace ChibiFantasy.Server
         /// replicates characters, it simply accepts no requests -- which is the right
         /// behaviour for a server that has not wired combat rather than a crash.
         /// </param>
+        /// <param name="movement">
+        /// Where a client's movement input goes. Optional, like combat: a world composed
+        /// without one replicates characters that simply cannot be asked to walk.
+        /// </param>
         public CharacterReplicationService(NetworkManager networkManager,
             WorldCharacterRegistry characters, NetworkObject prefab,
-            ICharacterCombatRequestSink combat = null)
+            ICharacterCombatRequestSink combat = null,
+            ICharacterMovementRequestSink movement = null)
         {
             _networkManager = networkManager;
             _characters = characters;
             _prefab = prefab;
             _combat = combat;
+            _movement = movement;
         }
 
         public int SpawnedCount => _spawned.Count;
@@ -147,6 +154,7 @@ namespace ChibiFantasy.Server
             _networkManager.ServerManager.Spawn(instance, connection);
 
             entity.ServerUseCombatSink(_combat);
+            entity.ServerUseMovementSink(_movement);
 
             entity.ServerPublishIdentity(character.Character,
                 character.Location == null ? default : character.Location.CurrentMap,

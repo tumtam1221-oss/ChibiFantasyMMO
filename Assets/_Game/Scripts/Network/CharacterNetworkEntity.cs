@@ -33,6 +33,28 @@ namespace ChibiFantasy.Network
     }
 
     /// <summary>
+    /// Where a client's movement input goes once the network has carried it.
+    /// </summary>
+    /// <remarks>
+    /// A second seam beside <see cref="ICharacterCombatRequestSink"/> and for the same
+    /// reason: the authority lives in the server assembly, which already references this
+    /// one. Two narrow interfaces rather than one wide one, so a class that only moves
+    /// characters cannot be handed the ability to resolve a fight.
+    ///
+    /// <b>Two axes and a sequence.</b> Not a destination, not a speed, not a delta, not a
+    /// map, not a character. Every one of those is the server's, and a parameter for any of
+    /// them would be a parameter to forge.
+    /// </remarks>
+    public interface ICharacterMovementRequestSink
+    {
+        /// <param name="connectionId">Whose object it arrived through. Not client-supplied.</param>
+        /// <param name="inputX">Sideways intent, nominally in -1..1.</param>
+        /// <param name="inputZ">Forward intent, nominally in -1..1.</param>
+        /// <param name="sequence">The client's own ordering number, for replay rejection.</param>
+        void Submit(int connectionId, float inputX, float inputZ, long sequence);
+    }
+
+    /// <summary>
     /// A character, as clients see it -- and the one door a client's combat request enters by.
     /// </summary>
     /// <remarks>
@@ -53,10 +75,11 @@ namespace ChibiFantasy.Network
     /// A player cannot swing as somebody else because there is nowhere to say who they are.
     ///
     /// <b>Position is replicated, not accepted.</b> The server writes where a character
-    /// stands; nothing here reads a transform or takes a position from a client. Movement
-    /// replication is a later gate, and until it exists a client that walks around is doing
-    /// so in its own presentation only -- the server's position, which is what combat range
-    /// is measured against, does not move.
+    /// stands; nothing here reads a transform or takes a position from a client. Since 18.3
+    /// a client can ask to move, but it asks with <i>input</i> -- which way it is pressing --
+    /// and the server decides how far that gets it. There is no message carrying a position,
+    /// so there is no position to disbelieve, and the value combat range is measured against
+    /// is the one the server computed.
     ///
     /// <b>It carries no art.</b> Production character art exists but wiring a model, a rig
     /// and an animator to a network object is presentation work, so this prefab is the
@@ -83,6 +106,9 @@ namespace ChibiFantasy.Network
         /// client's copy of the object has none, which is correct: a client has nothing to
         /// submit a request to.</remarks>
         private ICharacterCombatRequestSink _sink;
+
+        /// <summary>Where movement input goes. Server-side only, and never sent anywhere.</summary>
+        private ICharacterMovementRequestSink _movement;
 
         /// <summary>Which character this is, as the server knows it.</summary>
         public CharacterId Character => new CharacterId(_characterId.Value);
@@ -117,6 +143,13 @@ namespace ChibiFantasy.Network
         public void ServerUseCombatSink(ICharacterCombatRequestSink sink)
         {
             _sink = sink;
+        }
+
+        /// <summary>Points this object's movement input at the server's movement authority.</summary>
+        [Server]
+        public void ServerUseMovementSink(ICharacterMovementRequestSink sink)
+        {
+            _movement = sink;
         }
 
         /// <summary>Publishes who this object represents.</summary>
@@ -167,6 +200,36 @@ namespace ChibiFantasy.Network
         /// monster's health, the character's experience -- rather than as a return value a
         /// client could mistake for authority.
         /// </remarks>
+        /// <summary>
+        /// Asks the server to move.
+        /// </summary>
+        /// <remarks>
+        /// <b>Intent, never a destination.</b> The client says which way it is pressing; the
+        /// server decides how far that gets it, using its own speed and its own clock. A
+        /// client cannot ask to be somewhere, so there is no position to disbelieve.
+        ///
+        /// <b>Ownership is the authentication</b>, as it is for the attack request: FishNet
+        /// refuses this from a connection that does not own the object, and the server
+        /// established that ownership from the admitted session. Who is moving is which
+        /// object the message came through.
+        ///
+        /// <b>It returns nothing, and it does not touch a transform.</b> Where the character
+        /// ends up arrives as replicated position, the same way every other authoritative
+        /// value does. A client that wants to look smooth interpolates towards it; it does
+        /// not write it.
+        /// </remarks>
+        [ServerRpc]
+        public void RequestMove(float inputX, float inputZ, long sequence)
+        {
+            if (_movement == null) return;
+
+            int connectionId = Owner == null ? -1 : Owner.ClientId;
+
+            if (connectionId < 0) return;
+
+            _movement.Submit(connectionId, inputX, inputZ, sequence);
+        }
+
         [ServerRpc]
         public void RequestAttack(string targetInstanceId, string skillId, int rank,
             long sequence)
