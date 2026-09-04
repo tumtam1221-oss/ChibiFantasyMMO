@@ -229,16 +229,21 @@ namespace ChibiFantasy.Tests.EditMode
         }
 
         [Test]
-        public void The_registry_is_empty_until_the_next_gate()
+        public void The_registry_the_bootstrap_points_at_is_usable()
         {
             var registry = AssetDatabase.LoadAssetAtPath<DefaultPrefabObjects>(RegistryPath);
 
-            // An empty registry is a valid FishNet configuration -- Phase 16's loopback tests
-            // run against one. Registering entities is 17.2's job, and inventing a prefab
-            // here to make the registry look populated would be exactly the fake asset this
-            // gate forbids.
-            Assert.That(registry.GetObjectCount(), Is.Zero,
-                "17.2 populates this; 17.1 must not invent an entity to fill it");
+            // 17.1 left this empty on purpose and asserted so, because inventing a prefab to
+            // make it look populated would have been the fake asset that gate forbids. 17.2
+            // then filled it legitimately, so the assertion moved on with it: what the
+            // bootstrap needs is a registry it can actually resolve ids from.
+            //
+            // What is IN the registry -- valid NetworkObjects, no duplicates, no
+            // NetworkManager -- belongs to SpawnablePrefabRegistryTests and is not repeated
+            // here.
+            Assert.That(registry, Is.Not.Null);
+            Assert.That(registry.GetObjectCount(), Is.GreaterThan(0),
+                "17.2 populates this; an empty registry means nothing can replicate");
         }
 
         // ---- 6: the server does not depend on client-only systems -----------------------------------
