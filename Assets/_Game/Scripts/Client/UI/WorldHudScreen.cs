@@ -30,6 +30,7 @@ namespace ChibiFantasy.Client.UI
         private RectTransform _panel;
         private TextMeshProUGUI _name;
         private TextMeshProUGUI _health;
+        private TextMeshProUGUI _mana;
         private TextMeshProUGUI _level;
         private TextMeshProUGUI _experience;
         private Image _healthFill;
@@ -105,6 +106,7 @@ namespace ChibiFantasy.Client.UI
 
             if (_name != null) _name.text = data.Character.Value ?? string.Empty;
             if (_health != null) _health.text = data.HealthLabel;
+            if (_mana != null) _mana.text = data.ManaLabel;
             if (_level != null) _level.text = data.LevelLabel;
             if (_experience != null) _experience.text = data.ExperienceLabel;
             if (_healthFill != null) _healthFill.fillAmount = data.HealthFraction;
@@ -159,6 +161,13 @@ namespace ChibiFantasy.Client.UI
             _health = UiFactory.CreateLabel("Health", _panel, string.Empty, 16f,
                 TextAlignmentOptions.Center);
             Row(_health.rectTransform, -40f, 22f);
+
+            // Beside the health figure. Empty until the server computes a mana ceiling,
+            // which is the same rule 18.5 used when there was never going to be one.
+            _mana = UiFactory.CreateLabel("Mana", _panel, string.Empty, 16f,
+                TextAlignmentOptions.Right);
+            _mana.color = UiFactory.Accent;
+            Row(_mana.rectTransform, -40f, 22f);
 
             _level = UiFactory.CreateLabel("Level", _panel, string.Empty, 18f);
             Row(_level.rectTransform, -70f, 24f);

@@ -1,5 +1,6 @@
 using ChibiFantasy.Core;
 using ChibiFantasy.Network;
+using UnityEngine;
 
 namespace ChibiFantasy.Client.UI
 {
@@ -13,12 +14,14 @@ namespace ChibiFantasy.Client.UI
     public readonly struct HudViewData
     {
         private HudViewData(bool bound, CharacterId character, int health, int maxHealth,
-            int level, long experience, bool alive)
+            int mana, int maxMana, int level, long experience, bool alive)
         {
             IsBound = bound;
             Character = character;
             Health = health;
             MaxHealth = maxHealth;
+            Mana = mana;
+            MaxMana = maxMana;
             Level = level;
             Experience = experience;
             IsAlive = alive;
@@ -35,6 +38,10 @@ namespace ChibiFantasy.Client.UI
 
         public int MaxHealth { get; }
 
+        public int Mana { get; }
+
+        public int MaxMana { get; }
+
         public int Level { get; }
 
         /// <summary>Progress within the current level, in Phase 05 terms.</summary>
@@ -49,6 +56,20 @@ namespace ChibiFantasy.Client.UI
 
         /// <summary>Health as a player reads it.</summary>
         public string HealthLabel => IsBound ? Health + " / " + MaxHealth : string.Empty;
+
+        /// <summary>
+        /// The mana pool, drawn only once the server has one.
+        /// </summary>
+        /// <remarks>A ceiling of zero means this world computes no maximum mana, and an
+        /// empty label is the honest answer -- 18.5 refused to draw a made-up bar for
+        /// exactly this reason, and the rule survives now that the number is usually real.</remarks>
+        public string ManaLabel => IsBound && MaxMana > 0
+            ? Mana + " / " + MaxMana
+            : string.Empty;
+
+        public float ManaFraction => MaxMana <= 0
+            ? 0f
+            : Mathf.Clamp01((float)Mana / MaxMana);
 
         public string LevelLabel => IsBound ? "Lv " + Level : string.Empty;
 
@@ -70,7 +91,7 @@ namespace ChibiFantasy.Client.UI
             if (entity == null) return Unbound;
 
             return new HudViewData(true, entity.Character, entity.Health, entity.MaxHealth,
-                entity.Level, entity.Experience, entity.IsAlive);
+                entity.Mana, entity.MaxMana, entity.Level, entity.Experience, entity.IsAlive);
         }
     }
 
@@ -152,6 +173,8 @@ namespace ChibiFantasy.Client.UI
             return previous.IsBound != current.IsBound
                 || previous.Health != current.Health
                 || previous.MaxHealth != current.MaxHealth
+                || previous.Mana != current.Mana
+                || previous.MaxMana != current.MaxMana
                 || previous.Level != current.Level
                 || previous.Experience != current.Experience
                 || previous.Character != current.Character;

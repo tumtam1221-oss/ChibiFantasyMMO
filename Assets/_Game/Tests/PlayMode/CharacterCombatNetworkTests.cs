@@ -580,7 +580,8 @@ namespace ChibiFantasy.Tests.PlayMode
 
             try
             {
-                ClientCharacter().ServerPublishState(99f, 99f, 99f, 1, 60, 999999);
+                ClientCharacter().ServerPublishState(99f, 99f, 99f, 1, 9999, 9999, 9999,
+                    60, 999999);
             }
             catch (System.Exception)
             {

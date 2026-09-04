@@ -127,6 +127,16 @@ namespace ChibiFantasy.Network
 
         private readonly SyncVar<int> _health = new SyncVar<int>();
         private readonly SyncVar<int> _maxHealth = new SyncVar<int>();
+
+        /// <summary>
+        /// The mana pool, now that the server keeps an authoritative one.
+        /// </summary>
+        /// <remarks>Phase 18.5 deliberately drew no mana because nothing computed a ceiling
+        /// for it; 18.8 gave the world a live <c>ResourceLimits</c> from the authored
+        /// maximum-mana formula, so there is a real number to show. Public information in
+        /// the same sense health is.</remarks>
+        private readonly SyncVar<int> _mana = new SyncVar<int>();
+        private readonly SyncVar<int> _maxMana = new SyncVar<int>();
         private readonly SyncVar<int> _level = new SyncVar<int>();
         private readonly SyncVar<long> _experience = new SyncVar<long>();
 
@@ -198,6 +208,10 @@ namespace ChibiFantasy.Network
         public int Health => _health.Value;
 
         public int MaxHealth => _maxHealth.Value;
+
+        public int Mana => _mana.Value;
+
+        public int MaxMana => _maxMana.Value;
 
         public int Level => _level.Value;
 
@@ -360,17 +374,27 @@ namespace ChibiFantasy.Network
         /// <summary>
         /// Publishes what the server decided this tick.
         /// </summary>
-        /// <remarks>Position, health and progression together, because a client showing a
+        /// <remarks>
+        /// Position, resources and progression together, because a client showing a
         /// character needs all of them and they change on the same tick. Every value is
-        /// already decided elsewhere; nothing is computed here.</remarks>
+        /// already decided elsewhere; nothing is computed here.
+        ///
+        /// <b>The ceilings travel with the current values, not once at spawn.</b> They were
+        /// published with the identity until 18.8, which was correct only while nothing
+        /// could change them: a buff that raised maximum health raised it on the server and
+        /// the client went on drawing the old bar forever. A maximum is state, not identity.
+        /// </remarks>
         [Server]
-        public void ServerPublishState(float x, float y, float z, int health, int level,
-            long experience)
+        public void ServerPublishState(float x, float y, float z, int health, int maxHealth,
+            int mana, int maxMana, int level, long experience)
         {
             _x.Value = x;
             _y.Value = y;
             _z.Value = z;
             _health.Value = health < 0 ? 0 : health;
+            _maxHealth.Value = maxHealth < 0 ? 0 : maxHealth;
+            _mana.Value = mana < 0 ? 0 : mana;
+            _maxMana.Value = maxMana < 0 ? 0 : maxMana;
             _level.Value = level < 0 ? 0 : level;
             _experience.Value = experience < 0 ? 0 : experience;
         }

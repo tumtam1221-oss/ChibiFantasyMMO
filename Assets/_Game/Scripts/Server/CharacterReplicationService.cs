@@ -216,8 +216,18 @@ namespace ChibiFantasy.Server
                 ? default
                 : character.Combatant.Position;
 
+            // The ceilings come from the combatant's current limits, which the stat
+            // authority replaces whenever a modifier changes them. Published every time
+            // rather than once, because a maximum is state.
+            ResourceLimits limits = character.Combatant == null
+                ? ResourceLimits.None
+                : character.Combatant.Limits;
+
             entity.ServerPublishState(position.X, position.Y, position.Z,
                 character.Combatant == null ? 0 : character.Combatant.CurrentHealth,
+                limits.MaxHealth,
+                character.Domain?.Resources == null ? 0 : character.Domain.Resources.CurrentMana,
+                limits.MaxMana,
                 character.Domain.Progression.Level,
                 character.Domain.Progression.Experience);
         }
