@@ -1,0 +1,29 @@
+{
+    "name": "ChibiFantasy.Tests.PlayMode",
+    "rootNamespace": "ChibiFantasy.Tests.PlayMode",
+    "references": [
+        "ChibiFantasy.Core",
+        "ChibiFantasy.Data",
+        "ChibiFantasy.Contracts",
+        "ChibiFantasy.Backend",
+        "ChibiFantasy.Gameplay",
+        "ChibiFantasy.Network",
+        "ChibiFantasy.Server",
+        "FishNet.Runtime",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
