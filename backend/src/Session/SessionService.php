@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ChibiFantasy\Session;
 
 use ChibiFantasy\Character\CharacterRepository;
+use ChibiFantasy\Character\CharacterStateRepository;
 use ChibiFantasy\Directory\DirectoryRepository;
 use ChibiFantasy\Http\ApiProblem;
 use PDO;
@@ -37,8 +38,111 @@ final class SessionService
         private readonly PDO $pdo,
         private readonly SessionRepository $sessions,
         private readonly DirectoryRepository $directory,
-        private readonly CharacterRepository $characters
+        private readonly CharacterRepository $characters,
+        private readonly ?CharacterStateRepository $characterState = null
     ) {
+    }
+
+    /**
+     * Loads the full character state for a session that reached the world.
+     *
+     * **Every check the brief asks for, in the order that makes them cheap.** The
+     * session must have been authorised; the character must be the one it selected;
+     * the account must own it; and it must be in a state that can be played. Each is
+     * a refusal with its own reason, because "you cannot enter" is not an answer a
+     * player can act on.
+     *
+     * The ownership check is not a check at all in the end -- the load is scoped by
+     * account in SQL, so an unowned character returns nothing rather than being
+     * fetched and then rejected. The explicit refusal below exists to give that
+     * outcome a name.
+     *
+     * @param array<string,mixed> $session
+     * @return array{ok:true,result:array<string,mixed>}|array{ok:false,problem:ApiProblem}
+     */
+    public function loadCharacterState(array $session): array
+    {
+        if ($this->characterState === null) {
+            return $this->refuse('unavailable', 'error.unavailable', 503);
+        }
+
+        $state = (int) $session['state'];
+
+        if ($state !== SessionRepository::ENTERING_WORLD
+            && $state !== SessionRepository::ACTIVE) {
+            // Full character state is the world's business. A session that has not
+            // been authorised has no reason to hold stats, skills or resources.
+            return $this->refuse('invalid_transition', 'error.session.invalid_transition');
+        }
+
+        $characterId = (string) ($session['selected_character_id'] ?? '');
+
+        if ($characterId === '') {
+            return $this->refuse('unknown_character', 'error.character.unknown', 404);
+        }
+
+        $loaded = $this->characterState->load((string) $session['account_id'], $characterId);
+
+        if ($loaded === null) {
+            // Absent and somebody else's give the same answer, so asking about
+            // another player's character reveals nothing.
+            return $this->refuse('character_not_owned', 'error.character.not_owned', 403);
+        }
+
+        if ((int) $loaded['availability'] !== CharacterRepository::AVAILABILITY_IN_WORLD
+            && (int) $loaded['availability'] !== CharacterRepository::AVAILABILITY_PLAYABLE) {
+            return $this->refuse('character_unavailable', 'error.character.unavailable', 409);
+        }
+
+        if ((string) $loaded['map_id'] === '') {
+            // A character with no map cannot be placed, and inventing one would put
+            // them somewhere nobody chose.
+            return $this->refuse('character_unavailable', 'error.character.unavailable', 409);
+        }
+
+        return ['ok' => true, 'result' => $loaded];
+    }
+
+    /**
+     * Writes a character back for a session that owns it.
+     *
+     * The account and character are the session's. The caller supplies what changed
+     * and the revision it loaded; a stale revision is refused rather than applied,
+     * so a world server that was replaced cannot overwrite the one that replaced it.
+     *
+     * @param array<string,mixed> $session
+     * @param array<string,mixed> $state
+     * @return array{ok:true,result:array<string,mixed>}|array{ok:false,problem:ApiProblem}
+     */
+    public function saveCharacterState(array $session, array $state, ?int $expectedRevision): array
+    {
+        if ($this->characterState === null) {
+            return $this->refuse('unavailable', 'error.unavailable', 503);
+        }
+
+        $characterId = (string) ($session['selected_character_id'] ?? '');
+
+        if ($characterId === '') {
+            return $this->refuse('unknown_character', 'error.character.unknown', 404);
+        }
+
+        $result = $this->characterState->save(
+            (string) $session['account_id'],
+            $characterId,
+            $state,
+            $expectedRevision
+        );
+
+        if (!$result['ok']) {
+            return $result['reason'] === 'stale_revision'
+                ? $this->refuse('stale_revision', 'error.session.stale', 409)
+                : $this->refuse('character_not_owned', 'error.character.not_owned', 403);
+        }
+
+        return ['ok' => true, 'result' => [
+            'character_id'  => $characterId,
+            'save_revision' => $result['save_revision'],
+        ]];
     }
 
     /**

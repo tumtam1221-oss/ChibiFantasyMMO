@@ -9,6 +9,7 @@ use ChibiFantasy\Auth\Authenticator;
 use ChibiFantasy\Auth\AuthFailure;
 use ChibiFantasy\Auth\RateLimiter;
 use ChibiFantasy\Character\CharacterRepository;
+use ChibiFantasy\Character\CharacterStateRepository;
 use ChibiFantasy\Directory\DirectoryRepository;
 use ChibiFantasy\Session\IdempotencyStore;
 use ChibiFantasy\Session\SessionRepository;
@@ -42,6 +43,7 @@ final class Api
     private readonly SessionService $flow;
     private readonly DirectoryRepository $directory;
     private readonly CharacterRepository $characters;
+    private readonly CharacterStateRepository $characterState;
     private readonly IdempotencyStore $idempotency;
 
     public function __construct(private readonly PDO $pdo)
@@ -51,12 +53,14 @@ final class Api
         $this->sessions = new SessionRepository($pdo);
         $this->directory = new DirectoryRepository($pdo);
         $this->characters = new CharacterRepository($pdo);
+        $this->characterState = new CharacterStateRepository($pdo);
         $this->idempotency = new IdempotencyStore($pdo);
         $this->flow = new SessionService(
             $pdo,
             $this->sessions,
             $this->directory,
-            $this->characters
+            $this->characters,
+            $this->characterState
         );
     }
 
@@ -124,6 +128,12 @@ final class Api
 
             $request->method === 'POST' && $path === '/api/session/world-ready'
                 => $this->worldReady($request, $requestId),
+
+            $request->method === 'GET' && $path === '/api/character/state'
+                => $this->loadCharacterState($request, $requestId),
+
+            $request->method === 'POST' && $path === '/api/character/state'
+                => $this->saveCharacterState($request, $requestId),
 
             $request->method === 'GET' && $path === '/api/health'
                 => Response::ok(['status' => 'ok']),
@@ -422,6 +432,66 @@ final class Api
         );
 
         return $this->respond($outcome, $requestId);
+    }
+
+    /**
+     * Everything a world server needs to instantiate a character.
+     *
+     * **The character is the session's, not the request's.** There is no
+     * `character_id` parameter: it is read from the session the bearer token
+     * resolves to. A world server cannot ask for a character the player did not
+     * select, and a player cannot ask for one they do not own, because neither has
+     * anywhere to say which character they mean.
+     *
+     * Refused unless the session has actually reached the world. A character's full
+     * state -- stats, skills, resources -- is not something character select is
+     * entitled to, and a session that has not been authorised has no business
+     * loading one.
+     */
+    private function loadCharacterState(Request $request, string $requestId): Response
+    {
+        $session = $this->requireSession($request);
+
+        if ($session instanceof ApiProblem) {
+            return Response::problem($session, $requestId);
+        }
+
+        $state = $this->flow->loadCharacterState($session);
+
+        if (!($state['ok'] ?? false)) {
+            return Response::problem($state['problem'], $requestId);
+        }
+
+        return Response::ok($state['result']);
+    }
+
+    /**
+     * Writes a character back.
+     *
+     * The account and character both come from the session. The body carries only
+     * what changed and the save revision the caller loaded -- so a client that
+     * edited an account id into the payload changes nothing, and one that omitted
+     * the revision is refused rather than allowed to overwrite blindly.
+     */
+    private function saveCharacterState(Request $request, string $requestId): Response
+    {
+        $session = $this->requireSession($request);
+
+        if ($session instanceof ApiProblem) {
+            return Response::problem($session, $requestId);
+        }
+
+        $result = $this->flow->saveCharacterState($session, $request->nested('state'),
+            $request->has('save_revision') ? $request->int('save_revision') : null);
+
+        if (!($result['ok'] ?? false)) {
+            return Response::problem($result['problem'], $requestId);
+        }
+
+        $body = $result['result'];
+        $body['request_id'] = $requestId;
+
+        return Response::ok($body);
     }
 
     /**

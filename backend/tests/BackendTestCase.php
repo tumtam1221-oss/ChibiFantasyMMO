@@ -59,6 +59,11 @@ abstract class BackendTestCase extends TestCase
         'guild_member',
         'guild_rank',
         'guild',
+        // Phase 17 character state. Children of `character`, so before it.
+        'character_save_revision',
+        'character_skill',
+        'character_appearance',
+        'character_stat',
         'character',
         'server_channel',
         'server_definition',
