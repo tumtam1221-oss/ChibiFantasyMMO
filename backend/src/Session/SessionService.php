@@ -42,6 +42,118 @@ final class SessionService
     }
 
     /**
+     * Describes a session to whoever holds its token.
+     *
+     * **This is what a dedicated game server asks.** A client connecting to the world
+     * presents a token; the game server has no way to know what that token means, and
+     * must not take the client's word for it. It asks here, and is told the account,
+     * the character, the server and the channel *the authority recorded* -- not the
+     * ones the client claimed.
+     *
+     * That is the whole mechanism by which account, character, server and channel
+     * spoofing are impossible rather than merely refused: the spoofable values are
+     * never read from the connecting client at all.
+     *
+     * No credential, hash or token is in the answer. The caller already holds the
+     * token; echoing it back would only put it in one more log.
+     *
+     * @param array<string,mixed> $session
+     * @return array{ok:true,result:array<string,mixed>}
+     */
+    public function describe(array $session): array
+    {
+        $characterId = (string) ($session['selected_character_id'] ?? '');
+        $character = $characterId === ''
+            ? null
+            : $this->characters->findOwned((string) $session['account_id'], $characterId);
+
+        return ['ok' => true, 'result' => [
+            'session_id'   => (string) $session['session_id'],
+            'account_id'   => (string) $session['account_id'],
+            'state'        => (int) $session['state'],
+            'revision'     => (int) $session['revision'],
+            'server_id'    => (string) ($session['selected_server_id'] ?? ''),
+            'channel_id'   => (string) ($session['selected_channel_id'] ?? ''),
+            'character_id' => $characterId,
+
+            // Read from the character row rather than echoed from the request, so a
+            // world server spawns what the database says and not what a client wanted.
+            'map_id'       => $character === null ? '' : (string) $character['map_id'],
+            'level'        => $character === null ? 0 : (int) $character['level'],
+            'gender'       => $character === null ? 0 : (int) $character['gender'],
+            'class_id'     => $character === null ? '' : (string) $character['class_id'],
+            'job_id'       => $character === null ? '' : (string) $character['job_id'],
+            'appearance_id' => $character === null ? '' : (string) $character['appearance_id'],
+            'character_revision' => $character === null ? 0 : (int) $character['revision'],
+            'availability' => $character === null ? 0 : (int) $character['availability'],
+
+            'versions'     => [
+                'client'   => (string) $session['client_version'],
+                'protocol' => (string) $session['protocol_version'],
+                'content'  => (string) $session['content_version'],
+            ],
+        ]];
+    }
+
+    /**
+     * Completes the handoff: EnteringWorld becomes Active.
+     *
+     * **Phase 14 stopped at Authorised on purpose** -- the authority had agreed and
+     * nothing had connected. This is the other end of that, called once the world
+     * server actually has the character. Until it is called the session sits in
+     * EnteringWorld, which is exactly the state a connection that died mid-handoff
+     * should be left in: authorised, not present.
+     *
+     * The transition is guarded by revision like every other, so a duplicate call
+     * from a retrying server cannot advance anything twice, and a session that was
+     * revoked while the world was loading is refused rather than quietly activated.
+     *
+     * @param array<string,mixed> $session
+     * @return array{ok:true,result:array<string,mixed>}|array{ok:false,problem:ApiProblem}
+     */
+    public function completeWorldEntry(array $session): array
+    {
+        $state = (int) $session['state'];
+
+        if ($state === SessionRepository::ACTIVE) {
+            // Already there. A retry after a lost reply must not be an error.
+            return ['ok' => true, 'result' => [
+                'session_id'        => (string) $session['session_id'],
+                'state'             => SessionRepository::ACTIVE,
+                'revision'          => (int) $session['revision'],
+                'world_entry_state' => 3,
+                'already_active'    => true,
+            ]];
+        }
+
+        if ($state !== SessionRepository::ENTERING_WORLD) {
+            return $this->refuse('invalid_transition', 'error.session.invalid_transition');
+        }
+
+        $moved = $this->sessions->applyTransition(
+            (string) $session['session_id'],
+            (int) $session['revision'],
+            SessionRepository::ACTIVE
+        );
+
+        if (!$moved) {
+            return $this->refuse('stale_revision', 'error.session.stale', 409);
+        }
+
+        $fresh = $this->sessions->findById((string) $session['session_id']);
+
+        return ['ok' => true, 'result' => [
+            'session_id'        => (string) $session['session_id'],
+            'state'             => SessionRepository::ACTIVE,
+            'revision'          => (int) $fresh['revision'],
+
+            // Ready: the character is in the world. Mirrors Phase 14 WorldEntryState.
+            'world_entry_state' => 3,
+            'already_active'    => false,
+        ]];
+    }
+
+    /**
      * Ends a session and puts its character back.
      *
      * **Why this endpoint has to exist.** Phase 15 refuses a second live session, on

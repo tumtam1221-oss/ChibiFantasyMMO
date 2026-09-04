@@ -119,6 +119,12 @@ final class Api
             $request->method === 'POST' && $path === '/api/session/release'
                 => $this->release($request, $requestId),
 
+            $request->method === 'GET' && $path === '/api/session'
+                => $this->describeSession($request, $requestId),
+
+            $request->method === 'POST' && $path === '/api/session/world-ready'
+                => $this->worldReady($request, $requestId),
+
             $request->method === 'GET' && $path === '/api/health'
                 => Response::ok(['status' => 'ok']),
 
@@ -416,6 +422,52 @@ final class Api
         );
 
         return $this->respond($outcome, $requestId);
+    }
+
+    /**
+     * What the session behind this token actually is.
+     *
+     * The call a dedicated game server makes about a connecting client. Everything
+     * spoofable -- account, character, server, channel -- comes from the session row
+     * rather than from the connecting client, which is why spoofing them is not
+     * something this has to detect.
+     */
+    private function describeSession(Request $request, string $requestId): Response
+    {
+        $session = $this->requireSession($request);
+
+        if ($session instanceof ApiProblem) {
+            return Response::problem($session, $requestId);
+        }
+
+        return Response::ok($this->flow->describe($session)['result']);
+    }
+
+    /**
+     * The world server reporting that the character is in.
+     *
+     * Not idempotency-keyed: an already-Active session answers success, so a retry is
+     * harmless without consuming a request key. The revision guard is what stops two
+     * concurrent callers both advancing the session.
+     */
+    private function worldReady(Request $request, string $requestId): Response
+    {
+        $session = $this->requireSession($request);
+
+        if ($session instanceof ApiProblem) {
+            return Response::problem($session, $requestId);
+        }
+
+        $result = $this->flow->completeWorldEntry($session);
+
+        if (!($result['ok'] ?? false)) {
+            return Response::problem($result['problem'], $requestId);
+        }
+
+        $body = $result['result'];
+        $body['request_id'] = $requestId;
+
+        return Response::ok($body);
     }
 
     /**
