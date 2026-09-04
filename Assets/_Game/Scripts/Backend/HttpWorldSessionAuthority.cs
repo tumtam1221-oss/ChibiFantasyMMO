@@ -127,7 +127,16 @@ namespace ChibiFantasy.Backend
                 new DefinitionId(json.String("map_id")),
                 new Revision(json.Int("revision")),
                 new Revision(json.Int("character_revision")),
-                state);
+                state,
+
+                // Read from the character row the API returned, so a world server places
+                // what the database says rather than what a client hoped.
+                new WorldCharacterProfile(
+                    json.Int("level"),
+                    json.Int("gender"),
+                    new DefinitionId(json.String("class_id")),
+                    new DefinitionId(json.String("job_id")),
+                    new DefinitionId(json.String("appearance_id"))));
         }
 
         public bool ConfirmArrival(SessionId session)

@@ -58,6 +58,55 @@ namespace ChibiFantasy.Contracts
     }
 
     /// <summary>
+    /// The authored facts about a character, as the authority holds them.
+    /// </summary>
+    /// <remarks>
+    /// <b>Deliberately not the whole character.</b> Level, class, job, gender and appearance
+    /// are what the account database actually stores and what a world server needs in order
+    /// to place somebody correctly. Stats, experience, inventory and equipment are not here
+    /// because the Phase 15 API does not serve them -- and inventing plausible values so the
+    /// type looked complete would be worse than the gap, because a fabricated stat block is
+    /// indistinguishable from a real one until it matters.
+    ///
+    /// <b>Everything is a definition id or a number.</b> Nothing here is a resolved
+    /// definition object: the server names what the character is, and content is looked up
+    /// against the registries Phase 05 already owns. Duplicating authored content in the
+    /// account database would create a second source of truth that goes stale on the next
+    /// content patch, which is the same reason the character table stores ids and not stats.
+    /// </remarks>
+    public readonly struct WorldCharacterProfile
+    {
+        public WorldCharacterProfile(int level, int gender, DefinitionId characterClass,
+            DefinitionId job, DefinitionId appearance)
+        {
+            Level = level;
+            Gender = gender;
+            Class = characterClass;
+            Job = job;
+            Appearance = appearance;
+        }
+
+        /// <summary>Read from the character row. Never from the client.</summary>
+        public int Level { get; }
+
+        /// <summary>Mirrors Phase 04 <c>CharacterGender</c> numerically.</summary>
+        public int Gender { get; }
+
+        public DefinitionId Class { get; }
+
+        public DefinitionId Job { get; }
+
+        public DefinitionId Appearance { get; }
+
+        public bool IsPresent => Level > 0 || Class.IsValid;
+
+        public override string ToString()
+        {
+            return "level " + Level + " " + Class;
+        }
+    }
+
+    /// <summary>
     /// The authority's answer: who this connection actually is, or why it is not admitted.
     /// </summary>
     /// <remarks>
@@ -74,7 +123,7 @@ namespace ChibiFantasy.Contracts
         private WorldAdmission(bool admitted, SessionRejection reason, SessionId session,
             AccountId account, CharacterId character, ServerId server, ChannelId channel,
             DefinitionId map, Revision sessionRevision, Revision characterRevision,
-            SessionState state)
+            SessionState state, WorldCharacterProfile profile)
         {
             IsAdmitted = admitted;
             Reason = reason;
@@ -87,6 +136,7 @@ namespace ChibiFantasy.Contracts
             SessionRevision = sessionRevision;
             CharacterRevision = characterRevision;
             State = state;
+            Profile = profile;
         }
 
         public bool IsAdmitted { get; }
@@ -115,21 +165,36 @@ namespace ChibiFantasy.Contracts
         /// <summary>The session's state at the moment of admission.</summary>
         public SessionState State { get; }
 
+        /// <summary>What the character is, according to the authority.</summary>
+        public WorldCharacterProfile Profile { get; }
+
+        /// <summary>
+        /// The account, projected onto the ownership Phase 08 already defined.
+        /// </summary>
+        /// <remarks>
+        /// <b>Projected, never supplied.</b> There is no owner on a claim, on a join message
+        /// or anywhere a client can reach, so a forged owner is unrepresentable rather than
+        /// refused. This is the same projection <c>AuthenticatedAccount.ToOwnerId</c> makes,
+        /// and there is deliberately only one ownership model in the project.
+        /// </remarks>
+        public OwnerId Owner => new OwnerId(Account.Value);
+
         /// <summary>Whether the account owns a character worth spawning.</summary>
         public bool HasCharacter => Character.IsValid;
 
         public static WorldAdmission Admitted(SessionId session, AccountId account,
             CharacterId character, ServerId server, ChannelId channel, DefinitionId map,
-            Revision sessionRevision, Revision characterRevision, SessionState state)
+            Revision sessionRevision, Revision characterRevision, SessionState state,
+            WorldCharacterProfile profile = default)
         {
             return new WorldAdmission(true, SessionRejection.None, session, account, character,
-                server, channel, map, sessionRevision, characterRevision, state);
+                server, channel, map, sessionRevision, characterRevision, state, profile);
         }
 
         public static WorldAdmission Refused(SessionRejection reason)
         {
             return new WorldAdmission(false, reason, default, default, default, default,
-                default, default, default, default, SessionState.Unauthenticated);
+                default, default, default, default, SessionState.Unauthenticated, default);
         }
 
         public override string ToString()

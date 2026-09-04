@@ -54,9 +54,17 @@ namespace ChibiFantasy.Server
         [Tooltip("Start listening as soon as this component wakes.")]
         [SerializeField] private bool _startOnAwake = true;
 
-        [Header("Content")]
-        [Tooltip("Spawn points, so arrivals resolve from authored data rather than coordinates.")]
-        [SerializeField] private DefinitionRegistry<SpawnPointDefinition> _spawnPoints;
+        /// <summary>
+        /// Spawn points, so arrivals resolve from authored data rather than coordinates.
+        /// </summary>
+        /// <remarks>
+        /// Supplied through <see cref="UseContent"/> rather than as a serialized field.
+        /// <c>DefinitionRegistry&lt;T&gt;</c> is a plain generic class, and Unity does not
+        /// serialize those -- a <c>[SerializeField]</c> here would sit in the inspector
+        /// looking configurable and arrive null at runtime, which is worse than not offering
+        /// it. Content loading is the composition root's job in any case.
+        /// </remarks>
+        private IDefinitionRegistry<SpawnPointDefinition> _spawnPoints;
 
         private NetworkManager _networkManager;
         private WorldAuthenticator _authenticator;
@@ -119,6 +127,15 @@ namespace ChibiFantasy.Server
 
             _networkManager.ServerManager.SetAuthenticator(_authenticator);
             _networkManager.ServerManager.OnRemoteConnectionState += OnRemoteConnectionState;
+        }
+
+        /// <summary>Supplies the authored content this server places arrivals against.</summary>
+        /// <remarks>A server with no spawn points admits connections and then refuses each
+        /// one at placement, which is the correct behaviour for a misconfigured server: it
+        /// never invents a position.</remarks>
+        public void UseContent(IDefinitionRegistry<SpawnPointDefinition> spawnPoints)
+        {
+            _spawnPoints = spawnPoints;
         }
 
         public bool StartServer()
