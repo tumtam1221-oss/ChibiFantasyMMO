@@ -31,6 +31,32 @@ namespace ChibiFantasy.Backend
         HttpExchange Send(string method, string path, string jsonBody, string bearerToken);
     }
 
+    /// <summary>Why a transport never produced a reply.</summary>
+    /// <remarks>
+    /// <b>Still not HTTP's vocabulary.</b> These are the ways a wire attempt ends without an
+    /// answer, named so that a caller can tell a dead host from a slow one from a caller who
+    /// gave up. Mapping them onto <see cref="ApiErrorKind"/> is <see cref="HttpAccountApi"/>'s
+    /// job; keeping them distinct here is what makes that mapping possible at all.
+    ///
+    /// Collapsing timeout into unreachable would tell a player on a slow connection that the
+    /// server is down, and would make a retry look pointless when it is the one thing worth
+    /// doing.
+    /// </remarks>
+    public enum TransportFailureKind
+    {
+        /// <summary>There was no failure. The server answered.</summary>
+        None = 0,
+
+        /// <summary>No connection was established, or it broke before a reply.</summary>
+        Unreachable = 1,
+
+        /// <summary>A connection existed and the deadline passed first.</summary>
+        Timeout = 2,
+
+        /// <summary>The caller abandoned the request.</summary>
+        Cancelled = 3
+    }
+
     /// <summary>
     /// What a transport observed: a status, a body, and whether it connected at all.
     /// </summary>
@@ -42,12 +68,14 @@ namespace ChibiFantasy.Backend
     /// </remarks>
     public readonly struct HttpExchange
     {
-        private HttpExchange(bool reached, int status, string body, string failure)
+        private HttpExchange(bool reached, int status, string body, string failure,
+            TransportFailureKind kind)
         {
             Reached = reached;
             Status = status;
             Body = body;
             Failure = failure;
+            FailureKind = kind;
         }
 
         /// <summary>Whether the server answered at all, whatever it said.</summary>
@@ -62,16 +90,35 @@ namespace ChibiFantasy.Backend
         /// <summary>Why the server was not reached. Diagnostic only, never shown to a player.</summary>
         public string Failure { get; }
 
+        /// <summary>Which way the attempt ended, when it produced no reply.</summary>
+        public TransportFailureKind FailureKind { get; }
+
         public bool IsSuccess => Reached && Status >= 200 && Status < 300;
 
         public static HttpExchange Responded(int status, string body)
         {
-            return new HttpExchange(true, status, body ?? string.Empty, null);
+            return new HttpExchange(true, status, body ?? string.Empty, null,
+                TransportFailureKind.None);
         }
 
         public static HttpExchange Unreachable(string failure)
         {
-            return new HttpExchange(false, 0, string.Empty, failure);
+            return new HttpExchange(false, 0, string.Empty, failure,
+                TransportFailureKind.Unreachable);
+        }
+
+        /// <summary>The deadline passed before the server answered.</summary>
+        public static HttpExchange TimedOut(string failure)
+        {
+            return new HttpExchange(false, 0, string.Empty, failure,
+                TransportFailureKind.Timeout);
+        }
+
+        /// <summary>The caller gave up before the server answered.</summary>
+        public static HttpExchange Cancelled(string failure)
+        {
+            return new HttpExchange(false, 0, string.Empty, failure,
+                TransportFailureKind.Cancelled);
         }
     }
 

@@ -135,6 +135,21 @@ namespace ChibiFantasy.Tests.EditMode
             }
         }
 
+        /// <summary>
+        /// The one file in Backend that is allowed to name a concrete transport.
+        /// </summary>
+        /// <remarks>
+        /// Phase 15 asserted that <i>nothing</i> in Backend named a transport, which was true
+        /// while Backend held only the seam. Phase 16 adds the implementation, and the
+        /// property actually worth protecting was never "no file mentions UnityWebRequest" --
+        /// it was "the seam does not, so nothing above it becomes an HTTP caller."
+        ///
+        /// So the exception is named rather than the rule relaxed, and the test below checks
+        /// that this list still has exactly one entry. A second transport, or a stray
+        /// <c>http://</c> in <c>HttpAccountApi</c>, still fails.
+        /// </remarks>
+        private static readonly string[] TransportImplementations = { "UnityWebRequestTransport.cs" };
+
         [Test]
         public void No_transport_appears_in_the_backend_seam_either()
         {
@@ -143,6 +158,12 @@ namespace ChibiFantasy.Tests.EditMode
 
             foreach (string file in files)
             {
+                if (System.Array.IndexOf(TransportImplementations,
+                    System.IO.Path.GetFileName(file)) >= 0)
+                {
+                    continue;
+                }
+
                 foreach (string code in CodeLines(file))
                 {
                     Assert.That(code, Does.Not.Contain("UnityWebRequest"), file);
@@ -151,6 +172,49 @@ namespace ChibiFantasy.Tests.EditMode
                     Assert.That(code, Does.Not.Contain("https://"), file);
                     Assert.That(code, Does.Not.Contain("SELECT "), file);
                 }
+            }
+        }
+
+        [Test]
+        public void Exactly_one_file_implements_a_transport()
+        {
+            // The exemption above is only safe while it stays this small. A second entry --
+            // or a second file that opens a socket -- must be a deliberate decision somebody
+            // makes by editing this test, not something that slips in beside it.
+            Assert.That(TransportImplementations.Length, Is.EqualTo(1));
+
+            string[] files = System.IO.Directory.GetFiles("Assets/_Game/Scripts/Backend",
+                "*.cs", System.IO.SearchOption.AllDirectories);
+
+            var senders = new System.Collections.Generic.List<string>();
+
+            foreach (string file in files)
+            {
+                foreach (string code in CodeLines(file))
+                {
+                    if (code.Contains("SendWebRequest") || code.Contains("new HttpClient"))
+                    {
+                        senders.Add(System.IO.Path.GetFileName(file));
+                        break;
+                    }
+                }
+            }
+
+            Assert.That(senders, Is.EquivalentTo(TransportImplementations),
+                "only the named transport may open a connection");
+        }
+
+        [Test]
+        public void The_transport_implementation_still_writes_nothing_to_a_log()
+        {
+            // It handles the bearer token and the login body. A Debug.Log anywhere in it is
+            // one accident away from a password in a player's log file.
+            string file = "Assets/_Game/Scripts/Backend/UnityWebRequestTransport.cs";
+
+            foreach (string code in CodeLines(file))
+            {
+                Assert.That(code, Does.Not.Contain("Debug.Log"), file);
+                Assert.That(code, Does.Not.Contain("Console.Write"), file);
             }
         }
 

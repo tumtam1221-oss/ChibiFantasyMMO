@@ -99,8 +99,7 @@ namespace ChibiFantasy.Backend
 
                 if (!exchange.Reached)
                 {
-                    return ApiResult<AuthenticatedAccount>.Failed(ApiErrorKind.Unreachable,
-                        exchange.Failure);
+                    return ApiResult<AuthenticatedAccount>.Failed(MapFailure(exchange), exchange.Failure);
                 }
 
                 var json = JsonReader.Parse(exchange.Body);
@@ -135,8 +134,7 @@ namespace ChibiFantasy.Backend
 
             if (!exchange.Reached)
             {
-                return ApiResult<IReadOnlyList<ServerInfo>>.Failed(ApiErrorKind.Unreachable,
-                    exchange.Failure);
+                return ApiResult<IReadOnlyList<ServerInfo>>.Failed(MapFailure(exchange), exchange.Failure);
             }
 
             if (!exchange.IsSuccess)
@@ -173,8 +171,7 @@ namespace ChibiFantasy.Backend
 
             if (!exchange.Reached)
             {
-                return ApiResult<IReadOnlyList<ChannelInfo>>.Failed(ApiErrorKind.Unreachable,
-                    exchange.Failure);
+                return ApiResult<IReadOnlyList<ChannelInfo>>.Failed(MapFailure(exchange), exchange.Failure);
             }
 
             if (!exchange.IsSuccess)
@@ -213,7 +210,7 @@ namespace ChibiFantasy.Backend
             if (!exchange.Reached)
             {
                 return ApiResult<IReadOnlyList<CharacterSelectEntry>>.Failed(
-                    ApiErrorKind.Unreachable, exchange.Failure);
+                    MapFailure(exchange), exchange.Failure);
             }
 
             if (!exchange.IsSuccess)
@@ -287,7 +284,7 @@ namespace ChibiFantasy.Backend
 
             if (!exchange.Reached)
             {
-                return ApiResult<bool>.Failed(ApiErrorKind.Unreachable, exchange.Failure);
+                return ApiResult<bool>.Failed(MapFailure(exchange), exchange.Failure);
             }
 
             if (!exchange.IsSuccess)
@@ -331,7 +328,7 @@ namespace ChibiFantasy.Backend
 
             if (!exchange.Reached)
             {
-                return ApiResult<bool>.Failed(ApiErrorKind.Unreachable, exchange.Failure);
+                return ApiResult<bool>.Failed(MapFailure(exchange), exchange.Failure);
             }
 
             if (!exchange.IsSuccess)
@@ -351,6 +348,26 @@ namespace ChibiFantasy.Backend
         /// <see cref="ApiErrorKind"/> names what went wrong, not what a protocol called it.
         /// A 5xx is transient and worth retrying; a 4xx is not.
         /// </remarks>
+        /// <summary>
+        /// Turns a failed wire attempt into a transport-neutral failure kind.
+        /// </summary>
+        /// <remarks>
+        /// The companion to <see cref="MapStatus"/>: that one reads a reply, this one reads
+        /// the absence of a reply. Kept separate because "the server said 500" and "there was
+        /// no server" are different facts, and a caller decides differently about them --
+        /// a timeout is worth retrying immediately, a cancellation is not worth retrying at
+        /// all, and telling them apart is why <see cref="TransportFailureKind"/> exists.
+        /// </remarks>
+        private static ApiErrorKind MapFailure(HttpExchange exchange)
+        {
+            switch (exchange.FailureKind)
+            {
+                case TransportFailureKind.Timeout: return ApiErrorKind.Timeout;
+                case TransportFailureKind.Cancelled: return ApiErrorKind.Cancelled;
+                default: return ApiErrorKind.Unreachable;
+            }
+        }
+
         private static ApiErrorKind MapStatus(int status)
         {
             if (status == 401) return ApiErrorKind.Unauthorized;
