@@ -77,6 +77,10 @@ namespace ChibiFantasy.Data
         [SerializeField] private bool _isTown;
         [SerializeField] private bool _isBossArea;
 
+        [Tooltip("How far from the origin this map extends, in metres. Zero means "
+            + "unbounded: the server will not refuse a position for being far away.")]
+        [SerializeField] private float _movementRadius;
+
         [SerializeField] private MapPortal[] _portals = new MapPortal[0];
         [SerializeField] private DefinitionId _monsterSpawnTable;
         [SerializeField] private DefinitionId _npcPlacement;
@@ -99,6 +103,21 @@ namespace ChibiFantasy.Data
         public bool IsTown => _isTown;
 
         public bool IsBossArea => _isBossArea;
+
+        /// <summary>
+        /// The authored horizontal extent of this map, or zero for unbounded.
+        /// </summary>
+        /// <remarks>
+        /// Read by <c>MovementValidator</c> to refuse a position outside the world. Zero
+        /// rather than a sentinel, because an unauthored map genuinely has no bound and
+        /// refusing every movement on it would be worse than allowing them -- authoring a
+        /// radius is what turns the check on, so existing content keeps working unchanged.
+        ///
+        /// Horizontal only. A map's floor and ceiling are geometry rather than a number
+        /// anybody authors, and a vertical bound invented here would refuse a legitimate
+        /// jump or a staircase.
+        /// </remarks>
+        public float MovementRadius => _movementRadius < 0f ? 0f : _movementRadius;
 
         public MapPortal[] Portals => _portals;
 
