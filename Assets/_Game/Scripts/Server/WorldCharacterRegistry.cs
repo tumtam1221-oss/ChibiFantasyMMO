@@ -131,6 +131,26 @@ namespace ChibiFantasy.Server
 
         public long LastMovementTimestamp { get; internal set; }
 
+        /// <summary>
+        /// The last combat sequence accepted, so a replayed attack is refused.
+        /// </summary>
+        /// <remarks>Kept apart from the movement sequence because the two streams are
+        /// independent: a player moving while not attacking would otherwise advance a
+        /// counter their next attack is measured against.</remarks>
+        public long LastCombatSequence { get; internal set; }
+
+        /// <summary>
+        /// This character's identity in the combat system.
+        /// </summary>
+        /// <remarks>
+        /// Phase 07's <c>ICombatant</c> is keyed by <see cref="InstanceId"/> while a
+        /// character is keyed by <see cref="CharacterId"/>; both are GUID strings, so the
+        /// projection is exact and reversible rather than a mapping table that could drift.
+        /// The same trick <c>AccountIdentity.ToOwnerId</c> uses, for the same reason: one
+        /// identity, seen from two systems.
+        /// </remarks>
+        public InstanceId CombatantId => new InstanceId(Character.Value);
+
         /// <summary>Marks the character as needing a save.</summary>
         public void MarkDirty()
         {
