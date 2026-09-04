@@ -95,3 +95,20 @@ secrets.json
 *.keystore
 *.p12
 !*.keystore.meta
+
+# ---------- PHP backend (Phase 15) ----------
+# Real credentials never enter the repository. The example file must, so it is
+# re-included explicitly: the `.env.*` rule above would otherwise swallow it.
+/backend/.env
+/backend/.env.local
+!/backend/.env.example
+!*.env.example
+
+# Composer dependencies are restored by `composer install`, never committed.
+/backend/vendor/
+/backend/.phpunit.result.cache
+/backend/.phpunit.cache/
+
+# Local database runtime data must never be committed.
+/backend/storage/
+/backend/logs/

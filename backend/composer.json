@@ -1,0 +1,34 @@
+{
+    "name": "chibifantasy/backend",
+    "description": "ChibiFantasyMMO account, session and economy API.",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.2",
+        "ext-pdo": "*",
+        "ext-pdo_mysql": "*",
+        "ext-mbstring": "*",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "ChibiFantasy\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "ChibiFantasy\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "scripts": {
+        "migrate": "php bin/migrate.php",
+        "seed": "php bin/seed.php",
+        "test": "phpunit"
+    }
+}
