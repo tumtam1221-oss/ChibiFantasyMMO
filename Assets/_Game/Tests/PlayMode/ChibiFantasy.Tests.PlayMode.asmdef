@@ -10,6 +10,7 @@
         "ChibiFantasy.Network",
         "ChibiFantasy.Server",
         "ChibiFantasy.Client",
+        "ChibiFantasy.Editor",
         "ChibiFantasy.UI",
         "Unity.TextMeshPro",
         "FishNet.Runtime",

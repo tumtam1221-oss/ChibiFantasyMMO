@@ -12,6 +12,7 @@
         "ChibiFantasy.Server",
         "FishNet.Runtime",
         "ChibiFantasy.Client",
+        "ChibiFantasy.Editor",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],

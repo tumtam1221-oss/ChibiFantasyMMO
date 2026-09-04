@@ -392,7 +392,40 @@ namespace ChibiFantasy.Server
 
             IsListening = _networkManager.ServerManager.StartConnection(_port);
 
+            Announce();
+
             return IsListening;
+        }
+
+        /// <summary>
+        /// Says what this process is, once, when it starts listening.
+        /// </summary>
+        /// <remarks>
+        /// <b>An operator reading a log needs to know four things:</b> which scene the
+        /// process actually opened, whether the content was accepted, whether a world
+        /// exists, and whether anything is listening. Without this line all four can only be
+        /// guessed at from the absence of errors, and "no errors" is also what a server that
+        /// booted the wrong scene entirely looks like.
+        ///
+        /// <b>Nothing sensitive is in it.</b> Scene, port, readiness and content counts --
+        /// no address, no credential, no token, and content faults are ids, which is what
+        /// the person fixing them needs.
+        /// </remarks>
+        private void Announce()
+        {
+            string where = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+
+            string state = _content == null
+                ? "session-only (no world content)"
+                : IsWorldReady
+                    ? "world ready"
+                    : "world NOT ready: " + string.Join("; ", _contentFaults);
+
+            Debug.Log("[world] scene=" + where
+                + " listening=" + IsListening
+                + " port=" + _port
+                + " " + state
+                + " characters=" + (Characters == null ? 0 : Characters.Count));
         }
 
         /// <summary>
