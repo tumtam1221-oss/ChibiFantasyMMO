@@ -116,6 +116,9 @@ final class Api
             $request->method === 'POST' && $path === '/api/session/enter-world'
                 => $this->enterWorld($request, $requestId),
 
+            $request->method === 'POST' && $path === '/api/session/release'
+                => $this->release($request, $requestId),
+
             $request->method === 'GET' && $path === '/api/health'
                 => Response::ok(['status' => 'ok']),
 
@@ -413,6 +416,38 @@ final class Api
         );
 
         return $this->respond($outcome, $requestId);
+    }
+
+    /**
+     * Hands a session back.
+     *
+     * Deliberately not idempotency-keyed. The store records a committed outcome so a
+     * retry replays it, but releasing is already idempotent by its own nature and
+     * recording it would mean a disconnect callback firing twice consumed a request
+     * key for nothing. Retrying this call is safe because the second one finds the
+     * work done, not because a store remembered the first.
+     */
+    private function release(Request $request, string $requestId): Response
+    {
+        $session = $this->requireSession($request);
+
+        if ($session instanceof ApiProblem) {
+            // A token that is already invalid, expired or revoked means the session is
+            // gone, which is the outcome the caller wanted. Reporting a failure would
+            // make a client retry something that has already happened.
+            return Response::ok([
+                'session_ended'      => false,
+                'character_released' => false,
+                'request_id'         => $requestId,
+            ]);
+        }
+
+        $result = $this->flow->release($session);
+
+        $body = $result['result'];
+        $body['request_id'] = $requestId;
+
+        return Response::ok($body);
     }
 
     // ---- helpers -------------------------------------------------------------

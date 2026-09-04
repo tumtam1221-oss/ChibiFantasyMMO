@@ -317,6 +317,52 @@ namespace ChibiFantasy.Backend
             return Select(request, "/api/session/select-character", "character_id", character.Value);
         }
 
+        /// <summary>
+        /// Hands the session back to the authority and forgets it locally.
+        /// </summary>
+        /// <remarks>
+        /// <b>Why a client needs this at all.</b> The authority refuses a second live
+        /// session, so a player who closes the game without giving one up is locked out of
+        /// their own account until it expires. This is how it is given up.
+        ///
+        /// <b>The local token is cleared whatever the server said.</b> If the call failed
+        /// the session may or may not still exist server-side, but this client is done with
+        /// it either way, and holding a token it will not use again is only a way to leak
+        /// one. The authority is the thing that decides the session is over; this decides
+        /// only that it has stopped presenting it.
+        /// </remarks>
+        public ApiResult<bool> ReleaseSession(RequestId request)
+        {
+            string token = SessionToken;
+
+            try
+            {
+                if (string.IsNullOrEmpty(token)) return ApiResult<bool>.Ok(false);
+
+                var body = new JsonWriter().Add("request_id", request.Value).ToJson();
+
+                HttpExchange exchange = _transport.Send("POST", "/api/session/release", body,
+                    token);
+
+                if (!exchange.Reached)
+                {
+                    return ApiResult<bool>.Failed(MapFailure(exchange), exchange.Failure);
+                }
+
+                if (!exchange.IsSuccess)
+                {
+                    return ApiResult<bool>.Failed(MapStatus(exchange.Status),
+                        JsonReader.Parse(exchange.Body).String("code"));
+                }
+
+                return ApiResult<bool>.Ok(JsonReader.Parse(exchange.Body).Bool("session_ended"));
+            }
+            finally
+            {
+                ClearSession();
+            }
+        }
+
         private ApiResult<bool> Select(RequestId request, string path, string field, string value)
         {
             var body = new JsonWriter()

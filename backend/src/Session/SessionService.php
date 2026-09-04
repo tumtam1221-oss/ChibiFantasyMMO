@@ -42,6 +42,95 @@ final class SessionService
     }
 
     /**
+     * Ends a session and puts its character back.
+     *
+     * **Why this endpoint has to exist.** Phase 15 refuses a second live session, on
+     * the deliberate principle that taking somebody's session away is a policy
+     * decision rather than a side effect of signing in again. Without a way to give
+     * one up, that principle locks a player out of their own account for the whole
+     * session lifetime the moment they close the game -- and it made the very first
+     * live integration run fail, correctly, on the second login.
+     *
+     * **Releasing is not the same as expiring.** An expired session ran out of time;
+     * a released one was handed back. Both end up unusable, and a player is owed
+     * different words for them, so the state recorded is Revoked and the reason is
+     * the caller's own request.
+     *
+     * **The character comes back too.** A session that reached the world left its
+     * character marked InWorld. If ending the session did not undo that, the
+     * character would be permanently unplayable -- the exact ownership corruption
+     * disconnect handling exists to prevent. The two changes happen in one
+     * transaction, so a character is never released without its session ending or
+     * the other way round.
+     *
+     * **Idempotent by construction.** Releasing an already-released session is not
+     * an error: a client that retries after a lost reply, and a disconnect callback
+     * that fires twice, must both be harmless. The second call finds nothing to do
+     * and says so.
+     *
+     * @param array<string,mixed> $session
+     * @return array{ok:true,result:array<string,mixed>}
+     */
+    public function release(array $session): array
+    {
+        $sessionId = (string) $session['session_id'];
+        $characterId = (string) ($session['selected_character_id'] ?? '');
+        $wasInWorld = (int) $session['state'] === SessionRepository::ENTERING_WORLD
+            || (int) $session['state'] === SessionRepository::ACTIVE;
+
+        $this->pdo->beginTransaction();
+
+        try {
+            $releasedCharacter = false;
+
+            // The character is locked before it is read, so a world entry racing this
+            // release cannot slip between the check and the write.
+            if ($wasInWorld && $characterId !== '') {
+                $locked = $this->pdo->prepare(
+                    'SELECT character_id, availability, revision
+                     FROM `character`
+                     WHERE character_id = :cid AND account_id = :aid
+                     FOR UPDATE'
+                );
+
+                $locked->execute([':cid' => $characterId, ':aid' => $session['account_id']]);
+
+                $character = $locked->fetch();
+
+                if ($character !== false
+                    && (int) $character['availability'] === CharacterRepository::AVAILABILITY_IN_WORLD) {
+                    $releasedCharacter = $this->characters->updateAvailability(
+                        $characterId,
+                        CharacterRepository::AVAILABILITY_PLAYABLE,
+                        (int) $character['revision']
+                    );
+                }
+            }
+
+            $alreadyEnded = (int) $session['state'] === SessionRepository::REVOKED
+                || (int) $session['state'] === SessionRepository::EXPIRED;
+
+            $ended = $alreadyEnded ? false : $this->sessions->revoke($sessionId);
+
+            $this->pdo->commit();
+
+            return ['ok' => true, 'result' => [
+                'session_id'        => $sessionId,
+                'state'             => SessionRepository::REVOKED,
+                'session_ended'     => $ended,
+                'character_id'      => $characterId,
+                'character_released' => $releasedCharacter,
+            ]];
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
      * Resolves a bearer token to a usable session.
      *
      * Returns an ApiProblem rather than a boolean so every endpoint reports the
