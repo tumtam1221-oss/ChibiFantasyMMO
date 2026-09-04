@@ -91,10 +91,18 @@ namespace ChibiFantasy.Gameplay
         /// <summary>
         /// Supplies freshly recomputed ceilings and stats.
         /// </summary>
-        /// <remarks>Clamps the resources into the new range through the existing
+        /// <remarks>
+        /// Clamps the resources into the new range through the existing
         /// <see cref="CharacterResourceState.ClampTo"/>, so a dropped maximum behaves here
-        /// exactly as it does everywhere else rather than leaving health above its
-        /// ceiling.</remarks>
+        /// exactly as it does everywhere else rather than leaving health above its ceiling.
+        ///
+        /// <b>An unspecified ceiling clamps nothing.</b> All-zero limits mean the derived
+        /// stats have not been computed yet, not that this character may have no health --
+        /// see <see cref="ResourceLimits.IsSpecified"/>. Clamping against them would take a
+        /// player who loaded with 75 health and put them into the world dead, and nothing
+        /// downstream could tell that from a real death. The limits are still recorded, so
+        /// the combatant reports honestly that it does not know them yet.
+        /// </remarks>
         public void SetLimits(ResourceLimits limits, DerivedStatsResult derived = null)
         {
             _limits = limits;
@@ -103,6 +111,8 @@ namespace ChibiFantasy.Gameplay
             {
                 _derived = derived;
             }
+
+            if (!_limits.IsSpecified) return;
 
             _character.Resources.ClampTo(_limits);
         }

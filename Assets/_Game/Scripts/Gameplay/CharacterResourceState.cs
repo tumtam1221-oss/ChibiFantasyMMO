@@ -57,8 +57,19 @@ namespace ChibiFantasy.Gameplay
             }
 
             CharacterId = characterId;
-            _currentHealth = Clamp(currentHealth, limits.MaxHealth);
-            _currentMana = Clamp(currentMana, limits.MaxMana);
+
+            // An unspecified ceiling is "not computed yet", not "zero" -- see
+            // ResourceLimits.IsSpecified. Clamping a loaded seventy-five health against it
+            // would construct a character who is already dead, and nothing downstream could
+            // tell that from a real death.
+            _currentHealth = limits.IsSpecified
+                ? Clamp(currentHealth, limits.MaxHealth)
+                : NonNegative(currentHealth);
+
+            _currentMana = limits.IsSpecified
+                ? Clamp(currentMana, limits.MaxMana)
+                : NonNegative(currentMana);
+
             _revision = Revision.Initial;
         }
 
@@ -113,6 +124,10 @@ namespace ChibiFantasy.Gameplay
         /// </remarks>
         public void ClampTo(ResourceLimits limits)
         {
+            // Nothing to clamp against. The ceilings arrive a moment later, from the
+            // authored formula, and that is the first figure worth obeying.
+            if (!limits.IsSpecified) return;
+
             Apply(Clamp(_currentHealth, limits.MaxHealth), Clamp(_currentMana, limits.MaxMana));
         }
 
@@ -126,6 +141,12 @@ namespace ChibiFantasy.Gameplay
         public bool IsManaFull(ResourceLimits limits)
         {
             return _currentMana >= limits.MaxMana;
+        }
+
+        /// <summary>A resource is never negative, whatever the ceiling is.</summary>
+        private static int NonNegative(int value)
+        {
+            return value < 0 ? 0 : value;
         }
 
         private void Apply(int health, int mana)

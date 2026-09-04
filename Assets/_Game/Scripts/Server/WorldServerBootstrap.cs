@@ -31,6 +31,11 @@ namespace ChibiFantasy.Server
     /// that an HTTP transport exists and that a world exists. Everything either side of it
     /// is written against an interface, which is why the coordinator can be tested without
     /// a socket and the authority without a world.
+    ///
+    /// <b>It owns the world's only clock.</b> <see cref="WorldSimulation"/> holds the
+    /// authorities and the order they run in; this drives it once per frame. There is
+    /// exactly one such loop in the project by design -- a second one would advance the same
+    /// timers twice and expire a buff in half its authored duration.
     /// </remarks>
     [DisallowMultipleComponent]
     public sealed class WorldServerBootstrap : MonoBehaviour
@@ -78,6 +83,18 @@ namespace ChibiFantasy.Server
         public WorldConnectionRegistry Registry { get; private set; }
 
         public WorldEntryCoordinator Coordinator { get; private set; }
+
+        /// <summary>
+        /// The world's authorities and the order they tick in, or null on a session-only
+        /// server.
+        /// </summary>
+        /// <remarks>Supplied through <see cref="UseWorld"/> rather than built here: what
+        /// content a world runs and which authorities it composes is the composition root's
+        /// decision, and a login-only process legitimately runs none of it.</remarks>
+        public WorldSimulation Simulation { get; private set; }
+
+        /// <summary>How many world ticks have run. For diagnostics.</summary>
+        public long Ticks => Simulation == null ? 0L : Simulation.Ticks;
 
         public ServerId Server => new ServerId(_serverId);
 
@@ -133,6 +150,40 @@ namespace ChibiFantasy.Server
 
             _networkManager.ServerManager.SetAuthenticator(_authenticator);
             _networkManager.ServerManager.OnRemoteConnectionState += OnRemoteConnectionState;
+        }
+
+        /// <summary>
+        /// Supplies the composed world this server is to run.
+        /// </summary>
+        /// <remarks>
+        /// Optional, and deliberately so. This process is a session authority first: it can
+        /// admit players, place them and release them without simulating anything, which is
+        /// what it did before a world existed to run. Given one, it becomes the world's
+        /// clock as well.
+        /// </remarks>
+        public void UseWorld(WorldSimulation simulation)
+        {
+            Simulation = simulation;
+        }
+
+        /// <summary>
+        /// Advances the world once per frame.
+        /// </summary>
+        /// <remarks>
+        /// <b>The only place the world's time comes from.</b> Unity's frame delta, handed
+        /// straight through -- every authority underneath takes elapsed seconds as an
+        /// argument and reads no clock of its own, which is what makes each of them
+        /// reproducible in a test and all of them agree here.
+        ///
+        /// A server that is not listening does not advance: a world nobody is in has no
+        /// time to pass, and ticking one would expire the buffs of players who have not
+        /// arrived yet.
+        /// </remarks>
+        private void Update()
+        {
+            if (!IsListening || Simulation == null) return;
+
+            Simulation.Tick(Time.deltaTime);
         }
 
         /// <summary>Supplies the authored content this server places arrivals against.</summary>

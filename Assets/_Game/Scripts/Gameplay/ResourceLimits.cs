@@ -47,6 +47,23 @@ namespace ChibiFantasy.Gameplay
         public static ResourceLimits None => default;
 
         /// <summary>
+        /// Whether these ceilings have actually been computed.
+        /// </summary>
+        /// <remarks>
+        /// <b>All-zero means unknown, not zero.</b> A character whose maximum health is
+        /// genuinely zero does not exist -- every path that produces real limits reads them
+        /// out of an authored formula, and a formula that yields nothing is a content fault
+        /// the validation rules report. What all-zero actually means in practice is "the
+        /// derived stats have not been calculated yet", which is the state a combatant is
+        /// constructed in.
+        ///
+        /// The distinction matters because clamping a loaded character's resources against
+        /// an unknown ceiling silently kills them: a player with 75 health enters the world
+        /// dead, and nothing downstream can tell that from a real death.
+        /// </remarks>
+        public bool IsSpecified => MaxHealth > 0 || MaxMana > 0;
+
+        /// <summary>
         /// Reads the ceilings out of a derived-stat result.
         /// </summary>
         /// <remarks>

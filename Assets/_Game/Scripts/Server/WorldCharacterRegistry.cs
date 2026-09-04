@@ -355,7 +355,7 @@ namespace ChibiFantasy.Server
         /// so a second spawn attempt costs no round trip.
         /// </remarks>
         public WorldSpawnResult Spawn(int connectionId, in WorldAdmission admission,
-            ResourceLimits limits, CombatTeam team = default)
+            ResourceLimits limits = default, CombatTeam team = default)
         {
             if (!admission.IsAdmitted || !admission.HasCharacter)
             {
