@@ -52,8 +52,16 @@ namespace ChibiFantasy.Tests.PlayMode
 
         private sealed class FakeStore : ICharacterStateStore
         {
-            public CharacterPersistenceResult Load(SessionId s) =>
-                CharacterPersistenceResult.Failed(CharacterPersistenceFailure.NotOwned);
+            /// <summary>Rows a test seeded. Empty means no character can enter.</summary>
+            public readonly Dictionary<string, PersistedCharacter> Rows =
+                new Dictionary<string, PersistedCharacter>();
+
+            public CharacterPersistenceResult Load(SessionId s)
+            {
+                return Rows.TryGetValue(s.Value, out PersistedCharacter row)
+                    ? CharacterPersistenceResult.Loaded(row)
+                    : CharacterPersistenceResult.Failed(CharacterPersistenceFailure.NotOwned);
+            }
 
             public CharacterPersistenceResult Save(SessionId s, PersistedCharacter c, int r) =>
                 CharacterPersistenceResult.Saved(r + 1);
@@ -66,6 +74,9 @@ namespace ChibiFantasy.Tests.PlayMode
         private MonsterWorldRuntime _runtime;
         private MonsterReplicationService _replication;
         private DefinitionRegistry<MapDefinition> _maps;
+        private WorldCharacterRegistry _players;
+        private FakeStore _store;
+        private DefinitionRegistry<MonsterDefinition> _monsters;
         private readonly List<Object> _created = new List<Object>();
         private ushort _port;
 
@@ -122,15 +133,19 @@ namespace ChibiFantasy.Tests.PlayMode
             _clientObject.SetActive(true);
 
             var spawns = new DefinitionRegistry<SpawnPointDefinition>();
-            var monsters = new DefinitionRegistry<MonsterDefinition>();
-            monsters.Register(Monster(Grunt));
+            spawns.Register(PlayerSpawn());
+
+            _monsters = new DefinitionRegistry<MonsterDefinition>();
+            _monsters.Register(Monster(Grunt));
 
             _maps = new DefinitionRegistry<MapDefinition>();
             _maps.Register(Map(HomeMap));
 
-            _runtime = new MonsterWorldRuntime(
-                new WorldCharacterRegistry(new FakeStore(), spawns),
-                monsters, new DefinitionId(MaxHp), new CombatTeam(2));
+            _store = new FakeStore();
+            _players = new WorldCharacterRegistry(_store, spawns);
+
+            _runtime = new MonsterWorldRuntime(_players, _monsters,
+                new DefinitionId(MaxHp), new CombatTeam(2));
 
             var prefab = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(MonsterPrefabPath);
 
@@ -157,6 +172,21 @@ namespace ChibiFantasy.Tests.PlayMode
             }
 
             _created.Clear();
+        }
+
+        /// <summary>A player spawn on the monster's map, so a character can enter.</summary>
+        private SpawnPointDefinition PlayerSpawn()
+        {
+            var spawn = ScriptableObject.CreateInstance<SpawnPointDefinition>();
+
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"spawn.home\"},\"_map\":{\"_value\":\""
+                + HomeMap + "\"},\"_spawnType\":" + (int)SpawnType.Player
+                + ",\"_x\":3,\"_y\":0,\"_z\":4}", spawn);
+
+            _created.Add(spawn);
+
+            return spawn;
         }
 
         private MapDefinition Map(string id)
@@ -405,6 +435,205 @@ namespace ChibiFantasy.Tests.PlayMode
 
             Assert.That(ClientObserved(), Is.Null);
             Assert.That(_replication.SpawnedCount, Is.Zero);
+        }
+
+        // ---- 18.1: a real kill, over a real socket -------------------------------------------
+
+        private const string Atk = "stat.atk";
+        private const string Def = "stat.def";
+
+        /// <summary>Puts the fixture character in the world, standing on the monster.</summary>
+        private LivingCharacter EnterCharacter()
+        {
+            _store.Rows["session-a"] = new PersistedCharacter(
+                new CharacterId("char-a"), new AccountId("acc-a"), new ServerId("srv-1"),
+                "Ayla", 2, 5, 0, 100, 50, new DefinitionId("class.novice"), default,
+                new DefinitionId(HomeMap), default,
+                new[]
+                {
+                    new PersistedStat(new DefinitionId(MaxHp), 100),
+                    new PersistedStat(new DefinitionId(Atk), 30),
+                    new PersistedStat(new DefinitionId(Def), 5),
+                },
+                null, null, 1);
+
+            WorldSpawnResult spawned = _players.Spawn(1,
+                WorldAdmission.Admitted(new SessionId("session-a"), new AccountId("acc-a"),
+                    new CharacterId("char-a"), new ServerId("srv-1"), new ChannelId("ch-1"),
+                    new DefinitionId(HomeMap), new Revision(1), new Revision(1),
+                    SessionState.EnteringWorld),
+                new ResourceLimits(100, 50), new CombatTeam(1));
+
+            Assert.That(spawned.IsSpawned, Is.True, spawned.Detail);
+
+            return spawned.Character;
+        }
+
+        /// <summary>
+        /// The production composition: a command boundary, the runtime, and a reward
+        /// authority.
+        /// </summary>
+        /// <remarks>The reward authority is not optional in practice even on a server that
+        /// pays nothing, because it owns the defeat claim -- and Phase 10 deliberately
+        /// refuses to retire a corpse whose defeat nobody claimed, so a world composed
+        /// without one accumulates monsters that are dead and will never go away.</remarks>
+        private ServerCombatPipeline NewPipeline()
+        {
+            var commands = new CombatCommandAuthority(_players, _ => true, _runtime);
+
+            var rewards = new MonsterRewardAuthority(_runtime, _players, Curve());
+
+            return new ServerCombatPipeline(commands, _runtime, rewards,
+                BasicAttackRules.Melee(new DefinitionId(Atk), new DefinitionId(Def), 1, 5f));
+        }
+
+        /// <summary>A level curve, so the reward authority can apply what it grants.</summary>
+        private CharacterProgressionDefinition Curve()
+        {
+            var definition = ScriptableObject.CreateInstance<CharacterProgressionDefinition>();
+
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"progression.playmode\"},\"_minLevel\":1,"
+                + "\"_maxLevel\":10,\"_experienceToNextLevel\":[100,100,100,100,100,100,"
+                + "100,100,100]}", definition);
+
+            _created.Add(definition);
+
+            return definition;
+        }
+
+        [UnityTest]
+        public IEnumerator AServerSideAttackIsVisibleToTheClientAsLostHealth()
+        {
+            yield return StartServerAndClient();
+
+            LivingCharacter attacker = EnterCharacter();
+
+            _runtime.AddSpawnPoint(Nest());
+            _runtime.PopulateAll();
+            _replication.Synchronise();
+
+            yield return Until(() => ClientObserved() != null);
+
+            MonsterNetworkEntity observed = ClientObserved();
+
+            Assert.That(observed.Health, Is.EqualTo(100), "precondition");
+
+            LivingMonster monster = _runtime.All()[0];
+
+            ServerCombatResult result = NewPipeline().Execute(1,
+                new CombatCommand(default, monster.Instance, default, 0, 1));
+
+            Assert.That(result.IsAccepted, Is.True, result.ToString());
+            Assert.That(result.Damage, Is.GreaterThan(0));
+
+            _replication.Synchronise();
+
+            yield return Until(() => ClientObserved() != null
+                && ClientObserved().Health < 100);
+
+            Assert.That(ClientObserved().Health,
+                Is.EqualTo(monster.State.CurrentHealth),
+                "the client sees the health the server decided, over a real socket");
+            Assert.That(attacker.Combatant.CombatantId.Value, Is.EqualTo("char-a"));
+        }
+
+        [UnityTest]
+        public IEnumerator AKilledMonsterDespawnsOnTheClientThroughTheExistingLifecycle()
+        {
+            yield return StartServerAndClient();
+
+            EnterCharacter();
+
+            // A nest with a respawn delay, so what the client stops seeing is the corpse
+            // rather than a replacement arriving in the same tick. The default fixture nest
+            // refills immediately, which is correct behaviour and would hide this.
+            _runtime.AddSpawnPoint(new MonsterSpawnPoint(new DefinitionId(Grunt),
+                new CombatPosition(3f, 0f, 4f), 0f, 1, 30f, new DefinitionId(HomeMap)));
+
+            _runtime.PopulateAll();
+            _replication.Synchronise();
+
+            yield return Until(() => ClientObserved() != null);
+
+            LivingMonster monster = _runtime.All()[0];
+            ServerCombatPipeline pipeline = NewPipeline();
+
+            // Swing until it dies. Nothing here decides when that is: the damage formula
+            // does, and the monster's authored health does.
+            var sequence = 0;
+
+            while (monster.IsAlive && sequence < 20)
+            {
+                pipeline.Execute(1, new CombatCommand(default, monster.Instance, default, 0,
+                    ++sequence));
+            }
+
+            Assert.That(monster.IsAlive, Is.False, "it never died");
+            Assert.That(monster.State.IsDefeatClaimed, Is.True,
+                "the defeat was claimed by the pipeline, not by a tick");
+
+            // The existing lifecycle retires it, and replication follows the runtime.
+            _runtime.Tick(0.1f);
+            _replication.Synchronise();
+
+            yield return Until(() => ClientObserved() == null);
+
+            Assert.That(ClientObserved(), Is.Null,
+                "the client no longer sees a monster the server retired");
+            Assert.That(_runtime.AliveCount, Is.Zero);
+            Assert.That(_replication.SpawnedCount, Is.Zero);
+        }
+
+        [UnityTest]
+        public IEnumerator AClientWritingHealthChangesNothingAboutTheFight()
+        {
+            yield return StartServerAndClient();
+
+            EnterCharacter();
+
+            _runtime.AddSpawnPoint(Nest());
+            _runtime.PopulateAll();
+            _replication.Synchronise();
+
+            yield return Until(() => ClientObserved() != null);
+
+            LivingMonster monster = _runtime.All()[0];
+
+            NewPipeline().Execute(1,
+                new CombatCommand(default, monster.Instance, default, 0, 1));
+
+            int serverHealth = monster.State.CurrentHealth;
+
+            // The client tries the only thing it could: the server-guarded publisher. The
+            // [Server] attribute refuses it, and server-only write permission would keep
+            // any local change local anyway.
+            LogAssert.ignoreFailingMessages = true;
+
+            try
+            {
+                ClientObserved().ServerPublishState(0f, 0f, 0f, 100);
+            }
+            catch (System.Exception)
+            {
+                // Refused is the correct outcome.
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = false;
+            }
+
+            yield return null;
+
+            _replication.Synchronise();
+
+            yield return Until(() => ClientObserved() != null
+                && ClientObserved().Health == serverHealth);
+
+            Assert.That(monster.State.CurrentHealth, Is.EqualTo(serverHealth),
+                "a client cannot heal what the server hurt");
+            Assert.That(ClientObserved().Health, Is.EqualTo(serverHealth),
+                "and what it observes is still the server's number");
         }
 
         // ---- lifecycle -------------------------------------------------------------------------------
