@@ -79,7 +79,8 @@ namespace ChibiFantasy.Server
     {
         internal LivingCharacter(int connectionId, SessionId session, AccountId account,
             ServerId server, ChannelId channel, Character character, CharacterSkillsState skills,
-            CharacterLocationState location, SpawnPointDefinition spawn, int saveRevision)
+            CharacterLocationState location, SpawnPointDefinition spawn, int saveRevision,
+            CombatTeam team)
         {
             ConnectionId = connectionId;
             Session = session;
@@ -91,6 +92,16 @@ namespace ChibiFantasy.Server
             Location = location;
             Spawn = spawn;
             SaveRevision = saveRevision;
+
+            // Phase 07's own combatant, not a server-side copy of one. Its CombatantId is
+            // the character id projected onto InstanceId -- the same projection this class
+            // makes -- so self-targeting and id comparison work without a mapping table.
+            //
+            // Derived stats are null: CharacterCombatant falls back to the character's base
+            // stats, which is the honest answer until equipment modifiers are loaded. A
+            // fabricated derived block would look authoritative and be wrong.
+            Combatant = new CharacterCombatant(character, null, ResourceLimits.None, team);
+            Combatant.Position = location == null ? default : location.Position;
         }
 
         public int ConnectionId { get; internal set; }
@@ -115,6 +126,17 @@ namespace ChibiFantasy.Server
         public CharacterLocationState Location { get; }
 
         public SpawnPointDefinition Spawn { get; }
+
+        /// <summary>
+        /// This character as the combat system sees it.
+        /// </summary>
+        /// <remarks>
+        /// Phase 07's <see cref="CharacterCombatant"/>, held rather than reimplemented. It is
+        /// what makes a player targetable by a monster and resolvable by
+        /// <c>CombatCommandAuthority</c> -- both of which need an <c>ICombatant</c>, and
+        /// neither of which should be handed a second model of the same character.
+        /// </remarks>
+        public CharacterCombatant Combatant { get; }
 
         public CharacterId Character => Domain.Identity.CharacterId;
 
@@ -181,6 +203,10 @@ namespace ChibiFantasy.Server
         {
             LastMovementSequence = sequence;
             LastMovementTimestamp = timestampMilliseconds;
+
+            // The combatant reads its position from here rather than holding a second one.
+            // Letting them drift would mean a monster chasing where a player used to be.
+            if (Combatant != null && Location != null) Combatant.Position = Location.Position;
         }
 
         /// <summary>
@@ -259,7 +285,7 @@ namespace ChibiFantasy.Server
         /// so a second spawn attempt costs no round trip.
         /// </remarks>
         public WorldSpawnResult Spawn(int connectionId, in WorldAdmission admission,
-            ResourceLimits limits)
+            ResourceLimits limits, CombatTeam team = default)
         {
             if (!admission.IsAdmitted || !admission.HasCharacter)
             {
@@ -315,7 +341,9 @@ namespace ChibiFantasy.Server
 
             var living = new LivingCharacter(connectionId, admission.Session, admission.Account,
                 admission.Server, admission.Channel, domain.Character, domain.Skills, location,
-                spawn, loaded.Character.SaveRevision);
+                spawn, loaded.Character.SaveRevision, team);
+
+            living.Combatant.SetLimits(limits);
 
             _byConnection[connectionId] = living;
             _byCharacter[living.Character.Value] = living;
