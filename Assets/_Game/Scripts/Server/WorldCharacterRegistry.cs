@@ -139,6 +139,12 @@ namespace ChibiFantasy.Server
         /// counter their next attack is measured against.</remarks>
         public long LastCombatSequence { get; internal set; }
 
+        /// <summary>The last travel sequence accepted, so a replayed portal use is refused.</summary>
+        /// <remarks>A third independent stream, for the same reason as the other two: a
+        /// player who travels must not advance the counter their next attack is measured
+        /// against.</remarks>
+        public long LastTravelSequence { get; internal set; }
+
         /// <summary>
         /// This character's identity in the combat system.
         /// </summary>
@@ -155,6 +161,37 @@ namespace ChibiFantasy.Server
         public void MarkDirty()
         {
             IsDirty = true;
+        }
+
+        /// <summary>
+        /// Records that a movement was accepted, so the next one must be newer.
+        /// </summary>
+        /// <remarks>
+        /// The counterpart to <c>MovementValidator</c>, which reads these two values and
+        /// does not own them. Kept as one call rather than two settable properties so a
+        /// caller cannot advance the sequence without advancing the clock -- the pair only
+        /// means anything together, and a sequence that moved without a timestamp would let
+        /// the next move claim an arbitrary gap.
+        ///
+        /// Movement does not mark the character dirty. A position is saved at lifecycle
+        /// points from the location state; marking dirty on every step would defeat the
+        /// whole point of not writing every frame.
+        /// </remarks>
+        public void RecordMovement(long sequence, long timestampMilliseconds)
+        {
+            LastMovementSequence = sequence;
+            LastMovementTimestamp = timestampMilliseconds;
+        }
+
+        /// <summary>
+        /// Forgets the movement stream, for a character that has just arrived somewhere new.
+        /// </summary>
+        /// <remarks>Positions measured against the old map would look like enormous deltas
+        /// on the new one, and every legitimate move would be refused as a speed hack.</remarks>
+        public void ResetMovementStream()
+        {
+            LastMovementSequence = 0;
+            LastMovementTimestamp = 0;
         }
 
         /// <summary>Records that a save succeeded at a new revision.</summary>

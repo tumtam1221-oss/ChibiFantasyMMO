@@ -481,6 +481,36 @@ namespace ChibiFantasy.Tests.EditMode
             }
         }
 
+        /// <summary>
+        /// The files allowed to start a journey or an interaction.
+        /// </summary>
+        /// <remarks>
+        /// Phase 11 permitted exactly one: the world UI controller, which was the command
+        /// boundary when the client decided its own travel. Phase 17 made the server
+        /// authoritative, so there is now a second and it is the one that matters -- a
+        /// client's request reaches <c>TravelCommandAuthority</c> and the server calls the
+        /// travel rules.
+        ///
+        /// The property this test protects is unchanged: travel is not scattered. Naming the
+        /// new boundary keeps that check meaningful, where deleting the test would not.
+        /// </remarks>
+        private static readonly string[] TravelCommandBoundaries =
+        {
+            // The client-side flow, still used by the prototype and offline scenes.
+            "/Client/UI/WorldUiController.cs",
+
+            // The authoritative one. A client asks; this decides.
+            "/Server/TravelCommandAuthority.cs",
+        };
+
+        [Test]
+        public void Exactly_two_files_may_start_a_journey()
+        {
+            // One boundary per side of the wire, and no more. A third entry must be a
+            // deliberate decision somebody makes by editing this test.
+            Assert.That(TravelCommandBoundaries.Length, Is.EqualTo(2));
+        }
+
         [Test]
         public void Travel_and_interaction_happen_only_in_the_world_controller()
         {
@@ -490,7 +520,15 @@ namespace ChibiFantasy.Tests.EditMode
             foreach (string file in files)
             {
                 string normalized = file.Replace('\\', '/');
-                if (normalized.Contains("/Client/UI/WorldUiController.cs")) continue;
+
+                bool isBoundary = false;
+
+                foreach (string boundary in TravelCommandBoundaries)
+                {
+                    if (normalized.Contains(boundary)) isBoundary = true;
+                }
+
+                if (isBoundary) continue;
                 if (normalized.Contains("/Gameplay/")) continue;
 
                 string source = System.IO.File.ReadAllText(file);
