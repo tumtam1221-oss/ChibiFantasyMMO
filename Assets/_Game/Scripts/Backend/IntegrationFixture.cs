@@ -1,3 +1,15 @@
+// Editor-only, and it has to be.
+//
+// This type reads a development path and holds a password in memory. Neither belongs
+// in a shipped player build, where the file it looks for does not exist and the only
+// effect could be a confusing failure -- or, worse, a credential in a build somebody
+// ships. The guard is a compile-time one rather than a runtime check because the
+// surest way for code not to run in production is for it not to be there.
+//
+// Everything that uses it is in the EditMode test assembly, which is itself
+// editor-only, so nothing is lost.
+#if UNITY_EDITOR
+
 using System.IO;
 
 namespace ChibiFantasy.Backend
@@ -117,3 +129,5 @@ namespace ChibiFantasy.Backend
         }
     }
 }
+
+#endif

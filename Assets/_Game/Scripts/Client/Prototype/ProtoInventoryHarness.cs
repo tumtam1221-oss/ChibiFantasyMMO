@@ -122,8 +122,36 @@ namespace ChibiFantasy.Client.Prototype
 
         public bool IsWindowOpen { get; private set; }
 
+        /// <summary>
+        /// Refuses to run outside the editor.
+        /// </summary>
+        /// <remarks>
+        /// This harness authors a prototype world from inspector fields, including a
+        /// hard-coded owner and character id. Those are correct for a prototype scene and
+        /// wrong for anything a player runs: a production character's identity comes from
+        /// the account database, never from a literal.
+        ///
+        /// The component is left in place rather than deleted -- the prototype scene
+        /// references it, and rewriting prototype architecture is not what this phase is
+        /// for -- but it disables itself in a build, so the literals below cannot reach a
+        /// production runtime.
+        /// </remarks>
+        private void Awake()
+        {
+            if (Application.isEditor) return;
+
+            Debug.LogWarning("[proto] ProtoInventoryHarness is a prototype-only component "
+                + "and does not run outside the editor.");
+
+            enabled = false;
+        }
+
         private void Start()
         {
+            // Awake disabled this outside the editor; Start still runs on the frame a
+            // component is disabled in, so the guard is repeated rather than assumed.
+            if (!Application.isEditor) return;
+
             Register();
             BuildContainers();
             BuildPresentation();
