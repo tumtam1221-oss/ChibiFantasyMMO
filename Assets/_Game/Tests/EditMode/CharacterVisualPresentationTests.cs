@@ -24,10 +24,10 @@ namespace ChibiFantasy.Tests.EditMode
     internal sealed class CharacterVisualPresentationTests
     {
         private const string MaleModel =
-            "Assets/_Game/Art/Characters/Validation/Male/CHR_Base_Male_LOD0.fbx";
+            "Assets/_Game/Art/Characters/Production/Male/CHR_Base_Male_LOD0.fbx";
 
         private const string FemaleModel =
-            "Assets/_Game/Art/Characters/Validation/Female/CHR_Base_Female_LOD0.fbx";
+            "Assets/_Game/Art/Characters/Production/Female/CHR_Base_Female_LOD0.fbx";
 
         private const string CataloguePath =
             "Assets/_Game/Prefabs/Presentation/CharacterVisualCatalogue.asset";
@@ -108,6 +108,100 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(UnityEditor.AssetDatabase.GetAssetPath(catalogue.Locomotion),
                 Is.EqualTo("Assets/_Game/Prefabs/Prototype/Proto_Locomotion.controller"),
                 "the existing validated controller, not a second one");
+        }
+
+        // ---- the shipped assets are actually shipped -----------------------------------------
+
+        [Test]
+        public void NothingTheGameShipsResolvesIntoTheValidationFolder()
+        {
+            // The catalogue and the character prefab are the two roots a running client
+            // pulls character art through. Everything either of them reaches, transitively,
+            // has to be content a fresh clone actually receives -- and the validation folder
+            // is deliberately not that. A reference into it is a model that exists on the
+            // machine it was authored on and nowhere else.
+            var offenders = new List<string>();
+
+            foreach (string root in new[] { CataloguePath, CharacterPrefab })
+            {
+                foreach (string dependency in
+                    UnityEditor.AssetDatabase.GetDependencies(root, true))
+                {
+                    if (dependency.Replace("\\", "/").Contains("/Validation/"))
+                    {
+                        offenders.Add(root + " -> " + dependency);
+                    }
+                }
+            }
+
+            Assert.That(offenders, Is.Empty,
+                "a shipped asset reaching into the validation folder is a missing model on "
+                + "every machine but one");
+        }
+
+        [Test]
+        public void EveryCharacterAssetTheGameNeedsExistsWhereItSaysItDoes()
+        {
+            CharacterVisualCatalogue catalogue = Catalogue();
+
+            Assert.That(catalogue.Male, Is.Not.Null, "no approved male model is configured");
+            Assert.That(catalogue.Female, Is.Not.Null,
+                "no approved female model is configured");
+            Assert.That(catalogue.Fallback, Is.Not.Null);
+            Assert.That(catalogue.Locomotion, Is.Not.Null);
+
+            foreach (string path in RequiredCharacterAssets())
+            {
+                Assert.That(System.IO.File.Exists(path), Is.True, "missing " + path);
+                Assert.That(System.IO.File.Exists(path + ".meta"), Is.True,
+                    "missing importer settings for " + path
+                    + " -- without the .meta the avatar is regenerated and the humanoid "
+                    + "mapping is whatever Unity guesses");
+                Assert.That(path, Does.Not.Contain("/Validation/"), path);
+            }
+        }
+
+        [Test]
+        public void TheCharacterPrefabStillResolvesTheCatalogueAfterTheAssetsMoved()
+        {
+            var presenter = Load(CharacterPrefab).GetComponent<CharacterVisualPresenter>();
+
+            var catalogue = new UnityEditor.SerializedObject(presenter)
+                .FindProperty("_catalogue").objectReferenceValue
+                as CharacterVisualCatalogue;
+
+            Assert.That(catalogue, Is.Not.Null);
+            Assert.That(catalogue.Male, Is.Not.Null,
+                "the prefab reaches a catalogue whose male model no longer resolves");
+            Assert.That(catalogue.Female, Is.Not.Null);
+
+            // And the models it reaches are the humanoids the animator expects.
+            Assert.That(catalogue.Male.GetComponentInChildren<SkinnedMeshRenderer>(true),
+                Is.Not.Null);
+            Assert.That(catalogue.Female.GetComponentInChildren<SkinnedMeshRenderer>(true),
+                Is.Not.Null);
+        }
+
+        /// <summary>
+        /// Every file the shipped character presentation cannot run without.
+        /// </summary>
+        /// <remarks>The minimum set, not the folder: the two approved models, their body
+        /// textures, and the walk clip the existing locomotion controller blends to. The idle
+        /// clip and the controller itself already live in tracked content.</remarks>
+        private static string[] RequiredCharacterAssets()
+        {
+            const string production = "Assets/_Game/Art/Characters/Production/";
+
+            return new[]
+            {
+                production + "Male/CHR_Base_Male_LOD0.fbx",
+                production + "Male/Textures/CHR_Base_Male_BodyColor_2K.png",
+                production + "Male/Textures/CHR_Base_Male_BodyColor_2K_Retopo.png",
+                production + "Female/CHR_Base_Female_LOD0.fbx",
+                production + "Female/Textures/CHR_Base_Female_BodyColor_2K.png",
+                production + "Female/Textures/CHR_Base_Female_BodyColor_2K_Retopo.png",
+                production + "Animation/EXT_Walk_Loop_VALIDATION.anim",
+            };
         }
 
         // ---- walking ------------------------------------------------------------------------

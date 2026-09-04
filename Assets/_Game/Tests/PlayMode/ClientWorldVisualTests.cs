@@ -603,7 +603,7 @@ namespace ChibiFantasy.Tests.PlayMode
             // The mapping this rig has previously lost. Checked on the imported asset, which
             // is what the instance above was built from.
             var importer = UnityEditor.AssetImporter.GetAtPath(
-                "Assets/_Game/Art/Characters/Validation/Female/CHR_Base_Female_LOD0.fbx")
+                "Assets/_Game/Art/Characters/Production/Female/CHR_Base_Female_LOD0.fbx")
                 as UnityEditor.ModelImporter;
 
             Assert.That(importer, Is.Not.Null);
