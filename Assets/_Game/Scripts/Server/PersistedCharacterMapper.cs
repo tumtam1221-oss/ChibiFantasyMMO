@@ -223,7 +223,8 @@ namespace ChibiFantasy.Server
         /// </remarks>
         public static PersistedCharacter ToPersisted(Character character,
             CharacterSkillsState skills, CharacterLocationState location, ServerId server,
-            AccountId account, int saveRevision, ItemContainerState inventory = null)
+            AccountId account, int saveRevision, ItemContainerState inventory = null,
+            CharacterEquipmentState equipment = null)
         {
             if (character == null) return null;
 
@@ -279,7 +280,7 @@ namespace ChibiFantasy.Server
                 appearance,
                 learned,
                 saveRevision,
-                ItemsOf(inventory),
+                ItemsOf(inventory, equipment),
                 inventory == null ? 0 : inventory.Capacity);
         }
 
@@ -295,29 +296,85 @@ namespace ChibiFantasy.Server
         /// expects to find it that way. Recomputing positions by re-adding everything on
         /// load would silently reorder it.
         /// </remarks>
-        private static IReadOnlyList<PersistedItem> ItemsOf(ItemContainerState inventory)
+        private static IReadOnlyList<PersistedItem> ItemsOf(ItemContainerState inventory,
+            CharacterEquipmentState equipment)
         {
-            if (inventory == null) return System.Array.Empty<PersistedItem>();
-
             var items = new List<PersistedItem>();
 
-            IReadOnlyList<ItemSlot> slots = inventory.Slots;
-
-            for (int i = 0; i < slots.Count; i++)
+            if (inventory != null)
             {
-                GameInstance content = slots[i].Content;
+                IReadOnlyList<ItemSlot> slots = inventory.Slots;
 
-                if (content == null) continue;
+                for (int i = 0; i < slots.Count; i++)
+                {
+                    GameInstance content = slots[i].Content;
 
-                // Quantity lives on a stackable ItemInstance; anything else is a single
-                // object, which is the same rule the container itself applies.
-                int quantity = content is ItemInstance stack ? stack.Quantity : 1;
+                    if (content == null) continue;
 
-                items.Add(new PersistedItem(content.InstanceId, content.DefinitionId,
-                    quantity, slots[i].Index, (int)content.LockState));
+                    items.Add(Row(content, slots[i].Index, Data.EquipmentSlot.None));
+                }
+            }
+
+            if (equipment != null)
+            {
+                foreach (KeyValuePair<Data.EquipmentSlot, EquipmentInstance> worn in
+                    equipment.Equipped)
+                {
+                    if (worn.Value == null) continue;
+
+                    // No container slot: a worn piece is in no bag, which is the same thing
+                    // the database's unique keys say.
+                    items.Add(Row(worn.Value, -1, worn.Key));
+                }
             }
 
             return items;
+        }
+
+        /// <summary>
+        /// One item as a row, wherever it lives.
+        /// </summary>
+        /// <remarks>
+        /// Quantity lives on a stackable <c>ItemInstance</c>; anything else is a single
+        /// object, which is the rule the container itself applies. Enhancement, rarity,
+        /// stones and cards are read off the piece rather than recomputed, because they are
+        /// per-copy facts that no definition can supply.
+        /// </remarks>
+        private static PersistedItem Row(GameInstance content, int slotIndex,
+            Data.EquipmentSlot equipmentSlot)
+        {
+            int quantity = content is ItemInstance stack ? stack.Quantity : 1;
+
+            var piece = content as EquipmentInstance;
+
+            if (piece == null)
+            {
+                return new PersistedItem(content.InstanceId, content.DefinitionId, quantity,
+                    slotIndex, (int)content.LockState, (int)equipmentSlot);
+            }
+
+            var enchants = new List<PersistedEnchant>();
+
+            for (int i = 0; i < piece.Enchants.Count; i++)
+            {
+                EquipmentEnchant enchant = piece.Enchants[i];
+
+                enchants.Add(new PersistedEnchant(enchant.Stone, enchant.SocketIndex,
+                    enchant.Rank));
+            }
+
+            var cards = new List<PersistedCard>();
+
+            for (int i = 0; i < piece.Cards.Count; i++)
+            {
+                EquipmentCardSocket card = piece.Cards[i];
+
+                cards.Add(new PersistedCard(card.Card, card.SocketIndex, card.CardInstance));
+            }
+
+            return new PersistedItem(content.InstanceId, content.DefinitionId, quantity,
+                slotIndex, (int)content.LockState, (int)equipmentSlot,
+                piece.EnhancementLevel, piece.Rarity, enchants, cards);
         }
 
         /// <summary>
@@ -350,7 +407,7 @@ namespace ChibiFantasy.Server
             {
                 PersistedItem row = persisted.Items[i];
 
-                if (!row.IsValid || row.SlotIndex >= capacity) continue;
+                if (!row.IsValid || row.IsEquipped || row.SlotIndex >= capacity) continue;
 
                 if (!items.TryGet(row.Item, out ItemDefinition definition)
                     || definition == null)
@@ -360,16 +417,101 @@ namespace ChibiFantasy.Server
                     continue;
                 }
 
-                GameInstance instance = definition is EquipmentDefinition
-                    ? (GameInstance)new EquipmentInstance(row.Instance, row.Item, owner)
-                    : new ItemInstance(row.Instance, row.Item, owner, row.Quantity);
-
-                instance.TrySetLockState((ItemLockState)row.LockState);
-
-                inventory.Restore(row.SlotIndex, instance);
+                inventory.Restore(row.SlotIndex, Instance(row, owner, definition));
             }
 
             return inventory;
+        }
+
+        /// <summary>
+        /// Rebuilds what a character is wearing.
+        /// </summary>
+        /// <remarks>
+        /// <b>Per-copy state is restored, not recomputed.</b> A +9 sword with a rare tier and
+        /// two stones in it must come back as exactly that; rebuilding it from the definition
+        /// alone would quietly strip every upgrade a player paid for. That is the defect this
+        /// method exists to prevent, and the reason <see cref="PersistedItem"/> carries the
+        /// four fields it does.
+        ///
+        /// A row the domain refuses is dropped rather than thrown on, for the same reason the
+        /// bag does it: one bad row must not cost a player their whole session.
+        /// </remarks>
+        public static CharacterEquipmentState ToEquipment(PersistedCharacter persisted,
+            OwnerId owner, IDefinitionRegistry<ItemDefinition> items)
+        {
+            var equipment = new CharacterEquipmentState(
+                persisted == null ? default : persisted.Character);
+
+            if (persisted == null || items == null) return equipment;
+
+            for (int i = 0; i < persisted.Items.Count; i++)
+            {
+                PersistedItem row = persisted.Items[i];
+
+                if (!row.IsValid || !row.IsEquipped) continue;
+
+                if (!items.TryGet(row.Item, out ItemDefinition definition)
+                    || definition == null)
+                {
+                    continue;
+                }
+
+                var piece = Instance(row, owner, definition) as EquipmentInstance;
+
+                if (piece == null) continue;
+
+                equipment.Restore((Data.EquipmentSlot)row.EquipmentSlot, piece);
+            }
+
+            return equipment;
+        }
+
+        /// <summary>
+        /// Rebuilds one owned object from its row.
+        /// </summary>
+        /// <remarks>Which kind it is comes from the authored definition, not from the row --
+        /// the same rule <c>LootPickupService</c> uses when it mints one, so an item is the
+        /// same kind of object however it arrived.</remarks>
+        private static GameInstance Instance(in PersistedItem row, OwnerId owner,
+            ItemDefinition definition)
+        {
+            if (!(definition is EquipmentDefinition))
+            {
+                var item = new ItemInstance(row.Instance, row.Item, owner, row.Quantity);
+
+                item.TrySetLockState((ItemLockState)row.LockState);
+
+                return item;
+            }
+
+            var piece = new EquipmentInstance(row.Instance, row.Item, owner);
+
+            piece.TrySetLockState((ItemLockState)row.LockState);
+            piece.SetEnhancementLevel(row.EnhancementLevel);
+
+            if (row.Rarity.IsValid) piece.SetRarity(row.Rarity);
+
+            for (int i = 0; i < row.Enchants.Count; i++)
+            {
+                PersistedEnchant enchant = row.Enchants[i];
+
+                if (!enchant.IsValid) continue;
+
+                piece.AddEnchant(new EquipmentEnchant(enchant.Stone, enchant.SocketIndex,
+                    enchant.Rank));
+            }
+
+            for (int i = 0; i < row.Cards.Count; i++)
+            {
+                PersistedCard card = row.Cards[i];
+
+                if (!card.IsValid) continue;
+
+                piece.AddCard(new EquipmentCardSocket(card.Card, card.SocketIndex,
+                    card.CardInstance));
+            }
+
+            return piece;
         }
     }
 }

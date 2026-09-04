@@ -301,8 +301,11 @@ namespace ChibiFantasy.Tests.EditMode
                     | System.Reflection.BindingFlags.Instance
                     | System.Reflection.BindingFlags.DeclaredOnly))
             {
-                Assert.That(property.CanWrite, Is.False,
-                    property.Name + " is settable");
+                // A private setter is not a way in; a public one is. The 18.4 snapshot
+                // property has to be assigned when a message lands, so the invariant is
+                // tightened to what it always meant rather than loosened.
+                Assert.That(property.SetMethod == null || !property.SetMethod.IsPublic,
+                    Is.True, property.Name + " can be written from outside");
             }
         }
 

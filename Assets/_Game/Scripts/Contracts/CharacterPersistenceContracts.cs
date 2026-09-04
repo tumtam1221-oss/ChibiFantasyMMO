@@ -46,6 +46,51 @@ namespace ChibiFantasy.Contracts
         public int Level { get; }
     }
 
+    /// <summary>One status stone in one socket, as the database holds it.</summary>
+    /// <remarks>Mirrors <c>equipment_enchant</c> row for row, which is why nothing has to be
+    /// translated on the way down.</remarks>
+    public readonly struct PersistedEnchant
+    {
+        public PersistedEnchant(DefinitionId stone, int socketIndex, int rank)
+        {
+            Stone = stone;
+            SocketIndex = socketIndex;
+            Rank = rank;
+        }
+
+        public DefinitionId Stone { get; }
+
+        public int SocketIndex { get; }
+
+        public int Rank { get; }
+
+        public bool IsValid => Stone.IsValid && SocketIndex >= 0;
+    }
+
+    /// <summary>One card in one socket, as the database holds it.</summary>
+    /// <remarks>
+    /// The card's own instance id travels with it. A socketed card is an owned item that
+    /// happens to sit in a piece of equipment rather than a bag, and losing its identity on
+    /// the way through would make it a different card when it came out.
+    /// </remarks>
+    public readonly struct PersistedCard
+    {
+        public PersistedCard(DefinitionId card, int socketIndex, InstanceId cardInstance)
+        {
+            Card = card;
+            SocketIndex = socketIndex;
+            CardInstance = cardInstance;
+        }
+
+        public DefinitionId Card { get; }
+
+        public int SocketIndex { get; }
+
+        public InstanceId CardInstance { get; }
+
+        public bool IsValid => Card.IsValid && SocketIndex >= 0;
+    }
+
     /// <summary>
     /// One owned item, as the database holds it.
     /// </summary>
@@ -60,13 +105,21 @@ namespace ChibiFantasy.Contracts
     public readonly struct PersistedItem
     {
         public PersistedItem(InstanceId instance, DefinitionId item, int quantity,
-            int slotIndex, int lockState = 0)
+            int slotIndex, int lockState = 0, int equipmentSlot = 0,
+            int enhancementLevel = 0, DefinitionId rarity = default,
+            IReadOnlyList<PersistedEnchant> enchants = null,
+            IReadOnlyList<PersistedCard> cards = null)
         {
             Instance = instance;
             Item = item;
             Quantity = quantity;
             SlotIndex = slotIndex;
             LockState = lockState;
+            EquipmentSlot = equipmentSlot;
+            EnhancementLevel = enhancementLevel;
+            Rarity = rarity;
+            Enchants = enchants ?? System.Array.Empty<PersistedEnchant>();
+            Cards = cards ?? System.Array.Empty<PersistedCard>();
         }
 
         /// <summary>The item's own identity, minted when it was created and never reused.</summary>
@@ -76,18 +129,51 @@ namespace ChibiFantasy.Contracts
 
         public int Quantity { get; }
 
-        /// <summary>Where it sits in the container.</summary>
+        /// <summary>Where it sits in the container. Negative for a worn piece.</summary>
         public int SlotIndex { get; }
 
         /// <summary>Mirrors <c>ItemLockState</c>: 0 Available, 1 Reserved, 2 Listed, 3 Bound.</summary>
         public int LockState { get; }
 
+        /// <summary>
+        /// Which equipment slot it is worn in, by <c>EquipmentSlot</c> ordinal. Zero is None.
+        /// </summary>
+        /// <remarks>
+        /// <b>One list, two homes.</b> A worn piece and a bagged item are both rows in
+        /// <c>item_instance</c>, so they are both <see cref="PersistedItem"/> here; what
+        /// separates them is this. The database says the same thing with a unique key: an
+        /// instance sits in at most one container slot and at most one equipment slot, and
+        /// never both.
+        /// </remarks>
+        public int EquipmentSlot { get; }
+
+        /// <summary>Per-copy enhancement. Zero for anything that is not equipment.</summary>
+        public int EnhancementLevel { get; }
+
+        /// <summary>Per-copy rarity override. Invalid means the definition's own.</summary>
+        public DefinitionId Rarity { get; }
+
+        /// <summary>Status stones socketed into this piece.</summary>
+        public IReadOnlyList<PersistedEnchant> Enchants { get; }
+
+        /// <summary>Cards socketed into this piece.</summary>
+        public IReadOnlyList<PersistedCard> Cards { get; }
+
+        /// <summary>Whether this row is a worn piece rather than a bagged item.</summary>
+        public bool IsEquipped => EquipmentSlot > 0;
+
+        /// <summary>
+        /// Whether the row describes something that can exist.
+        /// </summary>
+        /// <remarks>A worn piece has no container slot, so a negative index is correct for
+        /// one and impossible for the other.</remarks>
         public bool IsValid => Instance.IsValid && Item.IsValid && Quantity > 0
-            && SlotIndex >= 0;
+            && (SlotIndex >= 0 || IsEquipped);
 
         public override string ToString()
         {
-            return Item + " x" + Quantity + " @" + SlotIndex;
+            return Item + " x" + Quantity
+                + (IsEquipped ? " worn in slot " + EquipmentSlot : " @" + SlotIndex);
         }
     }
 

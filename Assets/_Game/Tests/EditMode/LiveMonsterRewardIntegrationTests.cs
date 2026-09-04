@@ -162,6 +162,16 @@ namespace ChibiFantasy.Tests.EditMode
         {
             var items = new DefinitionRegistry<ItemDefinition>();
 
+            var sword = ScriptableObject.CreateInstance<EquipmentDefinition>();
+
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"item.itest-sword\"},\"_stackable\":false,"
+                + "\"_maxStackSize\":1,\"_slot\":" + (int)EquipmentSlot.MainHand
+                + ",\"_levelRequirement\":1,\"_statusStoneSlots\":2}", sword);
+
+            _created.Add(sword);
+            items.Register(sword);
+
             var coin = ScriptableObject.CreateInstance<ItemDefinition>();
 
             JsonUtility.FromJsonOverwrite(
@@ -518,6 +528,82 @@ namespace ChibiFantasy.Tests.EditMode
             }
 
             return -1;
+        }
+
+        // ---- 18.4: equipment through real PHP and real MySQL ---------------------------------
+
+        [Test]
+        public void AWornPieceAndItsUpgradesSurviveARealRoundTrip()
+        {
+            WorldCharacterRegistry registry = NewRegistry();
+            LivingCharacter character = Enter(registry);
+
+            Assert.That(character.Inventory, Is.Not.Null);
+            Assert.That(character.Equipment, Is.Not.Null,
+                "a world with items gives a character somewhere to wear them");
+
+            // A +8 epic sword with a stone in it, worn. Every one of those is a per-copy
+            // fact that no definition can supply, and a load that dropped any of them would
+            // strip an upgrade a player paid for.
+            var sword = new EquipmentInstance(new InstanceId("itest-sword"),
+                new DefinitionId("item.itest-sword"), character.Owner);
+
+            sword.SetEnhancementLevel(8);
+            sword.SetRarity(new DefinitionId("rarity.epic"));
+            sword.AddEnchant(new EquipmentEnchant(new DefinitionId("stone.fire"), 0, 3));
+
+            // A previous run may have left this character wearing it -- which is the whole
+            // point of the test -- so the slot is emptied first rather than assumed free.
+            if (character.Equipment.TryGet(EquipmentSlot.MainHand, out EquipmentInstance _))
+            {
+                EquipmentService.Unequip(character.Inventory, character.Equipment,
+                    EquipmentSlot.MainHand,
+                    new EquipmentService.Context(ItemRegistry(),
+                        character.Domain.Progression.Level));
+            }
+
+            Assert.That(character.Equipment.Restore(EquipmentSlot.MainHand, sword), Is.True);
+
+            character.MarkDirty();
+
+            CharacterPersistenceResult saved = registry.Save(character);
+
+            Assert.That(saved.IsOk, Is.True, "the real PHP save refused: " + saved.Detail);
+
+            // Only MySQL can answer this part.
+            CharacterPersistenceResult reloaded = _store.Load(_api.Session);
+
+            Assert.That(reloaded.IsOk, Is.True, reloaded.Detail);
+
+            PersistedItem row = default;
+
+            for (int i = 0; i < reloaded.Character.Items.Count; i++)
+            {
+                if (reloaded.Character.Items[i].Instance.Value == "itest-sword")
+                {
+                    row = reloaded.Character.Items[i];
+                }
+            }
+
+            Assert.That(row.Instance.Value, Is.EqualTo("itest-sword"),
+                "the sword came back with the identity it always had");
+            Assert.That(row.IsEquipped, Is.True, "and still worn");
+            Assert.That(row.EquipmentSlot, Is.EqualTo((int)EquipmentSlot.MainHand));
+            Assert.That(row.EnhancementLevel, Is.EqualTo(8));
+            Assert.That(row.Rarity.Value, Is.EqualTo("rarity.epic"));
+            Assert.That(row.Enchants, Has.Count.EqualTo(1));
+            Assert.That(row.Enchants[0].Stone.Value, Is.EqualTo("stone.fire"));
+            Assert.That(row.Enchants[0].Rank, Is.EqualTo(3));
+
+            // And a second world server reading the same database wears it too.
+            WorldCharacterRegistry second = NewRegistry();
+            LivingCharacter returned = Enter(second, connectionId: 3);
+
+            Assert.That(returned.Equipment.TryGet(EquipmentSlot.MainHand,
+                out EquipmentInstance worn), Is.True);
+            Assert.That(worn.EnhancementLevel, Is.EqualTo(8));
+            Assert.That(worn.Rarity.Value, Is.EqualTo("rarity.epic"));
+            Assert.That(worn.EnchantCount, Is.EqualTo(1));
         }
 
         // ---- fixtures ------------------------------------------------------------------------------

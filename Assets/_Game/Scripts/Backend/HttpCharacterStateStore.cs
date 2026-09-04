@@ -98,12 +98,39 @@ namespace ChibiFantasy.Backend
 
             foreach (JsonReader row in json.Array("items"))
             {
+                var enchants = new List<PersistedEnchant>();
+
+                foreach (JsonReader stone in row.Array("enchants"))
+                {
+                    enchants.Add(new PersistedEnchant(
+                        new DefinitionId(stone.String("stone_id")),
+                        stone.Int("socket"),
+                        stone.Int("rank")));
+                }
+
+                var cards = new List<PersistedCard>();
+
+                foreach (JsonReader card in row.Array("cards"))
+                {
+                    cards.Add(new PersistedCard(
+                        new DefinitionId(card.String("card_id")),
+                        card.Int("socket"),
+                        new InstanceId(card.String("card_instance_id"))));
+                }
+
                 items.Add(new PersistedItem(
                     new InstanceId(row.String("instance_id")),
                     new DefinitionId(row.String("item_id")),
                     row.Int("quantity"),
+                    // A worn piece has no container slot. The API sends -1 for it, and
+                    // JsonReader reads a negative number, so the two agree.
                     row.Int("slot"),
-                    row.Int("lock_state")));
+                    row.Int("lock_state"),
+                    row.Int("equipment_slot"),
+                    row.Int("enhancement_level"),
+                    new DefinitionId(row.String("rarity_id")),
+                    enchants,
+                    cards));
             }
 
             var persisted = new PersistedCharacter(
@@ -273,18 +300,84 @@ namespace ChibiFantasy.Backend
 
                 PersistedItem item = character.Items[i];
 
-                builder.Append(new JsonWriter()
+                string flatItem = new JsonWriter()
                     .Add("instance_id", item.Instance.Value)
                     .Add("item_id", item.Item.Value)
                     .Add("quantity", item.Quantity)
                     .Add("slot", item.SlotIndex)
                     .Add("lock_state", item.LockState)
-                    .ToJson());
+                    .Add("equipment_slot", item.EquipmentSlot)
+                    .ToJson();
+
+                if (!IsEquipmentRow(item))
+                {
+                    // No enhancement key at all for an ordinary item. The API treats the
+                    // key's presence as "this is equipment", so sending a zeroed one would
+                    // make every potion look like a sword.
+                    builder.Append(flatItem);
+
+                    continue;
+                }
+
+                var withEquipment = new System.Text.StringBuilder(flatItem);
+
+                withEquipment.Length -= 1;
+
+                withEquipment.Append(",\"enhancement_level\":").Append(item.EnhancementLevel);
+                withEquipment.Append(",\"rarity_id\":\"").Append(item.Rarity.Value ?? string.Empty)
+                    .Append("\",\"enchants\":[");
+
+                for (int n = 0; n < item.Enchants.Count; n++)
+                {
+                    if (n > 0) withEquipment.Append(',');
+
+                    withEquipment.Append(new JsonWriter()
+                        .Add("stone_id", item.Enchants[n].Stone.Value)
+                        .Add("socket", item.Enchants[n].SocketIndex)
+                        .Add("rank", item.Enchants[n].Rank)
+                        .ToJson());
+                }
+
+                withEquipment.Append("],\"cards\":[");
+
+                for (int n = 0; n < item.Cards.Count; n++)
+                {
+                    if (n > 0) withEquipment.Append(',');
+
+                    withEquipment.Append(new JsonWriter()
+                        .Add("card_id", item.Cards[n].Card.Value)
+                        .Add("socket", item.Cards[n].SocketIndex)
+                        .Add("card_instance_id", item.Cards[n].CardInstance.Value)
+                        .ToJson());
+                }
+
+                withEquipment.Append("]}");
+
+                builder.Append(withEquipment);
             }
 
             builder.Append("]}");
 
             return builder.ToString();
+        }
+
+        /// <summary>
+        /// Whether a row carries per-copy equipment state.
+        /// </summary>
+        /// <remarks>
+        /// True for anything worn, and for anything in a bag that has an upgrade on it. A
+        /// +0 unenchanted piece sitting in a bag is indistinguishable from an ordinary item
+        /// here and is sent as one; nothing is lost, because there is nothing to lose --
+        /// the definition supplies everything else, and the piece is rebuilt as equipment
+        /// on load from that definition.
+        /// </remarks>
+        private static bool IsEquipmentRow(in PersistedItem item)
+        {
+            return item.IsEquipped
+                || item.EnhancementLevel > 0
+                || item.Rarity.IsValid
+                || item.Enchants.Count > 0
+                || item.Cards.Count > 0;
         }
 
         private static int SaveRevisionOf(JsonReader json)

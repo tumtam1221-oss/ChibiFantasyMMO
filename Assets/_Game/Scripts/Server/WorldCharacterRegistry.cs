@@ -80,9 +80,11 @@ namespace ChibiFantasy.Server
         internal LivingCharacter(int connectionId, SessionId session, AccountId account,
             ServerId server, ChannelId channel, Character character, CharacterSkillsState skills,
             CharacterLocationState location, SpawnPointDefinition spawn, int saveRevision,
-            CombatTeam team, ItemContainerState inventory = null)
+            CombatTeam team, ItemContainerState inventory = null,
+            CharacterEquipmentState equipment = null)
         {
             Inventory = inventory;
+            Equipment = equipment;
             ConnectionId = connectionId;
             Session = session;
             Account = account;
@@ -139,6 +141,18 @@ namespace ChibiFantasy.Server
         /// unknown ids would be worse than none. Every caller checks.
         /// </remarks>
         public ItemContainerState Inventory { get; }
+
+        /// <summary>
+        /// What the character is wearing: Phase 04's state, not a server-side copy.
+        /// </summary>
+        /// <remarks>
+        /// The same arrangement as <see cref="Inventory"/>. <c>EquipmentService</c> moves
+        /// pieces between the two, <c>EquipmentModifierResolver</c> reads this for stats, and
+        /// nothing here reimplements either. Null on a server composed without an item
+        /// registry, because a piece of equipment that cannot be resolved to a definition is
+        /// not something this server can honestly wear.
+        /// </remarks>
+        public CharacterEquipmentState Equipment { get; }
 
         public SpawnPointDefinition Spawn { get; }
 
@@ -374,15 +388,20 @@ namespace ChibiFantasy.Server
 
             // The bag is rebuilt from the same row the rest of the character came from, in
             // the slots it was saved in.
+            var owner = new OwnerId(admission.Account.Value);
+
             ItemContainerState inventory = _items == null
                 ? null
-                : PersistedCharacterMapper.ToInventory(loaded.Character,
-                    new OwnerId(admission.Account.Value), _items,
+                : PersistedCharacterMapper.ToInventory(loaded.Character, owner, _items,
                     _defaultInventoryCapacity);
+
+            CharacterEquipmentState equipment = _items == null
+                ? null
+                : PersistedCharacterMapper.ToEquipment(loaded.Character, owner, _items);
 
             var living = new LivingCharacter(connectionId, admission.Session, admission.Account,
                 admission.Server, admission.Channel, domain.Character, domain.Skills, location,
-                spawn, loaded.Character.SaveRevision, team, inventory);
+                spawn, loaded.Character.SaveRevision, team, inventory, equipment);
 
             living.Combatant.SetLimits(limits);
 
@@ -471,7 +490,7 @@ namespace ChibiFantasy.Server
 
             PersistedCharacter row = PersistedCharacterMapper.ToPersisted(living.Domain,
                 living.Skills, living.Location, living.Server, living.Account,
-                living.SaveRevision, living.Inventory);
+                living.SaveRevision, living.Inventory, living.Equipment);
 
             CharacterPersistenceResult result = _store.Save(living.Session, row,
                 living.SaveRevision);

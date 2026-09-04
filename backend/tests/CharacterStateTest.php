@@ -542,4 +542,206 @@ final class CharacterStateTest extends BackendTestCase
 
         self::assertSame('acc-a', $owner);
     }
+
+    // ---- equipment ------------------------------------------------------------
+
+    /**
+     * A worn piece, with the per-copy state that no definition can supply.
+     *
+     * @return array<string,mixed>
+     */
+    private function wornSword(int $slot = 6, int $enhancement = 7): array
+    {
+        return [
+            'instance_id'      => 'sword-1',
+            'item_id'          => 'item.sword',
+            'quantity'         => 1,
+            'slot'             => -1,
+            'equipment_slot'   => $slot,
+            'enhancement_level' => $enhancement,
+            'rarity_id'        => 'rarity.epic',
+            'enchants'         => [
+                ['stone_id' => 'stone.fire', 'socket' => 0, 'rank' => 3],
+                ['stone_id' => 'stone.ice', 'socket' => 1, 'rank' => 1],
+            ],
+            'cards'            => [],
+        ];
+    }
+
+    public function testAWornPieceSurvivesTheRoundTripWithEverythingOnIt(): void
+    {
+        $state = $this->sampleState();
+        $state['inventory_capacity'] = 30;
+        $state['items'] = [$this->wornSword()];
+
+        $this->states->save('acc-a', 'char-a1', $state, null);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(1, $loaded['items']);
+
+        $worn = $loaded['items'][0];
+
+        self::assertSame('sword-1', $worn['instance_id']);
+        self::assertSame(6, $worn['equipment_slot'], 'still in the slot it was worn in');
+        self::assertSame(-1, $worn['slot'], 'a worn piece is in no bag');
+        self::assertSame(7, $worn['enhancement_level']);
+        self::assertSame('rarity.epic', $worn['rarity_id']);
+        self::assertCount(2, $worn['enchants']);
+        self::assertSame('stone.fire', $worn['enchants'][0]['stone_id']);
+        self::assertSame(3, $worn['enchants'][0]['rank']);
+    }
+
+    public function testAnOrdinaryItemCarriesNoEquipmentState(): void
+    {
+        $state = $this->sampleState();
+        $state['inventory_capacity'] = 30;
+        $state['items'] = [
+            ['instance_id' => 'coin-1', 'item_id' => 'item.coin', 'quantity' => 9, 'slot' => 0],
+        ];
+
+        $this->states->save('acc-a', 'char-a1', $state, null);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        // No enhancement key at all: the load's LEFT JOIN found no equipment row, which is
+        // what stops every potion looking like a sword.
+        self::assertArrayNotHasKey('enhancement_level', $loaded['items'][0]);
+
+        $rows = (int) $this->pdo
+            ->query("SELECT COUNT(*) FROM equipment_instance WHERE instance_id = 'coin-1'")
+            ->fetchColumn();
+
+        self::assertSame(0, $rows);
+    }
+
+    public function testEquippingMovesAPieceOutOfTheBagAndBackAgain(): void
+    {
+        $bagged = $this->sampleState();
+        $bagged['inventory_capacity'] = 30;
+        $bagged['items'] = [
+            ['instance_id' => 'sword-1', 'item_id' => 'item.sword', 'quantity' => 1,
+             'slot' => 4, 'enhancement_level' => 7, 'rarity_id' => 'rarity.epic',
+             'enchants' => [], 'cards' => []],
+        ];
+
+        $first = $this->states->save('acc-a', 'char-a1', $bagged, null);
+
+        // Now worn. The same instance, in no bag slot.
+        $worn = $this->sampleState();
+        $worn['inventory_capacity'] = 30;
+        $worn['items'] = [$this->wornSword()];
+
+        $second = $this->states->save('acc-a', 'char-a1', $worn, $first['save_revision']);
+
+        self::assertTrue($second['ok']);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(1, $loaded['items'], 'one sword, not two');
+        self::assertSame(6, $loaded['items'][0]['equipment_slot']);
+
+        // The unique keys are what make this a database guarantee rather than a convention.
+        $slots = (int) $this->pdo
+            ->query("SELECT COUNT(*) FROM container_slot WHERE instance_id = 'sword-1'")
+            ->fetchColumn();
+
+        self::assertSame(0, $slots, 'a worn piece is in no container');
+
+        // And back to the bag.
+        $back = $this->sampleState();
+        $back['inventory_capacity'] = 30;
+        $back['items'] = [
+            ['instance_id' => 'sword-1', 'item_id' => 'item.sword', 'quantity' => 1,
+             'slot' => 2, 'enhancement_level' => 7, 'rarity_id' => 'rarity.epic',
+             'enchants' => [], 'cards' => []],
+        ];
+
+        $this->states->save('acc-a', 'char-a1', $back, $second['save_revision']);
+
+        $reloaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(1, $reloaded['items']);
+        self::assertSame(2, $reloaded['items'][0]['slot']);
+        self::assertSame(0, $reloaded['items'][0]['equipment_slot']);
+        self::assertSame(7, $reloaded['items'][0]['enhancement_level'],
+            'the upgrade followed it out of the slot');
+
+        $equipped = (int) $this->pdo
+            ->query("SELECT COUNT(*) FROM character_equipment WHERE instance_id = 'sword-1'")
+            ->fetchColumn();
+
+        self::assertSame(0, $equipped);
+    }
+
+    public function testARemovedStoneDisappearsRatherThanLingering(): void
+    {
+        $state = $this->sampleState();
+        $state['inventory_capacity'] = 30;
+        $state['items'] = [$this->wornSword()];
+
+        $first = $this->states->save('acc-a', 'char-a1', $state, null);
+
+        // One stone removed. The authoritative set is what the server holds.
+        $state['items'][0]['enchants'] = [
+            ['stone_id' => 'stone.fire', 'socket' => 0, 'rank' => 3],
+        ];
+
+        $this->states->save('acc-a', 'char-a1', $state, $first['save_revision']);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(1, $loaded['items'][0]['enchants']);
+        self::assertSame('stone.fire', $loaded['items'][0]['enchants'][0]['stone_id']);
+    }
+
+    public function testTwoCharactersOnOneAccountDoNotWearEachOthersArmour(): void
+    {
+        $this->makeCharacter('char-a2', 'acc-a', 'srv-1', 'Ayla Two');
+
+        $first = $this->sampleState();
+        $first['inventory_capacity'] = 30;
+        $first['items'] = [$this->wornSword()];
+
+        $this->states->save('acc-a', 'char-a1', $first, null);
+
+        $loaded = $this->states->load('acc-a', 'char-a2');
+
+        self::assertSame([], $loaded['items'],
+            'equipment is keyed by character, not by account');
+    }
+
+    public function testAnotherAccountCannotWriteEquipment(): void
+    {
+        $state = $this->sampleState();
+        $state['inventory_capacity'] = 30;
+        $state['items'] = [$this->wornSword()];
+
+        $refused = $this->states->save('acc-b', 'char-a1', $state, null);
+
+        self::assertFalse($refused['ok']);
+
+        $rows = (int) $this->pdo
+            ->query("SELECT COUNT(*) FROM equipment_instance WHERE instance_id = 'sword-1'")
+            ->fetchColumn();
+
+        self::assertSame(0, $rows);
+    }
+
+    public function testAWornPieceWithNoEquipmentSlotAndNoBagSlotIsSkipped(): void
+    {
+        $state = $this->sampleState();
+        $state['inventory_capacity'] = 30;
+        $state['items'] = [
+            ['instance_id' => 'nowhere-1', 'item_id' => 'item.sword', 'quantity' => 1,
+             'slot' => -1, 'equipment_slot' => 0],
+        ];
+
+        $this->states->save('acc-a', 'char-a1', $state, null);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertSame([], $loaded['items'],
+            'an item in neither a bag nor a slot has no home');
+    }
 }

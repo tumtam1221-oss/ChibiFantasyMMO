@@ -38,6 +38,7 @@ namespace ChibiFantasy.Server
         private readonly NetworkObject _prefab;
         private readonly ICharacterCombatRequestSink _combat;
         private readonly ICharacterMovementRequestSink _movement;
+        private ICharacterInventoryRequestSink _inventory;
 
         private readonly Dictionary<string, NetworkObject> _spawned =
             new Dictionary<string, NetworkObject>();
@@ -60,8 +61,10 @@ namespace ChibiFantasy.Server
         public CharacterReplicationService(NetworkManager networkManager,
             WorldCharacterRegistry characters, NetworkObject prefab,
             ICharacterCombatRequestSink combat = null,
-            ICharacterMovementRequestSink movement = null)
+            ICharacterMovementRequestSink movement = null,
+            ICharacterInventoryRequestSink inventory = null)
         {
+            _inventory = inventory;
             _networkManager = networkManager;
             _characters = characters;
             _prefab = prefab;
@@ -70,6 +73,20 @@ namespace ChibiFantasy.Server
         }
 
         public int SpawnedCount => _spawned.Count;
+
+        /// <summary>
+        /// Points newly spawned characters at the inventory authority.
+        /// </summary>
+        /// <remarks>
+        /// A setter because the authority needs this service to publish snapshots, and this
+        /// service needs the authority to hand to each object -- one of the two has to be
+        /// built first. Composing it afterwards is honest about that; a constructor taking
+        /// each other would not be buildable at all.
+        /// </remarks>
+        public void UseInventory(ICharacterInventoryRequestSink inventory)
+        {
+            _inventory = inventory;
+        }
 
         public bool TryGet(CharacterId character, out NetworkObject networkObject)
         {
@@ -155,6 +172,7 @@ namespace ChibiFantasy.Server
 
             entity.ServerUseCombatSink(_combat);
             entity.ServerUseMovementSink(_movement);
+            entity.ServerUseInventorySink(_inventory);
 
             entity.ServerPublishIdentity(character.Character,
                 character.Location == null ? default : character.Location.CurrentMap,

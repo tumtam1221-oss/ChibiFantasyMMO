@@ -70,6 +70,38 @@ namespace ChibiFantasy.Gameplay
         }
 
         /// <summary>
+        /// Puts a saved piece back in the slot it was saved in.
+        /// </summary>
+        /// <remarks>
+        /// <b>For loading, and only for loading.</b> <see cref="EquipmentService.Equip"/> is
+        /// how a piece is worn during play: it takes it out of a bag, checks the level, class
+        /// and job gates and swaps out whatever was already there. None of that is wanted
+        /// when restoring. Worse, re-applying the gates on load would strip a character whose
+        /// class changed or whose content was retuned -- a player would log in to find their
+        /// armour gone, which is the one outcome nobody accepts.
+        ///
+        /// It refuses an occupied slot rather than overwriting. Two rows claiming one slot is
+        /// a data problem an operator must see, not one piece quietly replacing another --
+        /// and the database's unique key on (owner, slot) means it should be impossible.
+        ///
+        /// Public where <see cref="Set"/> is internal, because the caller is the server's
+        /// persistence mapper in another assembly, and because this cannot be used to bypass
+        /// a rule: it only ever puts back something that was already legitimately worn.
+        /// </remarks>
+        /// <returns>Whether the piece was placed.</returns>
+        public bool Restore(EquipmentSlot slot, EquipmentInstance instance)
+        {
+            if (instance == null || slot == EquipmentSlot.None) return false;
+
+            if (_equipped.ContainsKey(slot)) return false;
+
+            _equipped[slot] = instance;
+            _revision = _revision.Next();
+
+            return true;
+        }
+
+        /// <summary>
         /// Puts a piece in a slot, replacing whatever was there.
         /// </summary>
         /// <remarks>Internal because equipping has rules. <see cref="EquipmentService"/>

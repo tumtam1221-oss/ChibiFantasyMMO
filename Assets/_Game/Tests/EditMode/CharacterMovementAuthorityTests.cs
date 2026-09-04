@@ -580,14 +580,26 @@ namespace ChibiFantasy.Tests.EditMode
         }
 
         [Test]
-        public void InventoryIsStillNotReplicated()
+        public void InventoryIsReplicatedOnlyToItsOwner()
         {
+            // 18.3 asserted this file mentioned no inventory at all, because at that point
+            // replicating one was a later gate. 18.4 did it, so the guard is restated rather
+            // than deleted: what still must hold is that a bag never becomes a synchronised
+            // value, because a SyncVar goes to every observer and a bag is private.
             string source = System.IO.File.ReadAllText(
                 "Assets/_Game/Scripts/Network/CharacterNetworkEntity.cs");
 
-            Assert.That(source, Does.Not.Contain("Inventory"),
-                "inventory replication is a later gate");
-            Assert.That(source, Does.Not.Contain("ItemInstance"));
+            Assert.That(source, Does.Not.Contain("SyncVar<InventorySnapshot>"),
+                "a synchronised bag is a bag everybody can read");
+            Assert.That(source, Does.Not.Contain("[ObserversRpc]"),
+                "an observers message would tell every player what is in somebody's bag");
+            Assert.That(source, Does.Contain("[TargetRpc]"),
+                "the owner is addressed directly, which is what makes it private");
+
+            // And no live domain object crosses the wire: the snapshot is ids and numbers.
+            Assert.That(source, Does.Not.Contain("ItemInstance "),
+                "a client must never be handed an authoritative item object");
+            Assert.That(source, Does.Not.Contain("ItemContainerState"));
         }
     }
 }

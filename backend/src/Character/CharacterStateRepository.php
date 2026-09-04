@@ -85,7 +85,10 @@ final class CharacterStateRepository
             'stats'         => $this->loadStats($characterId),
             'appearance'    => $this->loadAppearance($characterId),
             'skills'        => $this->loadSkills($characterId),
-            'items'         => $this->loadInventory($characterId),
+            'items'         => array_merge(
+                $this->loadInventory($characterId),
+                $this->loadEquipment($accountId, $characterId)
+            ),
             'inventory_capacity' => $this->loadInventoryCapacity($characterId),
             'revisions'     => $this->loadRevisions($characterId),
         ];
@@ -160,25 +163,148 @@ final class CharacterStateRepository
     private function loadInventory(string $characterId): array
     {
         $statement = $this->pdo->prepare(
-            'SELECT s.slot_index, i.instance_id, i.definition_id, i.quantity, i.lock_state
+            'SELECT s.slot_index, i.instance_id, i.definition_id, i.quantity, i.lock_state,
+                    e.enhancement_level, e.rarity_definition_id
              FROM container_slot s
              INNER JOIN item_instance i ON i.instance_id = s.instance_id
+             LEFT JOIN equipment_instance e ON e.instance_id = i.instance_id
              WHERE s.container_id = :cid
              ORDER BY s.slot_index ASC'
         );
 
         $statement->execute([':cid' => $this->containerId($characterId)]);
 
+        $items = [];
+
+        foreach ($statement->fetchAll() as $row) {
+            $items[] = $this->itemRow($row, (int) $row['slot_index'], 0);
+        }
+
+        return $items;
+    }
+
+    /**
+     * What a character is wearing, as rows in the same shape as bagged items.
+     *
+     * One list, two homes: a worn piece and a bagged item are both `item_instance`
+     * rows, and what separates them is the equipment slot. The unique keys on
+     * `container_slot.instance_id` and `character_equipment.instance_id` are what make
+     * "an item is in a bag or worn, never both" a database guarantee.
+     *
+     * Scoped by owner rather than character, because that is what the table is keyed
+     * by -- and the caller has already proved the character belongs to that account.
+     *
+     * @return list<array<string,mixed>>
+     */
+    private function loadEquipment(string $accountId, string $characterId): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT c.slot, i.instance_id, i.definition_id, i.quantity, i.lock_state,
+                    e.enhancement_level, e.rarity_definition_id
+             FROM character_equipment c
+             INNER JOIN item_instance i ON i.instance_id = c.instance_id
+             LEFT JOIN equipment_instance e ON e.instance_id = i.instance_id
+             WHERE c.owner_id = :owner
+             ORDER BY c.slot ASC'
+        );
+
+        $statement->execute([':owner' => $this->equipmentOwnerId($accountId, $characterId)]);
+
+        $items = [];
+
+        foreach ($statement->fetchAll() as $row) {
+            $items[] = $this->itemRow($row, -1, (int) $row['slot']);
+        }
+
+        return $items;
+    }
+
+    /**
+     * One item row, with its per-copy equipment state if it has any.
+     *
+     * Enhancement, rarity, stones and cards are facts about this copy that no
+     * definition can supply. A load that dropped them would silently strip every
+     * upgrade a player paid for.
+     *
+     * @param array<string,mixed> $row
+     * @return array<string,mixed>
+     */
+    private function itemRow(array $row, int $containerSlot, int $equipmentSlot): array
+    {
+        $instanceId = (string) $row['instance_id'];
+
+        $item = [
+            'instance_id'    => $instanceId,
+            'item_id'        => (string) $row['definition_id'],
+            'quantity'       => (int) $row['quantity'],
+            'slot'           => $containerSlot,
+            'lock_state'     => (int) $row['lock_state'],
+            'equipment_slot' => $equipmentSlot,
+        ];
+
+        if ($row['enhancement_level'] === null) {
+            // Not equipment. No enhancement row, no sockets, nothing to look up.
+            return $item;
+        }
+
+        $item['enhancement_level'] = (int) $row['enhancement_level'];
+        $item['rarity_id'] = (string) $row['rarity_definition_id'];
+        $item['enchants'] = $this->loadEnchants($instanceId);
+        $item['cards'] = $this->loadCards($instanceId);
+
+        return $item;
+    }
+
+    /** @return list<array{stone_id:string,socket:int,rank:int}> */
+    private function loadEnchants(string $instanceId): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT socket_index, stone_definition_id, stone_rank
+             FROM equipment_enchant WHERE instance_id = :iid ORDER BY socket_index ASC'
+        );
+
+        $statement->execute([':iid' => $instanceId]);
+
         return array_map(
             static fn (array $r): array => [
-                'instance_id' => (string) $r['instance_id'],
-                'item_id'     => (string) $r['definition_id'],
-                'quantity'    => (int) $r['quantity'],
-                'slot'        => (int) $r['slot_index'],
-                'lock_state'  => (int) $r['lock_state'],
+                'stone_id' => (string) $r['stone_definition_id'],
+                'socket'   => (int) $r['socket_index'],
+                'rank'     => (int) $r['stone_rank'],
             ],
             $statement->fetchAll()
         );
+    }
+
+    /** @return list<array{card_id:string,socket:int,card_instance_id:string}> */
+    private function loadCards(string $instanceId): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT socket_index, card_definition_id, card_instance_id
+             FROM equipment_card_socket WHERE instance_id = :iid ORDER BY socket_index ASC'
+        );
+
+        $statement->execute([':iid' => $instanceId]);
+
+        return array_map(
+            static fn (array $r): array => [
+                'card_id'          => (string) $r['card_definition_id'],
+                'socket'           => (int) $r['socket_index'],
+                'card_instance_id' => (string) $r['card_instance_id'],
+            ],
+            $statement->fetchAll()
+        );
+    }
+
+    /**
+     * The owner key a character's worn equipment is stored under.
+     *
+     * Derived from the character rather than the account, so two characters on one
+     * account do not wear each other's armour. `character_equipment` is keyed by
+     * owner_id, and this is what that owner means here.
+     */
+    private function equipmentOwnerId(string $accountId, string $characterId): string
+    {
+        return 'eq:' . $characterId;
     }
 
     /**
@@ -540,6 +666,12 @@ final class CharacterStateRepository
         $this->pdo->prepare('DELETE FROM container_slot WHERE container_id = :cid')
             ->execute([':cid' => $containerId]);
 
+        // Worn pieces are placements too, and are replaced the same way. Deleting the
+        // rows does not delete the items: character_equipment references item_instance,
+        // not the other way round.
+        $this->pdo->prepare('DELETE FROM character_equipment WHERE owner_id = :owner')
+            ->execute([':owner' => $this->equipmentOwnerId($accountId, $characterId)]);
+
         if ($items === []) {
             return;
         }
@@ -563,18 +695,27 @@ final class CharacterStateRepository
              VALUES (:cid, :slot, :iid)'
         );
 
+        $worn = $this->pdo->prepare(
+            'INSERT INTO character_equipment (owner_id, slot, instance_id)
+             VALUES (:owner, :slot, :iid)'
+        );
+
+        $equipmentOwner = $this->equipmentOwnerId($accountId, $characterId);
+
         foreach ($items as $item) {
             $instanceId = (string) ($item['instance_id'] ?? '');
             $definitionId = (string) ($item['item_id'] ?? '');
             $slotIndex = (int) ($item['slot'] ?? -1);
+            $equipmentSlot = (int) ($item['equipment_slot'] ?? 0);
 
-            // A row missing an identity, a definition or a place is not an item. Skipped
-            // rather than defaulted: inventing a slot would move somebody's belongings.
-            if ($instanceId === '' || $definitionId === '' || $slotIndex < 0) {
+            // A row missing an identity or a definition is not an item, and a row that is
+            // in neither a bag nor a slot has no home. Skipped rather than defaulted:
+            // inventing a place would move somebody's belongings.
+            if ($instanceId === '' || $definitionId === '') {
                 continue;
             }
 
-            if ($slotIndex >= $capacity) {
+            if ($equipmentSlot <= 0 && ($slotIndex < 0 || $slotIndex >= $capacity)) {
                 continue;
             }
 
@@ -586,10 +727,119 @@ final class CharacterStateRepository
                 ':lock'     => max(0, min(3, (int) ($item['lock_state'] ?? 0))),
             ]);
 
+            $this->writeEquipmentDetail($instanceId, $item);
+
+            if ($equipmentSlot > 0) {
+                $worn->execute([
+                    ':owner' => $equipmentOwner,
+                    ':slot'  => $equipmentSlot,
+                    ':iid'   => $instanceId,
+                ]);
+
+                continue;
+            }
+
             $slot->execute([
                 ':cid'  => $containerId,
                 ':slot' => $slotIndex,
                 ':iid'  => $instanceId,
+            ]);
+        }
+    }
+
+    /**
+     * Writes the per-copy equipment state of one item, if it has any.
+     *
+     * **Only for rows that carry it.** An ordinary item has no enhancement row, and
+     * writing a zeroed one would make every potion look like a piece of equipment to
+     * the load's LEFT JOIN. The presence of the key is the signal, which is why this
+     * checks for the key rather than for a zero value -- a +0 sword is still equipment.
+     *
+     * Sockets are replaced wholesale, like stats and skills: the server holds the
+     * authoritative set, and a stone that vanished from it must vanish here. A merge
+     * would leave a removed stone behind forever.
+     *
+     * @param array<string,mixed> $item
+     */
+    private function writeEquipmentDetail(string $instanceId, array $item): void
+    {
+        if (!array_key_exists('enhancement_level', $item)) {
+            return;
+        }
+
+        $this->pdo->prepare(
+            'INSERT INTO equipment_instance
+                (instance_id, enhancement_level, rarity_definition_id)
+             VALUES (:iid, :enhancement, :rarity)
+             ON DUPLICATE KEY UPDATE
+                enhancement_level = VALUES(enhancement_level),
+                rarity_definition_id = VALUES(rarity_definition_id)'
+        )->execute([
+            ':iid'         => $instanceId,
+            ':enhancement' => max(0, (int) ($item['enhancement_level'] ?? 0)),
+            ':rarity'      => (string) ($item['rarity_id'] ?? ''),
+        ]);
+
+        $this->pdo->prepare('DELETE FROM equipment_enchant WHERE instance_id = :iid')
+            ->execute([':iid' => $instanceId]);
+
+        $enchant = $this->pdo->prepare(
+            'INSERT INTO equipment_enchant
+                (instance_id, socket_index, stone_definition_id, stone_rank)
+             VALUES (:iid, :socket, :stone, :rank)'
+        );
+
+        foreach ((array) ($item['enchants'] ?? []) as $row) {
+            $stone = (string) ($row['stone_id'] ?? '');
+            $socket = (int) ($row['socket'] ?? -1);
+
+            if ($stone === '' || $socket < 0) {
+                continue;
+            }
+
+            $enchant->execute([
+                ':iid'    => $instanceId,
+                ':socket' => $socket,
+                ':stone'  => $stone,
+                ':rank'   => max(1, (int) ($row['rank'] ?? 1)),
+            ]);
+        }
+
+        $this->pdo->prepare('DELETE FROM equipment_card_socket WHERE instance_id = :iid')
+            ->execute([':iid' => $instanceId]);
+
+        $card = $this->pdo->prepare(
+            'INSERT INTO equipment_card_socket
+                (instance_id, socket_index, card_definition_id, card_instance_id)
+             VALUES (:iid, :socket, :card, :card_instance)'
+        );
+
+        foreach ((array) ($item['cards'] ?? []) as $row) {
+            $definition = (string) ($row['card_id'] ?? '');
+            $socket = (int) ($row['socket'] ?? -1);
+            $cardInstance = (string) ($row['card_instance_id'] ?? '');
+
+            if ($definition === '' || $socket < 0 || $cardInstance === '') {
+                continue;
+            }
+
+            // The socketed card is an owned item in its own right, and the socket row
+            // has a foreign key to it. Its own row is written by whatever owns it.
+            $exists = $this->pdo->prepare(
+                'SELECT instance_id FROM item_instance WHERE instance_id = :iid'
+            );
+
+            $exists->execute([':iid' => $cardInstance]);
+
+            if ($exists->fetch() === false) {
+                continue;
+            }
+
+            $card->execute([
+                ':iid'           => $instanceId,
+                ':socket'        => $socket,
+                ':card'          => $definition,
+                ':card_instance' => $cardInstance,
             ]);
         }
     }

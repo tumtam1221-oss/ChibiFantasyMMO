@@ -1,4 +1,5 @@
 using ChibiFantasy.Core;
+using FishNet.Connection;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
 
@@ -110,6 +111,22 @@ namespace ChibiFantasy.Network
         /// <summary>Where movement input goes. Server-side only, and never sent anywhere.</summary>
         private ICharacterMovementRequestSink _movement;
 
+        /// <summary>Where inventory requests go. Server-side only, and never sent anywhere.</summary>
+        private ICharacterInventoryRequestSink _inventory;
+
+        /// <summary>
+        /// The last inventory the server sent this client.
+        /// </summary>
+        /// <remarks>
+        /// Held rather than raised as an event so a view can be built whenever it is ready,
+        /// including after the message arrived. <see cref="InventoryChanged"/> is for
+        /// anything that wants to know the moment it lands.
+        /// </remarks>
+        public InventorySnapshot Inventory { get; private set; }
+
+        /// <summary>Raised on the owning client when a new snapshot arrives.</summary>
+        public event System.Action<InventorySnapshot> InventoryChanged;
+
         /// <summary>Which character this is, as the server knows it.</summary>
         public CharacterId Character => new CharacterId(_characterId.Value);
 
@@ -150,6 +167,72 @@ namespace ChibiFantasy.Network
         public void ServerUseMovementSink(ICharacterMovementRequestSink sink)
         {
             _movement = sink;
+        }
+
+        /// <summary>Points this object's inventory requests at the server's authority.</summary>
+        [Server]
+        public void ServerUseInventorySink(ICharacterInventoryRequestSink sink)
+        {
+            _inventory = sink;
+        }
+
+        /// <summary>
+        /// Sends one client its own inventory.
+        /// </summary>
+        /// <remarks>
+        /// <b>A target message, not a synchronised value.</b> A bag is private: a SyncVar
+        /// would replicate it to every observer, and the observer scoping that would be
+        /// needed to prevent that does not exist in this project. Addressing the owner
+        /// directly sidesteps the question entirely -- nobody else is a recipient, so nobody
+        /// else can see it.
+        ///
+        /// <b>Whole state every time.</b> The client replaces what it had rather than
+        /// applying a change, so it never maintains inventory state of its own.
+        /// </remarks>
+        [TargetRpc]
+        private void TargetPublishInventory(NetworkConnection connection,
+            InventorySnapshot snapshot)
+        {
+            Inventory = snapshot;
+
+            InventoryChanged?.Invoke(snapshot);
+        }
+
+        /// <summary>
+        /// Sends the owner its bag the moment it can actually receive one.
+        /// </summary>
+        /// <remarks>
+        /// <b>Not at spawn.</b> A <see cref="TargetRpcAttribute"/> is refused while its
+        /// recipient is not yet an observer of the object, and the server spawns a character
+        /// before its own client is observing it. Publishing then reaches nobody -- silently,
+        /// because a refused target message is a warning and not a failure. This is the
+        /// moment it becomes possible, so this is where the first snapshot goes.
+        ///
+        /// Only for the owner. Everybody else observes this character without ever being
+        /// told what is in its bag.
+        /// </remarks>
+        public override void OnSpawnServer(NetworkConnection connection)
+        {
+            base.OnSpawnServer(connection);
+
+            if (_inventory == null || connection == null || connection != Owner) return;
+
+            if (_inventory.TryBuildSnapshot(connection.ClientId,
+                out InventorySnapshot snapshot))
+            {
+                TargetPublishInventory(connection, snapshot);
+            }
+        }
+
+        /// <summary>Sends the owning connection a fresh snapshot.</summary>
+        /// <remarks>Server-only and owner-addressed. A character with no connection -- one
+        /// that is mid-disconnect -- is simply not sent anything.</remarks>
+        [Server]
+        public void ServerPublishInventory(in InventorySnapshot snapshot)
+        {
+            if (Owner == null || !Owner.IsActive) return;
+
+            TargetPublishInventory(Owner, snapshot);
         }
 
         /// <summary>Publishes who this object represents.</summary>
@@ -218,6 +301,31 @@ namespace ChibiFantasy.Network
         /// value does. A client that wants to look smooth interpolates towards it; it does
         /// not write it.
         /// </remarks>
+        /// <summary>
+        /// Asks the server to rearrange or wear something.
+        /// </summary>
+        /// <remarks>
+        /// <b>Slots and a quantity.</b> Never an item's resulting state, never an ownership
+        /// claim, never a stat. The server reads what is actually in the slot named and asks
+        /// the existing service whether the action is allowed.
+        ///
+        /// <b>Ownership is the authentication</b>, as with every other request here: FishNet
+        /// refuses this from a connection that does not own the object, so a client cannot
+        /// reach into another player's bag by editing a field -- there is no field.
+        /// </remarks>
+        [ServerRpc]
+        public void RequestInventoryAction(InventoryAction action, int from, int to,
+            int quantity, long sequence)
+        {
+            if (_inventory == null) return;
+
+            int connectionId = Owner == null ? -1 : Owner.ClientId;
+
+            if (connectionId < 0) return;
+
+            _inventory.Submit(connectionId, action, from, to, quantity, sequence);
+        }
+
         [ServerRpc]
         public void RequestMove(float inputX, float inputZ, long sequence)
         {
