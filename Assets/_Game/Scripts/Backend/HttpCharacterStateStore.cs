@@ -147,6 +147,17 @@ namespace ChibiFantasy.Backend
                     row.String("applied_reward_id")));
             }
 
+            var applications = new List<PersistedRewardApplication>();
+
+            foreach (JsonReader row in json.Array("reward_applications"))
+            {
+                string pet = row.String("pet_instance_id");
+
+                applications.Add(new PersistedRewardApplication(row.String("reward_id"),
+                    string.IsNullOrEmpty(pet) ? default : new InstanceId(pet),
+                    row.Int("resulting_level"), row.Int("resulting_experience")));
+            }
+
             string activePet = json.String("active_pet_instance_id");
 
             var persisted = new PersistedCharacter(
@@ -172,7 +183,8 @@ namespace ChibiFantasy.Backend
                 new DefinitionId(json.String("devil_fruit")),
                 json.String("devil_fruit_source"),
                 pets,
-                string.IsNullOrEmpty(activePet) ? default : new InstanceId(activePet));
+                string.IsNullOrEmpty(activePet) ? default : new InstanceId(activePet),
+                applications);
 
             return CharacterPersistenceResult.Loaded(persisted);
         }
@@ -405,7 +417,27 @@ namespace ChibiFantasy.Backend
             }
 
             builder.Append("],\"active_pet_instance_id\":\"")
-                .Append(character.ActivePet.Value ?? string.Empty).Append("\"}");
+                .Append(character.ActivePet.Value ?? string.Empty).Append("\",");
+
+            // What this save is evidence of: the rewards whose experience it carries. The
+            // backend records them in the same transaction, so neither can land alone.
+            builder.Append("\"reward_applications\":[");
+
+            for (int i = 0; i < character.RewardApplications.Count; i++)
+            {
+                if (i > 0) builder.Append(',');
+
+                PersistedRewardApplication applied = character.RewardApplications[i];
+
+                builder.Append(new JsonWriter()
+                    .Add("reward_id", applied.RewardId)
+                    .Add("pet_instance_id", applied.IsPet ? applied.Pet.Value : string.Empty)
+                    .Add("resulting_level", applied.Level)
+                    .Add("resulting_experience", (int)applied.Experience)
+                    .ToJson());
+            }
+
+            builder.Append("]}");
 
             return builder.ToString();
         }

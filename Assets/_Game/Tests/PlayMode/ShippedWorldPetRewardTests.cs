@@ -18,7 +18,8 @@ using UnityEngine.TestTools;
 namespace ChibiFantasy.Tests.PlayMode
 {
     /// <summary>
-    /// A pet earning experience from a real defeat in the world the shipped scene composed.
+    /// Experience earned from real defeats in the world the shipped scene composed: whose
+    /// pet gets it, whose character gets it, and how often.
     /// </summary>
     /// <remarks>
     /// <b>Real kills, not injected rewards.</b> Every defeat below is the production boss
@@ -89,6 +90,9 @@ namespace ChibiFantasy.Tests.PlayMode
             /// <summary>When set, deliveries land but nothing about them is stamped.</summary>
             public bool StampsRefused { get; set; }
 
+            /// <summary>Reward ids whose stamps stay refused after the window closes.</summary>
+            public readonly HashSet<string> Unstampable = new HashSet<string>();
+
             public IReadOnlyList<PersistedMonsterReward> All() => _byDefeat.Values.ToList();
 
             public PersistedMonsterReward Of(InstanceId defeat)
@@ -139,7 +143,7 @@ namespace ChibiFantasy.Tests.PlayMode
                 bool? cursorCommitted, bool? lootPublished, bool complete,
                 IReadOnlyList<InstanceId> petExperienceDelivered = null)
             {
-                if (Broken || StampsRefused)
+                if (Broken || StampsRefused || Unstampable.Contains(rewardId))
                 {
                     return MonsterRewardOutboxResult.Failed(
                         MonsterRewardOutboxFailure.Unreachable, "backend down");
@@ -756,6 +760,278 @@ namespace ChibiFantasy.Tests.PlayMode
                 "a six-player party rolled the card chance more than once");
         }
 
+        // ---- K: a character's own experience, saved but never stamped ----------------------------
+
+        [UnityTest]
+        public IEnumerator ACharactersExperienceIsNotPaidTwiceAfterALostStamp()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter hero = Admit("char-ann", 1);
+
+            LogAssert.ignoreFailingMessages = true;
+
+            string reward = KillUnstamped(hero);
+
+            long experience = hero.Domain.Progression.Experience;
+            int level = hero.Domain.Progression.Level;
+
+            Assert.That(_outbox.All()[0].Experience[0].IsDelivered, Is.False,
+                "precondition: the stamp never landed");
+            Assert.That(level, Is.GreaterThan(1), "precondition: they were paid");
+
+            // The world dies; the backend that lost the stamp comes back.
+            _outbox.Unstampable.Clear();
+
+            yield return TearDownWorld();
+            yield return LoadWorld();
+
+            LivingCharacter returned = Admit("char-ann", 1);
+
+            Assert.That(returned.HasAppliedReward(reward), Is.True,
+                "the character carries no evidence of what it was already paid");
+
+            yield return Retry();
+
+            LogAssert.ignoreFailingMessages = false;
+
+            Assert.That(returned.Domain.Progression.Level, Is.EqualTo(level),
+                "the character was paid a second time");
+            Assert.That(returned.Domain.Progression.Experience, Is.EqualTo(experience));
+            Assert.That(_outbox.All()[0].Experience[0].IsDelivered, Is.True,
+                "the reward was never reconciled");
+        }
+
+        // ---- L: one reward unstamped, the next one normal, then a restart ---------------------------
+
+        [UnityTest]
+        public IEnumerator TwoOverlappingRewardsAreEachAppliedExactlyOnce()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter hero = Admit("char-ann", 1, Pets("pet-1"), active: "pet-1");
+
+            LogAssert.ignoreFailingMessages = true;
+
+            // R1 lands but is never stamped. R2 then lands normally -- which is what would
+            // overwrite a single "last reward" marker on the pet.
+            KillUnstamped(hero);
+
+            Kill(hero, Spawn());
+
+            yield return Tick();
+
+            long experience = hero.Domain.Progression.Experience;
+            int level = hero.Domain.Progression.Level;
+            int pet = Pet(hero, "pet-1").Experience;
+
+            Assert.That(_outbox.All().Count, Is.EqualTo(2), "precondition: two rewards");
+
+            _outbox.Unstampable.Clear();
+
+            yield return TearDownWorld();
+            yield return LoadWorld();
+
+            LivingCharacter returned = Admit("char-ann", 1);
+
+            Assert.That(Pet(returned, "pet-1").Experience, Is.EqualTo(pet),
+                "precondition: both pet payments were durable");
+
+            yield return Retry();
+
+            LogAssert.ignoreFailingMessages = false;
+
+            Assert.That(returned.Domain.Progression.Level, Is.EqualTo(level),
+                "the character was paid one of the two rewards twice");
+            Assert.That(returned.Domain.Progression.Experience, Is.EqualTo(experience));
+            Assert.That(Pet(returned, "pet-1").Experience, Is.EqualTo(pet),
+                "the pet was paid one of the two rewards twice");
+
+            foreach (PersistedMonsterReward stored in _outbox.All())
+            {
+                Assert.That(stored.IsComplete, Is.True,
+                    "reward " + stored.RewardId + " never finished");
+            }
+        }
+
+        // ---- M: two rewards, two different pets ---------------------------------------------------------
+
+        [UnityTest]
+        public IEnumerator EachRewardStaysWithThePetThatWasOutForIt()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter hero = Admit("char-ann", 1, Pets("pet-1", "pet-2"),
+                active: "pet-1");
+
+            LogAssert.ignoreFailingMessages = true;
+
+            KillUnstamped(hero);
+
+            Activate(hero, "pet-2");
+
+            Kill(hero, Spawn());
+
+            yield return Tick();
+
+            int first = Pet(hero, "pet-1").Experience;
+            int second = Pet(hero, "pet-2").Experience;
+
+            Assert.That(first, Is.GreaterThan(0));
+            Assert.That(second, Is.GreaterThan(0));
+
+            _outbox.Unstampable.Clear();
+
+            yield return TearDownWorld();
+            yield return LoadWorld();
+
+            LivingCharacter returned = Admit("char-ann", 1);
+
+            yield return Retry();
+
+            LogAssert.ignoreFailingMessages = false;
+
+            Assert.That(Pet(returned, "pet-1").Experience, Is.EqualTo(first),
+                "the first pet was paid again for a reward it already had");
+            Assert.That(Pet(returned, "pet-2").Experience, Is.EqualTo(second),
+                "the second pet was paid again for a reward it already had");
+        }
+
+        // ---- N: three rapid defeats, failures at different points -------------------------------------------
+
+        [UnityTest]
+        public IEnumerator ThreeRapidDefeatsEachPayOnceAcrossARestart()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter hero = Admit("char-ann", 1, Pets("pet-1"), active: "pet-1");
+
+            LogAssert.ignoreFailingMessages = true;
+
+            // One with a lost stamp, one with the character store down, one ordinary.
+            KillUnstamped(hero);
+
+            _characters.Broken = true;
+            Kill(hero, Spawn());
+            yield return Tick();
+            _characters.Broken = false;
+
+            Kill(hero, Spawn());
+
+            yield return Retry();
+
+            _outbox.Unstampable.Clear();
+
+            yield return Retry();
+
+            long experience = hero.Domain.Progression.Experience;
+            int level = hero.Domain.Progression.Level;
+            int pet = Pet(hero, "pet-1").Experience;
+
+            yield return TearDownWorld();
+            yield return LoadWorld();
+
+            LivingCharacter returned = Admit("char-ann", 1);
+
+            yield return Retry();
+
+            LogAssert.ignoreFailingMessages = false;
+
+            Assert.That(_outbox.All().Count, Is.EqualTo(3), "three defeats, three rewards");
+
+            Assert.That(returned.Domain.Progression.Level, Is.EqualTo(level),
+                "a restart paid one of the three again");
+            Assert.That(returned.Domain.Progression.Experience, Is.EqualTo(experience));
+            Assert.That(Pet(returned, "pet-1").Experience, Is.EqualTo(pet));
+
+            foreach (PersistedMonsterReward stored in _outbox.All())
+            {
+                Assert.That(stored.IsComplete, Is.True,
+                    "reward " + stored.RewardId + " never finished");
+            }
+        }
+
+        // ---- O: two recoveries racing for the same reward ----------------------------------------------------
+
+        [UnityTest]
+        public IEnumerator ASecondRecoveryPassPaysNothingTheFirstAlreadyDid()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter hero = Admit("char-ann", 1, Pets("pet-1"), active: "pet-1");
+
+            LogAssert.ignoreFailingMessages = true;
+
+            KillUnstamped(hero);
+
+            _outbox.Unstampable.Clear();
+
+            yield return TearDownWorld();
+            yield return LoadWorld();
+
+            LivingCharacter returned = Admit("char-ann", 1);
+
+            yield return Retry();
+
+            long experience = returned.Domain.Progression.Experience;
+            int level = returned.Domain.Progression.Level;
+            int pet = Pet(returned, "pet-1").Experience;
+
+            // A second worker asking storage for the same work, and a third pass over it.
+            _bootstrap.Rewards.RecoverPending();
+
+            yield return Retry();
+            yield return Retry();
+
+            LogAssert.ignoreFailingMessages = false;
+
+            Assert.That(returned.Domain.Progression.Level, Is.EqualTo(level),
+                "a second recovery pass paid the character again");
+            Assert.That(returned.Domain.Progression.Experience, Is.EqualTo(experience));
+            Assert.That(Pet(returned, "pet-1").Experience, Is.EqualTo(pet),
+                "a second recovery pass paid the pet again");
+        }
+
+        // ---- P: a party still splits as it did ---------------------------------------------------------------------
+
+        [UnityTest]
+        public IEnumerator APartySplitAndItsRotationSurviveTheLedger()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter ann = Admit("char-ann", 1, Pets("pet-ann"), active: "pet-ann");
+            LivingCharacter ben = Admit("char-ben", 2);
+
+            PartyState party = Party(PartyLootPolicy.RoundRobin, ann, ben);
+
+            Assert.That(_bootstrap.Parties.Persist(new SessionId("session-char-ann"), party,
+                _parties).IsOk, Is.True);
+
+            Kill(ann, Spawn());
+
+            yield return Tick();
+
+            PersistedMonsterReward reward = _outbox.All()[0];
+
+            Assert.That(reward.Experience.Count, Is.EqualTo(2), "the split changed");
+
+            long total = 0;
+
+            foreach (MonsterRewardGrant grant in reward.Experience)
+            {
+                total += grant.Experience;
+
+                Assert.That(grant.IsDelivered, Is.True, grant.Character + " was not paid");
+            }
+
+            Assert.That(total, Is.GreaterThan(0));
+
+            // The rotation this defeat spent is recorded, exactly as it was before.
+            Assert.That(reward.HasCursor, Is.True, "the party turn was not decided");
+            Assert.That(reward.IsCursorCommitted, Is.True,
+                "the party turn was never committed");
+        }
+
         // ---- harness ---------------------------------------------------------------------------------------------
 
         private IEnumerator LoadWorld(float roll = 1f)
@@ -828,6 +1104,35 @@ namespace ChibiFantasy.Tests.PlayMode
             for (var i = 0; i < 320; i++) _bootstrap.Rewards.RetryHeld();
 
             yield return null;
+        }
+
+        /// <summary>
+        /// Kills the boss and loses the delivery stamp for the reward it produced.
+        /// </summary>
+        /// <remarks>Everything else lands: the decision is recorded, the experience is
+        /// applied, and the character is saved. Only the stamp is lost, which is the crash
+        /// window these tests stand in. The reward stays unstampable afterwards so later
+        /// retries cannot quietly finish it.</remarks>
+        /// <returns>The reward's own durable id.</returns>
+        private string KillUnstamped(LivingCharacter hero)
+        {
+            int before = _outbox.All().Count;
+
+            _outbox.StampsRefused = true;
+
+            Kill(hero, Spawn());
+
+            _outbox.StampsRefused = false;
+
+            IReadOnlyList<PersistedMonsterReward> all = _outbox.All();
+
+            Assert.That(all.Count, Is.EqualTo(before + 1), "the defeat was not recorded");
+
+            string rewardId = all[all.Count - 1].RewardId;
+
+            _outbox.Unstampable.Add(rewardId);
+
+            return rewardId;
         }
 
         private static PersistedPet[] Pets(params string[] instances)

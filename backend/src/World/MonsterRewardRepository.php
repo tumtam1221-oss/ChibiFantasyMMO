@@ -360,8 +360,21 @@ final class MonsterRewardRepository
                    AND delivered_at IS NULL'
             );
 
+            // The application evidence is retired with the stamp it belongs to, in this
+            // transaction. Until the stamp is durable the evidence stays, which is what
+            // makes a recovery after a lost stamp reconcile instead of pay again.
+            $forgetCharacter = $this->pdo->prepare(
+                'DELETE FROM character_experience_application
+                 WHERE reward_id = :reward AND character_id = :cid'
+            );
+
             foreach ($experienceDelivered as $characterId) {
                 $paid->execute([':reward' => $rewardId, ':cid' => (string) $characterId]);
+
+                $forgetCharacter->execute([
+                    ':reward' => $rewardId,
+                    ':cid'    => (string) $characterId,
+                ]);
             }
 
             // Same rule for a pet: stamped, never cleared, and keyed by the exact pet
@@ -373,8 +386,18 @@ final class MonsterRewardRepository
                    AND delivered_at IS NULL'
             );
 
+            $forgetPet = $this->pdo->prepare(
+                'DELETE FROM pet_experience_application
+                 WHERE reward_id = :reward AND pet_instance_id = :pid'
+            );
+
             foreach ($petExperienceDelivered as $petInstanceId) {
                 $petPaid->execute([
+                    ':reward' => $rewardId,
+                    ':pid'    => (string) $petInstanceId,
+                ]);
+
+                $forgetPet->execute([
                     ':reward' => $rewardId,
                     ':pid'    => (string) $petInstanceId,
                 ]);

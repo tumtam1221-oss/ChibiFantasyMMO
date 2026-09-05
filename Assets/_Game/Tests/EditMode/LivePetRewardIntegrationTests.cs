@@ -294,6 +294,105 @@ namespace ChibiFantasy.Tests.EditMode
                 "the reconciled reward is still pending");
         }
 
+        [Test]
+        public void OverlappingRewardsAreEachAppliedOnceThroughTheRealDatabase()
+        {
+            // The closure scenario, against MySQL: one reward loses its delivery stamp, the
+            // next is delivered normally to a different pet, the world dies, and a fresh one
+            // finishes the job. A recipient that remembered only its last reward would pay
+            // the first one again here.
+            WorldCharacterRegistry world = NewRegistry();
+            LivingCharacter hero = Enter(world);
+
+            var pets = new CharacterPetAuthority(world, PetRegistry());
+
+            Assert.That(pets.Grant(1, new DefinitionId(PetA)).IsAccepted, Is.True);
+            Assert.That(pets.Grant(1, new DefinitionId(PetA)).IsAccepted, Is.True);
+
+            InstanceId first = hero.Pets[0].InstanceId;
+            InstanceId second = hero.Pets[1].InstanceId;
+
+            Assert.That(pets.Activate(1, first).IsAccepted, Is.True);
+            Assert.That(world.Save(hero, force: true).IsOk, Is.True);
+
+            long experienceBefore = Banked(hero);
+
+            MonsterRewardAuthority rewards = NewAuthority(world, out MonsterWorldRuntime runtime,
+                out UnstampedOutbox stamps);
+
+            // R1: everything lands except the stamp.
+            stamps.LoseEverything = true;
+
+            LivingMonster firstCorpse = Corpse(runtime);
+
+            rewards.Grant(firstCorpse.Instance, hero.Combatant.CombatantId);
+
+            stamps.LoseEverything = false;
+
+            PersistedMonsterReward r1 = Stored(firstCorpse.Instance);
+
+            Assert.That(r1.Exists, Is.True, "R1 never reached storage");
+            Assert.That(r1.Experience[0].IsDelivered, Is.False,
+                "precondition: R1's stamp was lost");
+
+            stamps.Unstampable.Add(r1.RewardId);
+
+            // The player swaps pets, and R2 is delivered normally.
+            Assert.That(pets.Activate(1, second).IsAccepted, Is.True);
+
+            LivingMonster secondCorpse = Corpse(runtime);
+
+            rewards.Grant(secondCorpse.Instance, hero.Combatant.CombatantId);
+
+            PersistedMonsterReward r2 = Stored(secondCorpse.Instance);
+
+            Assert.That(r2.Exists, Is.False, "R2 did not finish");
+
+            int owed = r1.PetExperience[0].Experience;
+
+            Assert.That(r1.PetExperience[0].Pet, Is.EqualTo(first));
+
+            // What the database holds now, read by a world that shares nothing with this one.
+            LivingCharacter between = Enter(NewRegistry(), connectionId: 2);
+
+            long experienceAfterBoth = Banked(between);
+            int firstPet = Pet(between, first).Experience;
+            int secondPet = Pet(between, second).Experience;
+
+            Assert.That(firstPet, Is.EqualTo(owed));
+            Assert.That(secondPet, Is.EqualTo(owed),
+                "the second pet was not paid for the second defeat");
+
+            // The world dies, and the backend that lost R1's stamp is back.
+            WorldCharacterRegistry restarted = NewRegistry();
+            LivingCharacter returned = Enter(restarted, connectionId: 3);
+
+            MonsterRewardAuthority recovered = NewAuthority(restarted,
+                out MonsterWorldRuntime _);
+
+            Assert.That(recovered.RecoverPending(), Is.GreaterThan(0),
+                "the fresh world found nothing to finish");
+
+            for (var i = 0; i < 320; i++) recovered.RetryHeld();
+
+            // And the last word, from MySQL, through a fourth world.
+            LivingCharacter finally_ = Enter(NewRegistry(), connectionId: 4);
+
+            Assert.That(Banked(finally_), Is.EqualTo(experienceAfterBoth),
+                "the character was paid one of the two rewards twice");
+            Assert.That(Pet(finally_, first).Experience, Is.EqualTo(firstPet),
+                "the first pet was paid its reward twice");
+            Assert.That(Pet(finally_, second).Experience, Is.EqualTo(secondPet),
+                "the second pet was paid its reward twice");
+
+            Assert.That(Banked(finally_) - experienceBefore,
+                Is.EqualTo(MonsterExperience * 2),
+                "two defeats did not pay exactly twice");
+
+            Assert.That(Stored(firstCorpse.Instance).Exists, Is.False,
+                "R1 never reconciled");
+        }
+
         // ---- the world this test builds around the real backend --------------------------------------
 
         private string PetCharacter => _fixture.RewardCharacterId;
@@ -349,19 +448,28 @@ namespace ChibiFantasy.Tests.EditMode
         private MonsterRewardAuthority NewAuthority(WorldCharacterRegistry registry,
             out MonsterWorldRuntime runtime, bool stampsRefused = false)
         {
+            return NewAuthority(registry, out runtime, out UnstampedOutbox _,
+                stampsRefused);
+        }
+
+        private MonsterRewardAuthority NewAuthority(WorldCharacterRegistry registry,
+            out MonsterWorldRuntime runtime, out UnstampedOutbox stamps,
+            bool stampsRefused = false)
+        {
             var monsters = new DefinitionRegistry<MonsterDefinition>();
             monsters.Register(MonsterDefinition());
 
             runtime = new MonsterWorldRuntime(registry, monsters, new DefinitionId(MaxHp),
                 new CombatTeam(2));
 
-            IMonsterRewardOutbox outbox =
-                new HttpMonsterRewardOutbox(_transport, new ApiToken(_api));
-
-            if (stampsRefused) outbox = new UnstampedOutbox(outbox);
+            stamps = new UnstampedOutbox(
+                new HttpMonsterRewardOutbox(_transport, new ApiToken(_api)))
+            {
+                LoseEverything = stampsRefused,
+            };
 
             return new MonsterRewardAuthority(runtime, registry, Curve(), null, null, null,
-                null, null, 0f, 0f, null, 0f, outbox, PetRegistry(), Share);
+                null, null, 0f, 0f, null, 0f, stamps, PetRegistry(), Share);
         }
 
         /// <summary>
@@ -375,6 +483,14 @@ namespace ChibiFantasy.Tests.EditMode
             private readonly IMonsterRewardOutbox _real;
 
             public UnstampedOutbox(IMonsterRewardOutbox real) => _real = real;
+
+            /// <summary>Reward ids whose stamps are lost. Empty means every stamp lands.</summary>
+            /// <remarks>Per reward, because the scenario that matters is one reward losing
+            /// its stamp while the next one is delivered normally.</remarks>
+            public readonly HashSet<string> Unstampable = new HashSet<string>();
+
+            /// <summary>Loses every stamp, for the window one reward is decided in.</summary>
+            public bool LoseEverything { get; set; }
 
             public MonsterRewardOutboxResult Record(SessionId session,
                 PersistedMonsterReward reward)
@@ -393,8 +509,15 @@ namespace ChibiFantasy.Tests.EditMode
                 bool? cursorCommitted, bool? lootPublished, bool complete,
                 IReadOnlyList<InstanceId> petExperienceDelivered = null)
             {
-                return MonsterRewardOutboxResult.Failed(
-                    MonsterRewardOutboxFailure.Unreachable, "the world stopped here");
+                if (LoseEverything || Unstampable.Contains(rewardId))
+                {
+                    return MonsterRewardOutboxResult.Failed(
+                        MonsterRewardOutboxFailure.Unreachable, "the world stopped here");
+                }
+
+                return _real.Progress(session, rewardId, revision, experienceDelivered,
+                    lootClaimed, cursorCommitted, lootPublished, complete,
+                    petExperienceDelivered);
             }
         }
 
@@ -419,11 +542,31 @@ namespace ChibiFantasy.Tests.EditMode
 
             runtime.PopulateAll();
 
-            LivingMonster monster = runtime.All()[0];
+            // The first one still standing. Taking the first of all of them would hand
+            // back a corpse from an earlier defeat once a test kills more than one.
+            foreach (LivingMonster living in runtime.All())
+            {
+                if (!living.IsAlive) continue;
 
-            monster.State.ApplyHealthDelta(-10000);
+                living.State.ApplyHealthDelta(-10000);
 
-            return monster;
+                return living;
+            }
+
+            Assert.Fail("no living monster to kill");
+
+            return null;
+        }
+
+        /// <summary>
+        /// Total experience, level and remainder together.
+        /// </summary>
+        /// <remarks>The authored curve turns experience into levels, so the remainder alone
+        /// says nothing about how much was paid.</remarks>
+        private static long Banked(LivingCharacter character)
+        {
+            return (long)character.Domain.Progression.Level * 1000
+                + character.Domain.Progression.Experience;
         }
 
         private static PetInstance Pet(LivingCharacter owner, InstanceId instance)

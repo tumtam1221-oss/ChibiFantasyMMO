@@ -138,6 +138,30 @@ namespace ChibiFantasy.Server
 
         private readonly List<PetInstance> _pets;
 
+        /// <summary>
+        /// Rewards whose experience this character or one of their pets already has.
+        /// </summary>
+        /// <remarks>
+        /// <b>The evidence, not a marker.</b> One entry per reward, so a second reward
+        /// arriving while the first is still unstamped cannot erase what is known about the
+        /// first. Keyed by reward and, for a pet, by the exact instance.
+        ///
+        /// <b>Durable through the character's own save.</b> Entries are written back with
+        /// the progression they describe, so a crash cannot separate them; storage retires
+        /// each one as it stamps the delivery it belongs to, so this holds only what is in
+        /// flight.
+        /// </remarks>
+        private readonly HashSet<string> _appliedRewards = new HashSet<string>();
+
+        /// <summary>
+        /// Applications this world has made but has not yet managed to save.
+        /// </summary>
+        /// <remarks>The difference between "the progression includes this reward because
+        /// storage says so" and "because we just applied it and the save has not landed".
+        /// The first may be stamped delivered; the second may not, because stamping it
+        /// would report a payment that no database has seen.</remarks>
+        private readonly HashSet<string> _unsavedApplications = new HashSet<string>();
+
         /// <summary>Every pet this character owns, whichever is out.</summary>
         /// <remarks>Owned entities, not inventory: Phase 12 deliberately gave a pet no bag
         /// slot and no item row, and this keeps that true by holding them somewhere a
@@ -165,6 +189,114 @@ namespace ChibiFantasy.Server
         }
 
         /// <summary>The pet with that identity, if this character owns it.</summary>
+        /// <summary>Whether this reward's experience is already part of the recipient.</summary>
+        /// <param name="rewardId">The reward's own durable id.</param>
+        /// <param name="pet">Which pet, or invalid for the character's own experience.</param>
+        public bool HasAppliedReward(string rewardId, InstanceId pet = default)
+        {
+            return !string.IsNullOrEmpty(rewardId)
+                && _appliedRewards.Contains(ApplicationKey(rewardId, pet));
+        }
+
+        /// <summary>Whether that application has reached storage.</summary>
+        /// <remarks>What a delivery stamp may be written against. An application that is
+        /// only in memory is not evidence of anything a restart could find.</remarks>
+        public bool IsRewardApplicationDurable(string rewardId, InstanceId pet = default)
+        {
+            return HasAppliedReward(rewardId, pet)
+                && !_unsavedApplications.Contains(ApplicationKey(rewardId, pet));
+        }
+
+        /// <summary>
+        /// Records that a reward's experience has just been applied.
+        /// </summary>
+        /// <remarks>In memory until the next successful save, which is what carries it to
+        /// storage. A world that dies before that save applied nothing durable either, so
+        /// recovery pays once.</remarks>
+        internal void NoteAppliedReward(string rewardId, InstanceId pet = default)
+        {
+            if (string.IsNullOrEmpty(rewardId)) return;
+
+            string key = ApplicationKey(rewardId, pet);
+
+            _appliedRewards.Add(key);
+            _unsavedApplications.Add(key);
+        }
+
+        /// <summary>Restores what storage already knew about, on load.</summary>
+        /// <remarks>Durable by definition: it came back from the database.</remarks>
+        internal void RestoreAppliedReward(string rewardId, InstanceId pet = default)
+        {
+            if (string.IsNullOrEmpty(rewardId)) return;
+
+            _appliedRewards.Add(ApplicationKey(rewardId, pet));
+        }
+
+        /// <summary>
+        /// Forgets an application whose delivery has been stamped.
+        /// </summary>
+        /// <remarks>
+        /// The evidence exists to answer "is this reward still owed but already applied?",
+        /// and a stamped delivery has answered it for good: storage retires the row in the
+        /// same transaction that stamps it, so keeping it here would only resurrect it on
+        /// the next save and leave the table growing with history nothing reads.
+        ///
+        /// Called only after the stamp is durable. Forgetting first would be forgetting
+        /// evidence a restart still needs.
+        /// </remarks>
+        internal void ForgetAppliedReward(string rewardId, InstanceId pet = default)
+        {
+            if (string.IsNullOrEmpty(rewardId)) return;
+
+            string key = ApplicationKey(rewardId, pet);
+
+            _appliedRewards.Remove(key);
+            _unsavedApplications.Remove(key);
+        }
+
+        /// <summary>
+        /// Everything applied is now written down.
+        /// </summary>
+        /// <remarks>Called by the registry when a save succeeds, because the save carries
+        /// the applications with the progression they describe -- one landing means both
+        /// did.</remarks>
+        internal void MarkApplicationsDurable()
+        {
+            _unsavedApplications.Clear();
+        }
+
+        /// <summary>What this character is carrying evidence of, as rows to save.</summary>
+        public IReadOnlyList<PersistedRewardApplication> AppliedRewards()
+        {
+            var rows = new List<PersistedRewardApplication>();
+
+            foreach (string key in _appliedRewards)
+            {
+                int split = key.IndexOf('\n');
+
+                if (split < 0) continue;
+
+                string rewardId = key.Substring(0, split);
+                string pet = key.Substring(split + 1);
+
+                rows.Add(new PersistedRewardApplication(rewardId,
+                    string.IsNullOrEmpty(pet) ? default : new InstanceId(pet)));
+            }
+
+            return rows;
+        }
+
+        /// <summary>
+        /// One recipient, one reward, as a key.
+        /// </summary>
+        /// <remarks>A newline separates the two halves because neither an id nor an
+        /// instance may contain one, so no pair of different applications can spell the
+        /// same key.</remarks>
+        private static string ApplicationKey(string rewardId, InstanceId pet)
+        {
+            return rewardId + "\n" + (pet.IsValid ? pet.Value : string.Empty);
+        }
+
         public bool TryGetPet(InstanceId instance, out PetInstance pet)
         {
             pet = null;
@@ -552,6 +684,18 @@ namespace ChibiFantasy.Server
                 admission.Server, admission.Channel, domain.Character, domain.Skills, location,
                 spawn, loaded.Character.SaveRevision, team, inventory, equipment, fruit, pets);
 
+            // What storage already knows this character has been paid, per reward. A
+            // reward that is still owed but whose experience is already here reconciles
+            // rather than paying twice.
+            for (var i = 0; i < loaded.Character.RewardApplications.Count; i++)
+            {
+                PersistedRewardApplication applied = loaded.Character.RewardApplications[i];
+
+                if (!applied.Exists) continue;
+
+                living.RestoreAppliedReward(applied.RewardId, applied.Pet);
+            }
+
             // Whichever was out when they left. Through PetService, so the one-active rule
             // and the aura decision are made in the one place that owns them.
             if (loaded.Character.ActivePet.IsValid)
@@ -663,7 +807,7 @@ namespace ChibiFantasy.Server
             PersistedCharacter row = PersistedCharacterMapper.ToPersisted(living.Domain,
                 living.Skills, living.Location, living.Server, living.Account,
                 living.SaveRevision, living.Inventory, living.Equipment, living.DevilFruit,
-                living.Pets, living.Companion);
+                living.Pets, living.Companion, living.AppliedRewards());
 
             CharacterPersistenceResult result = _store.Save(living.Session, row,
                 living.SaveRevision);
@@ -671,6 +815,10 @@ namespace ChibiFantasy.Server
             if (result.IsOk)
             {
                 living.MarkSaved(result.SaveRevision);
+
+                // The row that just landed carried the reward applications with the
+                // progression they describe, so both are now durable or neither is.
+                living.MarkApplicationsDurable();
             }
 
             return result;

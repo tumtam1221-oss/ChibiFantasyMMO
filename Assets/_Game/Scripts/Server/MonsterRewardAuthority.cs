@@ -212,6 +212,12 @@ namespace ChibiFantasy.Server
         /// <summary>Authored pets, so a pet's own curve decides what its experience buys.</summary>
         private readonly IDefinitionRegistry<PetDefinition> _pets;
 
+        /// <summary>Whose pet each just-stamped grant belonged to. Scratch, not state.</summary>
+        /// <remarks>Reused between calls rather than allocated per delivery, which is the
+        /// same shape the despawn list above already has.</remarks>
+        private readonly Dictionary<string, CharacterId> _owners =
+            new Dictionary<string, CharacterId>();
+
         /// <summary>
         /// The fraction of a character's own award that their pet earns beside them.
         /// </summary>
@@ -281,20 +287,6 @@ namespace ChibiFantasy.Server
             public List<MonsterRewardPetGrant> PetGrants =
                 new List<MonsterRewardPetGrant>();
 
-            /// <summary>
-            /// Pets this world has given the experience to in memory but has not yet
-            /// managed to save.
-            /// </summary>
-            /// <remarks>
-            /// The difference between "the pet's marker says this reward, because storage
-            /// says so" and "the pet's marker says this reward, because we just set it and
-            /// the save has not landed". The first is delivered; the second is not, and
-            /// stamping it would lose the experience.
-            ///
-            /// In memory only, and correctly so: a process that dies holding this never
-            /// saved the experience either, so recovery finds no marker and pays once.
-            /// </remarks>
-            public readonly HashSet<string> PetApplied = new HashSet<string>();
 
             public PartyId Party;
             public CharacterId Claimant;
@@ -843,15 +835,16 @@ namespace ChibiFantasy.Server
         /// <remarks>Best effort by design: the side effect has already happened, and
         /// failing to write the bookkeeping must not undo it. What it costs is a repeat
         /// attempt later, which every step here is built to survive.</remarks>
-        private void Progress(HeldDefeat held, bool? cursorCommitted = null,
+        /// <returns>Whether storage accepted it, so a caller can retire what it stamped.</returns>
+        private bool Progress(HeldDefeat held, bool? cursorCommitted = null,
             bool? lootPublished = null, bool complete = false,
             IReadOnlyList<CharacterId> paid = null,
             IReadOnlyList<MonsterRewardLootEntry> claimed = null,
             IReadOnlyList<InstanceId> petsPaid = null)
         {
-            if (_outbox == null || !held.Recorded) return;
+            if (_outbox == null || !held.Recorded) return false;
 
-            if (!TryWorldSession(out SessionId session)) return;
+            if (!TryWorldSession(out SessionId session)) return false;
 
             MonsterRewardOutboxResult moved = _outbox.Progress(session, held.RewardId,
                 held.Revision, paid, claimed, cursorCommitted, lootPublished, complete,
@@ -861,11 +854,13 @@ namespace ChibiFantasy.Server
             {
                 held.Revision = moved.Revision;
 
-                return;
+                return true;
             }
 
             UnityEngine.Debug.LogWarning("[reward] could not record progress for "
                 + held.Monster + ": " + moved.Failure);
+
+            return false;
         }
 
         /// <summary>Holds a decided defeat so a retry can finish it without deciding again.</summary>
@@ -935,23 +930,42 @@ namespace ChibiFantasy.Server
                 }
 
                 MonsterRewardResult result = Apply(held.Monster, recipient,
-                    grant.Experience, held.Pile);
+                    grant.Experience, held.Pile, held.RewardId);
 
-                if (!result.IsGranted) continue;
-
-                held.Grants[i] = new MonsterRewardGrant(grant.Character, grant.Experience,
-                    true);
-
-                paid.Add(grant.Character);
-
+                // The killer hears what happened either way, including that the database
+                // did not hear about it -- that is the honest answer and the existing save
+                // lifecycle acts on it.
                 if (grant.Character == held.Killer && !found)
                 {
                     mine = result;
                     found = true;
                 }
+
+                // Applied but not written down is not paid. Marking it delivered here
+                // would stamp a payment no database has seen, and a restart would then find
+                // a reward that says it is finished and a character who never got it. The
+                // experience stays applied in memory and the save is retried; the
+                // application evidence is what stops it being granted twice.
+                if (!result.IsGranted || !result.IsPersisted) continue;
+
+                held.Grants[i] = new MonsterRewardGrant(grant.Character, grant.Experience,
+                    true);
+
+                paid.Add(grant.Character);
             }
 
-            if (paid.Count > 0) Progress(held, paid: paid);
+            if (paid.Count > 0 && Progress(held, paid: paid))
+            {
+                // Stamped, so storage has retired the evidence in the same transaction.
+                // Keeping it here would put it back on the next save.
+                for (var i = 0; i < paid.Count; i++)
+                {
+                    if (_characters.TryGetByCharacter(paid[i], out LivingCharacter settled))
+                    {
+                        settled.ForgetAppliedReward(held.RewardId);
+                    }
+                }
+            }
 
             return found
                 ? mine
@@ -990,6 +1004,8 @@ namespace ChibiFantasy.Server
 
             var paid = new List<InstanceId>();
 
+            _owners.Clear();
+
             for (var i = 0; i < held.PetGrants.Count; i++)
             {
                 MonsterRewardPetGrant grant = held.PetGrants[i];
@@ -1013,17 +1029,12 @@ namespace ChibiFantasy.Server
                     continue;
                 }
 
-                if (pet.AppliedRewardId != held.RewardId)
+                // Already this pet's, from an attempt whose stamp never landed. The
+                // evidence is a row naming this reward and this exact pet, so a later
+                // reward for the same pet cannot erase it -- which a single "last reward"
+                // marker on the pet could, and did.
+                if (!owner.HasAppliedReward(held.RewardId, grant.Pet))
                 {
-                    // Another reward is applied to this pet and has not been stamped yet.
-                    // That one reconciles first: overwriting the marker now would leave it
-                    // with no evidence that it was ever paid.
-                    if (!string.IsNullOrEmpty(pet.AppliedRewardId)
-                        && IsAppliedButUnstamped(pet.AppliedRewardId, grant.Pet))
-                    {
-                        continue;
-                    }
-
                     // Phase 12 decides what the experience buys: multiple levels in one
                     // grant, the remainder kept, and the authored cap respected. There is
                     // no second progression formula here.
@@ -1039,25 +1050,26 @@ namespace ChibiFantasy.Server
                         continue;
                     }
 
-                    // Set with the experience it describes, so the save below carries both
-                    // or neither.
+                    // Both recorded with the experience they describe, so the save below
+                    // carries all of it or none of it. The marker on the pet is kept as a
+                    // diagnostic of what it last received; the ledger entry is the evidence.
+                    // The marker on the pet is kept as a diagnostic of what it last
+                    // received; the application entry beside it is the evidence.
                     pet.SetAppliedReward(held.RewardId);
 
-                    held.PetApplied.Add(grant.Pet.Value);
+                    owner.NoteAppliedReward(held.RewardId, grant.Pet);
                 }
 
-                if (held.PetApplied.Contains(grant.Pet.Value))
+                if (!owner.IsRewardApplicationDurable(held.RewardId, grant.Pet))
                 {
                     owner.MarkDirty();
 
                     if (!_characters.Save(owner).IsOk)
                     {
-                        // Applied but not durable. Left owed, and the marker stops the next
-                        // attempt granting it a second time.
+                        // Applied but not durable. Left owed, and the application evidence
+                        // stops the next attempt granting it a second time.
                         continue;
                     }
-
-                    held.PetApplied.Remove(grant.Pet.Value);
                 }
 
                 // Durable: either this world just saved it, or it was already stored and
@@ -1066,34 +1078,23 @@ namespace ChibiFantasy.Server
                     grant.Experience, true);
 
                 paid.Add(grant.Pet);
+
+                _owners[grant.Pet.Value] = grant.Owner;
             }
 
-            if (paid.Count > 0) Progress(held, petsPaid: paid);
-        }
+            if (paid.Count == 0 || !Progress(held, petsPaid: paid)) return;
 
-        /// <summary>
-        /// Whether some other reward has been applied to this pet without being stamped.
-        /// </summary>
-        /// <remarks>What keeps one marker sufficient. While a reward is applied but not
-        /// stamped, no second reward may touch that pet -- so the pet only ever needs to
-        /// remember the last one.</remarks>
-        private bool IsAppliedButUnstamped(string rewardId, InstanceId pet)
-        {
-            foreach (KeyValuePair<string, HeldDefeat> entry in _held)
+            for (var i = 0; i < paid.Count; i++)
             {
-                HeldDefeat other = entry.Value;
+                if (!_owners.TryGetValue(paid[i].Value, out CharacterId owner)) continue;
 
-                if (other == null || other.RewardId != rewardId) continue;
-
-                for (var i = 0; i < other.PetGrants.Count; i++)
+                if (_characters.TryGetByCharacter(owner, out LivingCharacter settled))
                 {
-                    MonsterRewardPetGrant grant = other.PetGrants[i];
-
-                    if (grant.Pet == pet && !grant.IsDelivered) return true;
+                    settled.ForgetAppliedReward(held.RewardId, paid[i]);
                 }
             }
 
-            return false;
+            _owners.Clear();
         }
 
         private static InstanceId LootIdOf(HeldDefeat held)
@@ -1491,7 +1492,7 @@ namespace ChibiFantasy.Server
         /// write with no content.
         /// </remarks>
         private MonsterRewardResult Apply(InstanceId monster, LivingCharacter recipient,
-            int experience, LootObjectState pile)
+            int experience, LootObjectState pile, string rewardId = null)
         {
             InstanceId lootId = pile == null ? default : pile.LootId;
             int lootCount = pile == null ? 0 : pile.Count;
@@ -1507,9 +1508,31 @@ namespace ChibiFantasy.Server
                     levelBefore, progression.Experience, lootId, lootCount);
             }
 
-            // Phase 05 does the levelling: multiple levels in one call, remainder preserved,
-            // experience banked at the cap. There is no second formula here.
-            progression.AddExperience(experience, _progression);
+            // Already theirs, from an attempt whose delivery stamp never landed. The
+            // evidence is a row naming this reward and this character, written in the same
+            // transaction as the experience it describes -- so it cannot be there unless
+            // the experience is too, and a later reward for the same character cannot
+            // overwrite it.
+            bool applied = recipient.HasAppliedReward(rewardId);
+
+            if (!applied)
+            {
+                // Phase 05 does the levelling: multiple levels in one call, remainder
+                // preserved, experience banked at the cap. No second formula here.
+                progression.AddExperience(experience, _progression);
+
+                // Recorded with the experience, so the save below carries both or neither.
+                recipient.NoteAppliedReward(rewardId);
+            }
+
+            // Durable already: nothing to write, and the caller may stamp it.
+            if (recipient.IsRewardApplicationDurable(rewardId))
+            {
+                return MonsterRewardResult.Granted(true, MonsterRewardRejection.None,
+                    monster, recipient.Domain.Identity.CharacterId,
+                    applied ? 0 : experience, levelBefore, progression.Level,
+                    progression.Experience, lootId, lootCount);
+            }
 
             recipient.MarkDirty();
 
@@ -1522,8 +1545,8 @@ namespace ChibiFantasy.Server
                     : MonsterRewardRejection.PersistenceFailed;
 
             return MonsterRewardResult.Granted(saved.IsOk, reason, monster,
-                recipient.Domain.Identity.CharacterId, experience, levelBefore,
-                progression.Level, progression.Experience, lootId, lootCount);
+                recipient.Domain.Identity.CharacterId, applied ? 0 : experience,
+                levelBefore, progression.Level, progression.Experience, lootId, lootCount);
         }
 
         /// <summary>

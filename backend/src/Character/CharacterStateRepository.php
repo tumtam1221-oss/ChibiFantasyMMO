@@ -93,6 +93,8 @@ final class CharacterStateRepository
             'devil_fruit'   => $this->loadDevilFruit($characterId)['fruit'],
             'devil_fruit_source' => $this->loadDevilFruit($characterId)['source'],
 
+            'reward_applications' => $this->loadRewardApplications($characterId),
+
             'pets'          => $this->loadPets($characterId),
             'active_pet_instance_id' => $row['active_pet_instance_id'] === null
                 ? '' : (string) $row['active_pet_instance_id'],
@@ -538,6 +540,7 @@ final class CharacterStateRepository
 
             $this->writeCharacterRow($characterId, $state);
             $this->writePets($accountId, $characterId, $state);
+            $this->writeRewardApplications($characterId, $state);
             $this->replaceStats($characterId, $state['stats'] ?? []);
             $this->replaceAppearance($characterId, $state['appearance'] ?? []);
             $this->replaceSkills($characterId, $state['skills'] ?? []);
@@ -699,6 +702,124 @@ final class CharacterStateRepository
         $this->pdo->prepare(
             'UPDATE `character` SET active_pet_instance_id = :pid WHERE character_id = :cid'
         )->execute([':pid' => $active, ':cid' => $characterId]);
+    }
+
+    /**
+     * Records that a reward's experience is now part of this character's progression.
+     *
+     * **Inside the caller's transaction, and that is the entire point.** These rows land
+     * with the experience they describe, so a crash cannot leave one without the other. The
+     * alternative -- writing them from a second endpoint afterwards -- would be the same
+     * window this exists to close, moved one step along.
+     *
+     * **Insert-only, and duplicates are not an error.** An application that is already
+     * recorded is the same application; a retry that re-sends it must not fail the save it
+     * is attached to. The primary key is what makes the identity unique, and IGNORE is what
+     * makes repeating it harmless.
+     *
+     * Absent means "this save is not about reward applications", exactly as absent pets
+     * mean a save that is not about pets. Only progress() removes rows.
+     *
+     * @param array<string,mixed> $state
+     */
+    private function writeRewardApplications(string $characterId, array $state): void
+    {
+        if (!array_key_exists('reward_applications', $state)) {
+            return;
+        }
+
+        $character = $this->pdo->prepare(
+            'INSERT IGNORE INTO character_experience_application
+                (reward_id, character_id, resulting_level, resulting_experience, applied_at)
+             VALUES (:reward, :cid, :level, :xp, NOW(3))'
+        );
+
+        $pet = $this->pdo->prepare(
+            'INSERT IGNORE INTO pet_experience_application
+                (reward_id, pet_instance_id, character_id, resulting_level,
+                 resulting_experience, applied_at)
+             VALUES (:reward, :pid, :cid, :level, :xp, NOW(3))'
+        );
+
+        foreach ((array) ($state['reward_applications'] ?? []) as $row) {
+            $rewardId = trim((string) ($row['reward_id'] ?? ''));
+
+            if ($rewardId === '') {
+                continue;
+            }
+
+            $petId = trim((string) ($row['pet_instance_id'] ?? ''));
+
+            if ($petId === '') {
+                $character->execute([
+                    ':reward' => $rewardId,
+                    ':cid'    => $characterId,
+                    ':level'  => max(0, (int) ($row['resulting_level'] ?? 0)),
+                    ':xp'     => max(0, (int) ($row['resulting_experience'] ?? 0)),
+                ]);
+
+                continue;
+            }
+
+            $pet->execute([
+                ':reward' => $rewardId,
+                ':pid'    => $petId,
+                ':cid'    => $characterId,
+                ':level'  => max(0, (int) ($row['resulting_level'] ?? 0)),
+                ':xp'     => max(0, (int) ($row['resulting_experience'] ?? 0)),
+            ]);
+        }
+    }
+
+    /**
+     * Every reward whose experience this character already has and whose delivery has not
+     * yet been stamped.
+     *
+     * Bounded by what is in flight rather than by history: progress() removes each row as
+     * it stamps the delivery it belongs to.
+     *
+     * @return list<array{reward_id:string,pet_instance_id:string,resulting_level:int,
+     *                    resulting_experience:int}>
+     */
+    private function loadRewardApplications(string $characterId): array
+    {
+        $applications = [];
+
+        $characters = $this->pdo->prepare(
+            'SELECT reward_id, resulting_level, resulting_experience
+             FROM character_experience_application WHERE character_id = :cid
+             ORDER BY applied_at ASC, reward_id ASC'
+        );
+
+        $characters->execute([':cid' => $characterId]);
+
+        foreach ($characters as $row) {
+            $applications[] = [
+                'reward_id'            => (string) $row['reward_id'],
+                'pet_instance_id'      => '',
+                'resulting_level'      => (int) $row['resulting_level'],
+                'resulting_experience' => (int) $row['resulting_experience'],
+            ];
+        }
+
+        $pets = $this->pdo->prepare(
+            'SELECT reward_id, pet_instance_id, resulting_level, resulting_experience
+             FROM pet_experience_application WHERE character_id = :cid
+             ORDER BY applied_at ASC, reward_id ASC'
+        );
+
+        $pets->execute([':cid' => $characterId]);
+
+        foreach ($pets as $row) {
+            $applications[] = [
+                'reward_id'            => (string) $row['reward_id'],
+                'pet_instance_id'      => (string) $row['pet_instance_id'],
+                'resulting_level'      => (int) $row['resulting_level'],
+                'resulting_experience' => (int) $row['resulting_experience'],
+            ];
+        }
+
+        return $applications;
     }
 
     /**

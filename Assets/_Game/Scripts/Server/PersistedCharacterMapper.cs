@@ -227,7 +227,8 @@ namespace ChibiFantasy.Server
             CharacterEquipmentState equipment = null,
             CharacterDevilFruitState devilFruit = null,
             IReadOnlyList<PetInstance> pets = null,
-            PetCompanionState companion = null)
+            PetCompanionState companion = null,
+            IReadOnlyList<PersistedRewardApplication> rewardApplications = null)
         {
             if (character == null) return null;
 
@@ -290,7 +291,8 @@ namespace ChibiFantasy.Server
                 PetsOf(pets),
                 companion == null || companion.Summoned == null
                     ? default
-                    : companion.Summoned.InstanceId);
+                    : companion.Summoned.InstanceId,
+                rewardApplications);
         }
 
         /// <summary>

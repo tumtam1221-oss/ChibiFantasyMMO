@@ -216,6 +216,60 @@ namespace ChibiFantasy.Contracts
     /// distinction is what Phase 18.16A got wrong for equipment, and it is written down here
     /// so it is not got wrong again.
     /// </remarks>
+    /// <summary>
+    /// Durable evidence that one reward's experience is already part of one recipient.
+    /// </summary>
+    /// <remarks>
+    /// <b>Per reward, and that is the whole point.</b> A recipient may have two rewards in
+    /// flight at once; the later one must not erase what is known about the earlier. So this
+    /// is a row per <see cref="RewardId"/> rather than a marker naming the last one.
+    ///
+    /// <b>Written with the progression it describes.</b> These travel in the same save that
+    /// carries the experience, so the backend commits both in one transaction and they
+    /// cannot disagree about what happened.
+    ///
+    /// <b>An invalid <see cref="Pet"/> means the character themselves.</b> One shape for
+    /// both recipients, because the question -- has this reward already been applied? -- is
+    /// the same question.
+    ///
+    /// <b>Not a total, and not a level.</b> The numbers here are diagnostic: two different
+    /// rewards can leave a recipient on the same experience, so nothing may key idempotency
+    /// on them.
+    /// </remarks>
+    public readonly struct PersistedRewardApplication
+    {
+        public PersistedRewardApplication(string rewardId, InstanceId pet = default,
+            int level = 0, long experience = 0)
+        {
+            RewardId = rewardId ?? string.Empty;
+            Pet = pet;
+            Level = level;
+            Experience = experience;
+        }
+
+        /// <summary>The reward whose experience the recipient already has.</summary>
+        public string RewardId { get; }
+
+        /// <summary>Which pet, or invalid for the character's own experience.</summary>
+        public InstanceId Pet { get; }
+
+        /// <summary>What the progression became. Diagnostic only.</summary>
+        public int Level { get; }
+
+        public long Experience { get; }
+
+        public bool IsPet => Pet.IsValid;
+
+        public bool Exists => !string.IsNullOrEmpty(RewardId);
+
+        public override string ToString()
+        {
+            return Exists
+                ? RewardId + (IsPet ? " -> " + Pet : " -> character")
+                : "no application";
+        }
+    }
+
     public readonly struct PersistedPet
     {
         public PersistedPet(InstanceId instance, DefinitionId pet, int level,
@@ -292,8 +346,11 @@ namespace ChibiFantasy.Contracts
             int saveRevision, IReadOnlyList<PersistedItem> items = null,
             int inventoryCapacity = 0, DefinitionId devilFruit = default,
             string devilFruitSource = null,
-            IReadOnlyList<PersistedPet> pets = null, InstanceId activePet = default)
+            IReadOnlyList<PersistedPet> pets = null, InstanceId activePet = default,
+            IReadOnlyList<PersistedRewardApplication> rewardApplications = null)
         {
+            RewardApplications = rewardApplications
+                ?? System.Array.Empty<PersistedRewardApplication>();
             Pets = pets ?? System.Array.Empty<PersistedPet>();
             ActivePet = activePet;
             DevilFruit = devilFruit;
@@ -383,6 +440,15 @@ namespace ChibiFantasy.Contracts
 
         /// <summary>Every pet this character owns, whichever is out.</summary>
         public IReadOnlyList<PersistedPet> Pets { get; }
+
+        /// <summary>
+        /// The rewards whose experience this character and their pets already have, and
+        /// whose delivery has not yet been stamped.
+        /// </summary>
+        /// <remarks>Only what is in flight: storage retires each row as it stamps the
+        /// delivery it belongs to, so this is bounded by pending rewards rather than by
+        /// everything a character has ever been paid.</remarks>
+        public IReadOnlyList<PersistedRewardApplication> RewardApplications { get; }
 
         /// <summary>
         /// The pet currently out, if any.
