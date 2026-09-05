@@ -379,11 +379,10 @@ namespace ChibiFantasy.Backend
         /// </remarks>
         private static bool IsEquipmentRow(in PersistedItem item)
         {
-            return item.IsEquipped
-                || item.EnhancementLevel > 0
-                || item.Rarity.IsValid
-                || item.Enchants.Count > 0
-                || item.Cards.Count > 0;
+            // The row's own answer. Deriving it from the contents meant a piece that had
+            // just lost its last card was sent as an ordinary item, so the server never ran
+            // the equipment write and never deleted the socket that had been taken out.
+            return item.IsEquipment || item.IsEquipped;
         }
 
         private static int SaveRevisionOf(JsonReader json)

@@ -108,8 +108,15 @@ namespace ChibiFantasy.Contracts
             int slotIndex, int lockState = 0, int equipmentSlot = 0,
             int enhancementLevel = 0, DefinitionId rarity = default,
             IReadOnlyList<PersistedEnchant> enchants = null,
-            IReadOnlyList<PersistedCard> cards = null)
+            IReadOnlyList<PersistedCard> cards = null,
+            bool isEquipment = false)
         {
+            IsEquipment = isEquipment
+                || enhancementLevel > 0
+                || rarity.IsValid
+                || (enchants != null && enchants.Count > 0)
+                || (cards != null && cards.Count > 0);
+
             Instance = instance;
             Item = item;
             Quantity = quantity;
@@ -155,6 +162,21 @@ namespace ChibiFantasy.Contracts
 
         /// <summary>Status stones socketed into this piece.</summary>
         public IReadOnlyList<PersistedEnchant> Enchants { get; }
+
+        /// <summary>
+        /// Whether this row is a piece of equipment at all.
+        /// </summary>
+        /// <remarks>
+        /// <b>Not the same question as "does it carry anything".</b> A sword that has just
+        /// had its last card taken out has no enhancement, no rarity, no stones and no
+        /// cards, and is not being worn -- yet it is still a sword, and storage still holds
+        /// socket rows for it that have to be cleared.
+        ///
+        /// Inferring this from the contents was a real defect: such a piece was written as
+        /// an ordinary item, the equipment half of the save was skipped entirely, and the
+        /// socket row it was supposed to delete survived to be loaded again.
+        /// </remarks>
+        public bool IsEquipment { get; }
 
         /// <summary>Cards socketed into this piece.</summary>
         public IReadOnlyList<PersistedCard> Cards { get; }

@@ -17,12 +17,11 @@ use ChibiFantasy\Character\CharacterStateRepository;
  * **The card is a real item.** It has its own instance row and the socket has a foreign key
  * to it, so a socketed card cannot point at an item nobody owns.
  *
- * **What this does not cover.** Taking a card back out and having that removal reach the
- * database is not proven here. The gameplay service supports removal and the world exposes
- * it, but a save that carries the piece with no cards was observed to leave the existing
- * socket row in place, so the round trip is not claimed. It is written down as a limitation
- * rather than asserted, because a test that expected the wrong answer would be worse than
- * no test at all.
+ * **A save is a revision, not a repeat.** `save()` reads a null expected revision as "this
+ * character has never been saved", and refuses with `stale_revision` if one already exists.
+ * A second save must therefore carry the revision the first returned. Phase 18.16 mistook a
+ * refused second save for a stale socket row; every test here threads the revision, which is
+ * what the running server does.
  */
 final class EquipmentCardSocketTest extends BackendTestCase
 {
@@ -313,6 +312,185 @@ final class EquipmentCardSocketTest extends BackendTestCase
 
         self::assertNull($this->itemNamed($loaded, 'card-2'),
             'a refused save wrote its items');
+    }
+
+
+    // ---- taking the card back out -------------------------------------------------------
+
+    public function testSavingAPieceWithNoCardsRemovesTheSocketThatWasThere(): void
+    {
+        $first = $this->states->save('acc-a', 'char-a1',
+            $this->bag($this->swordWithCard()), null);
+
+        self::assertTrue($first['ok'], 'the first save was refused');
+
+        // The same bag, with the card loose again and the sword empty -- exactly what the
+        // world writes after CardSocketService.TryRemove has put the card back.
+        $second = $this->states->save('acc-a', 'char-a1', $this->bag([
+            ['instance_id' => 'card-1', 'item_id' => 'card.ancient_slime_king',
+             'quantity' => 1, 'slot' => 1],
+            ['instance_id' => 'equip-1', 'item_id' => 'item.apprentice_cutlass',
+             'quantity' => 1, 'slot' => 0, 'enhancement_level' => 0,
+             'rarity_id' => 'rarity.common'],
+        ]), $first['save_revision']);
+
+        self::assertTrue($second['ok'], 'the second save was refused: '
+            . ($second['reason'] ?? ''));
+
+        self::assertSame(0, (int) $this->pdo
+            ->query('SELECT COUNT(*) FROM equipment_card_socket')->fetchColumn(),
+            'the socket row outlived the card being taken out');
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(0, $this->itemNamed($loaded, 'equip-1')['cards'],
+            'the removed card came back on load');
+
+        self::assertNotNull($this->itemNamed($loaded, 'card-1'),
+            'the card did not return to the bag');
+    }
+
+    public function testRemovingOneOfTwoCardsLeavesTheOtherExactlyWhereItWas(): void
+    {
+        $both = [
+            ['instance_id' => 'card-1', 'item_id' => 'card.ancient_slime_king',
+             'quantity' => 1, 'slot' => 1],
+            ['instance_id' => 'card-2', 'item_id' => 'card.ancient_slime_king',
+             'quantity' => 1, 'slot' => 2],
+            [
+                'instance_id' => 'equip-1', 'item_id' => 'item.apprentice_cutlass',
+                'quantity' => 1, 'slot' => 0,
+                'enhancement_level' => 0, 'rarity_id' => 'rarity.common',
+                'cards' => [
+                    ['card_id' => 'card.ancient_slime_king', 'socket' => 0,
+                     'card_instance_id' => 'card-1'],
+                    ['card_id' => 'card.ancient_slime_king', 'socket' => 1,
+                     'card_instance_id' => 'card-2'],
+                ],
+            ],
+        ];
+
+        $first = $this->states->save('acc-a', 'char-a1', $this->bag($both), null);
+
+        // Socket zero emptied, socket one untouched.
+        $remaining = $both;
+        $remaining[2]['cards'] = [
+            ['card_id' => 'card.ancient_slime_king', 'socket' => 1,
+             'card_instance_id' => 'card-2'],
+        ];
+
+        $this->states->save('acc-a', 'char-a1', $this->bag($remaining),
+            $first['save_revision']);
+
+        $cards = $this->itemNamed($this->states->load('acc-a', 'char-a1'),
+            'equip-1')['cards'];
+
+        self::assertCount(1, $cards, 'removing one card did not leave exactly one');
+        self::assertSame(1, $cards[0]['socket'], 'the wrong socket was emptied');
+        self::assertSame('card-2', $cards[0]['card_instance_id'],
+            'the wrong card was removed');
+    }
+
+    public function testEmptyingOneSwordLeavesTheOtherOnesCardAlone(): void
+    {
+        // Deletion is by equipment instance, never by definition: two identical swords
+        // must not be cleared together.
+        $items = $this->swordWithCard();
+
+        $items[] = ['instance_id' => 'card-2', 'item_id' => 'card.ancient_slime_king',
+                    'quantity' => 1, 'slot' => 3];
+
+        $items[] = [
+            'instance_id' => 'equip-2', 'item_id' => 'item.apprentice_cutlass',
+            'quantity' => 1, 'slot' => 2,
+            'enhancement_level' => 0, 'rarity_id' => 'rarity.common',
+            'cards' => [
+                ['card_id' => 'card.ancient_slime_king', 'socket' => 0,
+                 'card_instance_id' => 'card-2'],
+            ],
+        ];
+
+        $first = $this->states->save('acc-a', 'char-a1', $this->bag($items), null);
+
+        // Only the first sword is emptied.
+        $after = $items;
+        $after[1]['cards'] = [];
+
+        $this->states->save('acc-a', 'char-a1', $this->bag($after),
+            $first['save_revision']);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertCount(0, $this->itemNamed($loaded, 'equip-1')['cards'],
+            'the emptied sword kept its card');
+
+        self::assertCount(1, $this->itemNamed($loaded, 'equip-2')['cards'],
+            'emptying one sword cleared the other');
+
+        self::assertSame('card-2',
+            $this->itemNamed($loaded, 'equip-2')['cards'][0]['card_instance_id']);
+    }
+
+    public function testSavingTheEmptiedPieceAgainKeepsItEmpty(): void
+    {
+        $first = $this->states->save('acc-a', 'char-a1',
+            $this->bag($this->swordWithCard()), null);
+
+        $empty = [
+            ['instance_id' => 'card-1', 'item_id' => 'card.ancient_slime_king',
+             'quantity' => 1, 'slot' => 1],
+            ['instance_id' => 'equip-1', 'item_id' => 'item.apprentice_cutlass',
+             'quantity' => 1, 'slot' => 0, 'enhancement_level' => 0,
+             'rarity_id' => 'rarity.common'],
+        ];
+
+        $second = $this->states->save('acc-a', 'char-a1', $this->bag($empty),
+            $first['save_revision']);
+
+        $third = $this->states->save('acc-a', 'char-a1', $this->bag($empty),
+            $second['save_revision']);
+
+        self::assertTrue($third['ok']);
+
+        self::assertSame(0, (int) $this->pdo
+            ->query('SELECT COUNT(*) FROM equipment_card_socket')->fetchColumn(),
+            'a socket row came back on a later save');
+    }
+
+    public function testARefusedSaveLeavesTheSocketExactlyAsItWas(): void
+    {
+        $this->states->save('acc-a', 'char-a1', $this->bag($this->swordWithCard()), null);
+
+        // A stale write that would have emptied the sword. It must change nothing.
+        $refused = $this->states->save('acc-a', 'char-a1', $this->bag([
+            ['instance_id' => 'equip-1', 'item_id' => 'item.apprentice_cutlass',
+             'quantity' => 1, 'slot' => 0, 'enhancement_level' => 0,
+             'rarity_id' => 'rarity.common'],
+        ]), 99);
+
+        self::assertFalse($refused['ok']);
+        self::assertSame('stale_revision', $refused['reason']);
+
+        self::assertCount(1,
+            $this->itemNamed($this->states->load('acc-a', 'char-a1'), 'equip-1')['cards'],
+            'a refused save emptied the socket anyway');
+    }
+
+    public function testASecondFirstSaveIsRefusedRatherThanTreatedAsAnUpdate(): void
+    {
+        // The mistake Phase 18.16 made, pinned so it cannot be made again: a null expected
+        // revision means "never saved", not "do not check".
+        $first = $this->states->save('acc-a', 'char-a1',
+            $this->bag($this->swordWithCard()), null);
+
+        self::assertTrue($first['ok']);
+
+        $again = $this->states->save('acc-a', 'char-a1', $this->bag([]), null);
+
+        self::assertFalse($again['ok'],
+            'a second first-save was accepted and would have written a partial bag');
+
+        self::assertSame('stale_revision', $again['reason']);
     }
 
     /** @return array<string,mixed>|null */

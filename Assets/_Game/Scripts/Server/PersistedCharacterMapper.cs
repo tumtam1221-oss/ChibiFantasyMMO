@@ -375,9 +375,13 @@ namespace ChibiFantasy.Server
                 cards.Add(new PersistedCard(card.Card, card.SocketIndex, card.CardInstance));
             }
 
+            // Marked as equipment because it is one, not because it happens to be
+            // carrying something. A piece whose last card was just removed still needs the
+            // equipment half of the save to run, or the socket row it should delete stays.
             return new PersistedItem(content.InstanceId, content.DefinitionId, quantity,
                 slotIndex, (int)content.LockState, (int)equipmentSlot,
-                piece.EnhancementLevel, piece.Rarity, enchants, cards);
+                piece.EnhancementLevel, piece.Rarity, enchants, cards,
+                isEquipment: true);
         }
 
         /// <summary>

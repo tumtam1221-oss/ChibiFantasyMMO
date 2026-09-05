@@ -52,6 +52,9 @@ namespace ChibiFantasy.Tests.PlayMode
             public readonly Dictionary<string, PersistedCharacter> Rows =
                 new Dictionary<string, PersistedCharacter>();
 
+            /// <summary>Refuse every write, as an unreachable backend would.</summary>
+            public bool Broken { get; set; }
+
             public CharacterPersistenceResult Load(SessionId s)
             {
                 return Rows.TryGetValue(s.Value, out PersistedCharacter row)
@@ -61,6 +64,12 @@ namespace ChibiFantasy.Tests.PlayMode
 
             public CharacterPersistenceResult Save(SessionId s, PersistedCharacter c, int r)
             {
+                if (Broken)
+                {
+                    return CharacterPersistenceResult.Failed(
+                        CharacterPersistenceFailure.Unreachable, "backend down");
+                }
+
                 Rows[s.Value] = c;
 
                 return CharacterPersistenceResult.Saved(r + 1);
@@ -503,6 +512,271 @@ namespace ChibiFantasy.Tests.PlayMode
             // the reconnect added none.
             Assert.That(_rolls.RollsAt(CardChance), Is.EqualTo(1),
                 "the reconnect rolled the card again");
+        }
+
+        // ---- 18.16A: taking the card back out ---------------------------------------------
+
+        [UnityTest]
+        public IEnumerator UnsocketingReturnsTheSameCardAndTakesTheEffectAway()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter hero = Admit("char-ann", 1, withBlade: true, withCard: true);
+
+            yield return Tick();
+
+            InstanceId cardInstance = Instance(hero, Slot(hero, CardId));
+
+            int bare = hero.Combatant.MaxHealth;
+
+            yield return SocketAndWear(hero);
+
+            int carded = hero.Combatant.MaxHealth;
+
+            Assert.That(carded, Is.GreaterThan(bare));
+
+            // Off, so the piece is back in the bag where a socket request names it.
+            Assert.That(Submit(hero, InventoryAction.Unequip,
+                (int)EquipmentSlot.MainHand, 0).IsAccepted, Is.True);
+
+            yield return Settle();
+
+            CharacterInventoryResult removed = Submit(hero, InventoryAction.UnsocketCard,
+                Slot(hero, BladeId), 0);
+
+            Assert.That(removed.IsAccepted, Is.True,
+                "the unsocket request was refused: " + removed.Rejection + " / "
+                + removed.Card.Reason);
+
+            yield return Settle();
+
+            // Phase 12's semantics: the same card comes back, not a new one.
+            Assert.That(Carried(hero, CardId), Is.EqualTo(1),
+                "the card did not return to the bag");
+
+            Assert.That(hero.Inventory.IndexOf(cardInstance), Is.GreaterThanOrEqualTo(0),
+                "the card that came back is not the card that went in");
+
+            Assert.That(Submit(hero, InventoryAction.Equip, Slot(hero, BladeId), 0)
+                .IsAccepted, Is.True);
+
+            yield return Settle();
+
+            Assert.That(hero.Combatant.MaxHealth, Is.EqualTo(bare),
+                "the card's effect outlived the card");
+        }
+
+        [UnityTest]
+        public IEnumerator AnUnsocketedCardDoesNotComeBackAfterAReconnect()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter hero = Admit("char-ann", 1, withBlade: true, withCard: true);
+
+            yield return Tick();
+
+            int bare = hero.Combatant.MaxHealth;
+
+            yield return SocketAndWear(hero);
+            yield return UnsocketFromWornBlade(hero);
+
+            Assert.That(_bootstrap.Simulation.Release(hero.ConnectionId).IsOk, Is.True);
+
+            yield return Tick();
+
+            LivingCharacter back = Admit("char-ann", 1);
+
+            yield return Settle();
+
+            Assert.That(WornCardCount(back), Is.Zero,
+                "the removed card was restored into the socket");
+
+            Assert.That(Carried(back, CardId), Is.EqualTo(1),
+                "the returned card was lost, or duplicated, across the reconnect");
+
+            Assert.That(back.Combatant.MaxHealth, Is.EqualTo(bare),
+                "the removed card's effect came back");
+        }
+
+        [UnityTest]
+        public IEnumerator AnUnsocketedCardStaysOutAcrossAWholeWorldRestart()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter hero = Admit("char-ann", 1, withBlade: true, withCard: true);
+
+            yield return Tick();
+
+            int bare = hero.Combatant.MaxHealth;
+
+            yield return SocketAndWear(hero);
+            yield return UnsocketFromWornBlade(hero);
+
+            Assert.That(_bootstrap.Simulation.Release(hero.ConnectionId).IsOk, Is.True);
+
+            yield return Tick();
+            yield return TearDownWorld();
+            yield return LoadWorld();
+
+            LivingCharacter back = Admit("char-ann", 1);
+
+            yield return Settle();
+
+            Assert.That(WornCardCount(back), Is.Zero,
+                "a whole new world restored a card that had been taken out");
+
+            Assert.That(Carried(back, CardId), Is.EqualTo(1));
+            Assert.That(back.Combatant.MaxHealth, Is.EqualTo(bare));
+        }
+
+        [UnityTest]
+        public IEnumerator ARepeatedUnsocketRequestCannotProduceASecondCard()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter hero = Admit("char-ann", 1, withBlade: true, withCard: true);
+
+            yield return Tick();
+            yield return SocketAndWear(hero);
+
+            Assert.That(Submit(hero, InventoryAction.Unequip,
+                (int)EquipmentSlot.MainHand, 0).IsAccepted, Is.True);
+
+            yield return Settle();
+
+            int blade = Slot(hero, BladeId);
+
+            Assert.That(Submit(hero, InventoryAction.UnsocketCard, blade, 0).IsAccepted,
+                Is.True);
+
+            // The same request again, and again. The socket is empty, so there is nothing
+            // to take and nothing to create.
+            Submit(hero, InventoryAction.UnsocketCard, blade, 0);
+            Submit(hero, InventoryAction.UnsocketCard, blade, 0);
+
+            yield return Settle();
+
+            Assert.That(Carried(hero, CardId), Is.EqualTo(1),
+                "a replayed unsocket produced a second card");
+        }
+
+        [UnityTest]
+        public IEnumerator UnsocketingOneBladeLeavesAnIdenticalOneAlone()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter hero = Admit("char-ann", 1, withBlade: true, withCard: true,
+                secondBlade: true);
+
+            yield return Tick();
+
+            // Socket the first blade, leaving the second empty.
+            int first = Slot(hero, BladeId);
+
+            Assert.That(Submit(hero, InventoryAction.SocketCard, Slot(hero, CardId), first)
+                .IsAccepted, Is.True);
+
+            yield return Settle();
+
+            InstanceId cardedBlade = Instance(hero, first);
+
+            Assert.That(Submit(hero, InventoryAction.UnsocketCard, first, 0).IsAccepted,
+                Is.True);
+
+            yield return Settle();
+
+            Assert.That(_bootstrap.Simulation.Release(hero.ConnectionId).IsOk, Is.True);
+
+            yield return Tick();
+
+            LivingCharacter back = Admit("char-ann", 1);
+
+            yield return Settle();
+
+            var blades = 0;
+
+            for (var i = 0; i < back.Inventory.Capacity; i++)
+            {
+                var piece = back.Inventory.GetSlot(i).Content as EquipmentInstance;
+
+                if (piece == null || piece.DefinitionId.Value != BladeId) continue;
+
+                blades++;
+
+                Assert.That(piece.CardCount, Is.Zero,
+                    "a blade came back carrying a card after the removal");
+            }
+
+            Assert.That(blades, Is.EqualTo(2), "a blade went missing");
+            Assert.That(Carried(back, CardId), Is.EqualTo(1),
+                "the returned card did not survive as exactly one");
+
+            Assert.That(cardedBlade.IsValid, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator AnUnsocketThatCannotBeSavedDoesNotReportADurableSuccess()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter hero = Admit("char-ann", 1, withBlade: true, withCard: true);
+
+            yield return Tick();
+            yield return SocketAndWear(hero);
+
+            Assert.That(Submit(hero, InventoryAction.Unequip,
+                (int)EquipmentSlot.MainHand, 0).IsAccepted, Is.True);
+
+            yield return Settle();
+
+            // The backend refuses every write from here.
+            _characters.Broken = true;
+
+            Submit(hero, InventoryAction.UnsocketCard, Slot(hero, BladeId), 0);
+
+            yield return Settle();
+
+            // Whatever the runtime did, the character is still dirty: nothing has told it
+            // the change is durable, so the next lifecycle point tries again.
+            Assert.That(hero.IsDirty, Is.True,
+                "a change that never reached storage was treated as saved");
+
+            _characters.Broken = false;
+
+            // With the backend back, the ordinary save point writes it down.
+            Assert.That(_bootstrap.Simulation.Release(hero.ConnectionId).IsOk, Is.True);
+
+            yield return Tick();
+
+            LivingCharacter back = Admit("char-ann", 1);
+
+            yield return Settle();
+
+            Assert.That(WornCardCount(back), Is.Zero,
+                "the socket came back after the save finally succeeded");
+
+            Assert.That(Carried(back, CardId), Is.EqualTo(1),
+                "the card was lost or duplicated by the failed save");
+        }
+
+        /// <summary>Takes the worn blade off, removes its card, and puts it back on.</summary>
+        private IEnumerator UnsocketFromWornBlade(LivingCharacter hero)
+        {
+            Assert.That(Submit(hero, InventoryAction.Unequip,
+                (int)EquipmentSlot.MainHand, 0).IsAccepted, Is.True,
+                "the blade would not come off");
+
+            yield return Settle();
+
+            Assert.That(Submit(hero, InventoryAction.UnsocketCard, Slot(hero, BladeId), 0)
+                .IsAccepted, Is.True, "the unsocket request was refused");
+
+            yield return Settle();
+
+            Assert.That(Submit(hero, InventoryAction.Equip, Slot(hero, BladeId), 0)
+                .IsAccepted, Is.True);
+
+            yield return Settle();
         }
 
         // ---- harness -------------------------------------------------------------------------

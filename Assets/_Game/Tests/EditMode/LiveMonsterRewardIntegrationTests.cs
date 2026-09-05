@@ -167,10 +167,22 @@ namespace ChibiFantasy.Tests.EditMode
             JsonUtility.FromJsonOverwrite(
                 "{\"_id\":{\"_value\":\"item.itest-sword\"},\"_stackable\":false,"
                 + "\"_maxStackSize\":1,\"_slot\":" + (int)EquipmentSlot.MainHand
-                + ",\"_levelRequirement\":1,\"_statusStoneSlots\":2}", sword);
+                + ",\"_levelRequirement\":1,\"_statusStoneSlots\":2,\"_cardSlots\":1}",
+                sword);
 
             _created.Add(sword);
             items.Register(sword);
+
+            // A card to put in it. Its own item, because the socket row in MySQL has a
+            // foreign key to the copy that was consumed.
+            var card = ScriptableObject.CreateInstance<ItemDefinition>();
+
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"item.itest-card\"},\"_category\":5,"
+                + "\"_stackable\":false,\"_maxStackSize\":1}", card);
+
+            _created.Add(card);
+            items.Register(card);
 
             var coin = ScriptableObject.CreateInstance<ItemDefinition>();
 
@@ -1071,6 +1083,145 @@ namespace ChibiFantasy.Tests.EditMode
         }
 
         // ---- 18.4: equipment through real PHP and real MySQL ---------------------------------
+
+        /// <summary>
+        /// A card put into a sword, taken back out, and MySQL agreeing both times.
+        /// </summary>
+        /// <remarks>
+        /// The gap Phase 18.16 reported: a socket row that outlived the card. It turned out
+        /// to be a test that asked for a first save twice rather than a persistence fault,
+        /// and this is the proof against the real database -- row present after socketing,
+        /// row gone after removal, and a second world server reading neither back.
+        /// </remarks>
+        [Test]
+        public void ACardSocketedThenRemovedLeavesNothingBehindInMySql()
+        {
+            WorldCharacterRegistry registry = NewRegistry();
+            LivingCharacter character = Enter(registry);
+
+            Assert.That(character.Inventory, Is.Not.Null);
+
+            var sword = new EquipmentInstance(new InstanceId("itest-card-sword"),
+                new DefinitionId("item.itest-sword"), character.Owner);
+
+            var cardInstance = new InstanceId("itest-card-instance");
+
+            // This fixture shares one live character with every other test in the file,
+            // and a full-suite run leaves that bag full of other fixtures' belongings. The
+            // bag is emptied rather than hoped about: every test here establishes what it
+            // needs, so starting from nothing is the only state that is the same whether
+            // this runs alone or thirteenth.
+            EmptyTheBag(character);
+
+            // The card is a real owned item, because the socket row has a foreign key to it.
+            Assert.That(character.Inventory.Add(new ItemInstance(cardInstance,
+                new DefinitionId("item.itest-card"), character.Owner, 1),
+                ItemRegistry()).IsAccepted, Is.True, "the card would not go into the bag");
+
+            sword.AddCard(new EquipmentCardSocket(new DefinitionId("card.itest"), 0,
+                cardInstance));
+
+            Assert.That(character.Inventory.Add(sword, ItemRegistry()).IsAccepted, Is.True,
+                "the sword would not go into the bag");
+
+            character.MarkDirty();
+
+            Assert.That(registry.Save(character).IsOk, Is.True,
+                "the real PHP save refused the socketed sword");
+
+            // A: the row is there, read back through PHP from MySQL.
+            PersistedItem stored = RowFor(_store.Load(_api.Session), "itest-card-sword");
+
+            Assert.That(stored.Cards, Has.Count.EqualTo(1),
+                "the socket did not reach MySQL");
+            Assert.That(stored.Cards[0].Card.Value, Is.EqualTo("card.itest"));
+            Assert.That(stored.Cards[0].CardInstance, Is.EqualTo(cardInstance),
+                "the exact card that was consumed was not recorded");
+
+            // B: removed, and saved again through the ordinary lifecycle.
+            //
+            // Taken from the bag rather than from the local variable: the container is what
+            // the save reads, and a piece that went in is not necessarily the same object
+            // that comes back out of a slot.
+            EquipmentInstance inBag = null;
+
+            for (var i = 0; i < character.Inventory.Capacity; i++)
+            {
+                var held = character.Inventory.GetSlot(i).Content as EquipmentInstance;
+
+                if (held != null && held.InstanceId.Value == "itest-card-sword")
+                {
+                    inBag = held;
+                }
+            }
+
+            Assert.That(inBag, Is.Not.Null, "the sword is not in the bag that gets saved");
+
+            Assert.That(inBag.RemoveCardAt(0, out EquipmentCardSocket _), Is.True);
+
+            character.MarkDirty();
+
+            Assert.That(registry.Save(character).IsOk, Is.True,
+                "the real PHP save refused the emptied sword");
+
+            // C: the row is gone.
+            PersistedItem after = RowFor(_store.Load(_api.Session), "itest-card-sword");
+
+            Assert.That(after.Instance.Value, Is.EqualTo("itest-card-sword"),
+                "the sword itself vanished");
+
+            Assert.That(after.Cards, Is.Empty,
+                "the socket row outlived the card being taken out");
+
+            // D: a second world server reading the same database sees an empty sword.
+            WorldCharacterRegistry second = NewRegistry();
+            LivingCharacter returned = Enter(second, connectionId: 4);
+
+            EquipmentInstance reloaded = null;
+
+            for (var i = 0; i < returned.Inventory.Capacity; i++)
+            {
+                var piece = returned.Inventory.GetSlot(i).Content as EquipmentInstance;
+
+                if (piece != null && piece.InstanceId.Value == "itest-card-sword")
+                {
+                    reloaded = piece;
+                }
+            }
+
+            Assert.That(reloaded, Is.Not.Null, "the sword did not come back at all");
+            Assert.That(reloaded.CardCount, Is.Zero,
+                "a fresh world restored a card that had been taken out");
+        }
+
+        /// <summary>Clears every slot, so this test starts from a bag it fully controls.</summary>
+        private static void EmptyTheBag(LivingCharacter character)
+        {
+            character.Inventory.Clear();
+
+            Assert.That(character.Inventory.FreeSlots,
+                Is.EqualTo(character.Inventory.Capacity),
+                "the bag would not empty, so this test cannot control its own fixture");
+        }
+
+        /// <summary>One item row out of a loaded character, by its instance id.</summary>
+        private static PersistedItem RowFor(CharacterPersistenceResult loaded,
+            string instanceId)
+        {
+            Assert.That(loaded.IsOk, Is.True, "live load failed: " + loaded.Detail);
+
+            for (var i = 0; i < loaded.Character.Items.Count; i++)
+            {
+                if (loaded.Character.Items[i].Instance.Value == instanceId)
+                {
+                    return loaded.Character.Items[i];
+                }
+            }
+
+            Assert.Fail("no row for " + instanceId);
+
+            return default;
+        }
 
         [Test]
         public void AWornPieceAndItsUpgradesSurviveARealRoundTrip()
