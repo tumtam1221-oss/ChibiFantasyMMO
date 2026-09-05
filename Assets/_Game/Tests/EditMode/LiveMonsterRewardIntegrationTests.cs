@@ -366,6 +366,77 @@ namespace ChibiFantasy.Tests.EditMode
                 Is.EqualTo(granted.ExperienceAfter));
         }
 
+        // ---- devil fruit reaches MySQL ------------------------------------------------------------
+
+        /// <summary>
+        /// A Devil Fruit, through the real stack and back.
+        /// </summary>
+        /// <remarks>
+        /// <b>This closes what 18.11A could only prove once.</b> That gate stood the chain up
+        /// by hand, watched a fruit survive MySQL, and threw the fixture away -- so the
+        /// evidence was real and not repeatable. Here it lives with the other live tests and
+        /// runs whenever they do.
+        ///
+        /// <b>Only the stable id crosses.</b> What the fruit does is authored content; what
+        /// is stored is which one it was.
+        /// </remarks>
+        [Test]
+        public void ADevilFruitSurvivesARealRoundTripThroughPhpAndMySql()
+        {
+            const string Darkness = "devil_fruit.darkness";
+
+            CharacterPersistenceResult loaded = _store.Load(_api.Session);
+
+            Assert.That(loaded.IsOk, Is.True, "live load failed: " + loaded.Detail);
+
+            PersistedCharacter before = loaded.Character;
+
+            Assert.That(before.DevilFruit.IsValid, Is.False,
+                "the fixture character already owns a fruit");
+
+            PersistedCharacter owning = WithFruit(before, new DefinitionId(Darkness),
+                "inst-live-18-12");
+
+            CharacterPersistenceResult saved = _store.Save(_api.Session, owning,
+                before.SaveRevision);
+
+            Assert.That(saved.IsOk, Is.True, "live save failed: " + saved.Detail);
+
+            // Read back over the wire. Nothing in this process remembers it.
+            PersistedCharacter after = _store.Load(_api.Session).Character;
+
+            Assert.That(after.DevilFruit.Value, Is.EqualTo(Darkness),
+                "the fruit did not survive MySQL");
+            Assert.That(after.DevilFruitSource, Is.EqualTo("inst-live-18-12"));
+
+            // And the rest of the character came back untouched.
+            Assert.That(after.CurrentHealth, Is.EqualTo(before.CurrentHealth));
+            Assert.That(after.CurrentMana, Is.EqualTo(before.CurrentMana));
+            Assert.That(after.Level, Is.EqualTo(before.Level));
+            Assert.That(after.Items.Count, Is.EqualTo(before.Items.Count),
+                "equipment or inventory changed");
+
+            // Put it back, so this test can run again tomorrow.
+            CharacterPersistenceResult restored = _store.Save(_api.Session,
+                WithFruit(after, default, null), after.SaveRevision);
+
+            Assert.That(restored.IsOk, Is.True, restored.Detail);
+
+            Assert.That(_store.Load(_api.Session).Character.DevilFruit.IsValid, Is.False,
+                "clearing the fruit did not reach MySQL");
+        }
+
+        /// <summary>The same character, owning a different fruit. Everything else is theirs.</summary>
+        private static PersistedCharacter WithFruit(PersistedCharacter source,
+            DefinitionId fruit, string instance)
+        {
+            return new PersistedCharacter(source.Character, source.Account, source.Server,
+                source.Name, source.Gender, source.Level, source.Experience,
+                source.CurrentHealth, source.CurrentMana, source.Class, source.Job,
+                source.Map, source.Spawn, source.Stats, source.Appearance, source.Skills,
+                source.SaveRevision, source.Items, source.InventoryCapacity, fruit, instance);
+        }
+
         // ---- loot reaches MySQL exactly once -----------------------------------------------------
 
         [Test]

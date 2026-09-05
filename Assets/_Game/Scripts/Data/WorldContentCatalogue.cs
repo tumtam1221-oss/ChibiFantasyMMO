@@ -68,6 +68,10 @@ namespace ChibiFantasy.Data
         [SerializeField] private DevilFruitDefinition[] _devilFruits =
             new DevilFruitDefinition[0];
 
+        [Tooltip("What monsters leave behind. Rank gating lives on the table's entries.")]
+        [SerializeField] private DropTableDefinition[] _dropTables =
+            new DropTableDefinition[0];
+
         [Header("Stat roles")]
         [Tooltip("Which derived stat is the health ceiling.")]
         [SerializeField] private DefinitionId _maxHealthStat;
@@ -142,6 +146,9 @@ namespace ChibiFantasy.Data
         public DefinitionRegistry<DevilFruitDefinition> BuildDevilFruits() =>
             Build(_devilFruits);
 
+        public DefinitionRegistry<DropTableDefinition> BuildDropTables() =>
+            Build(_dropTables);
+
         /// <summary>
         /// Whether this catalogue describes a world that can actually run.
         /// </summary>
@@ -171,6 +178,7 @@ namespace ChibiFantasy.Data
             Check(_statusEffects, "status effect", faults);
             Check(_items, "item", faults);
             Check(_devilFruits, "devil fruit", faults);
+            Check(_dropTables, "drop table", faults);
 
             // --- the four roles a world cannot run without --------------------------------
             DefinitionRegistry<StatDefinition> stats = Build(_stats);
@@ -304,6 +312,73 @@ namespace ChibiFantasy.Data
                 }
             }
 
+            // --- where an ultra-rare fruit is actually allowed to come from ---------------
+            //
+            // A fruit that names a boss nobody authored, or a boss that is not a world boss,
+            // or a table that does not contain it, is a fruit no player can ever obtain --
+            // and nothing at runtime would say so. Checked here because this is the only
+            // place that can see the monster, the table and the fruit at once.
+            DefinitionRegistry<MonsterDefinition> monsters = Build(_monsters);
+            DefinitionRegistry<DropTableDefinition> tables = Build(_dropTables);
+
+            for (var i = 0; i < _devilFruits.Length; i++)
+            {
+                DevilFruitDefinition fruit = _devilFruits[i];
+
+                if (fruit == null || !fruit.Id.IsValid) continue;
+
+                if (fruit.SourceBoss.IsValid)
+                {
+                    if (!monsters.TryGet(fruit.SourceBoss, out MonsterDefinition boss))
+                    {
+                        faults.Add("devil fruit '" + fruit.Id + "' names unknown source boss '"
+                            + fruit.SourceBoss + "'");
+                    }
+                    else if (boss.Rank != MonsterRank.WorldBoss)
+                    {
+                        faults.Add("devil fruit '" + fruit.Id + "' names '" + boss.Id
+                            + "' as its source, which is a " + boss.Rank
+                            + " and not a world boss");
+                    }
+                }
+
+                if (!fruit.DropTable.IsValid) continue;
+
+                if (!tables.TryGet(fruit.DropTable, out DropTableDefinition table))
+                {
+                    faults.Add("devil fruit '" + fruit.Id + "' names unknown drop table '"
+                        + fruit.DropTable + "'");
+
+                    continue;
+                }
+
+                // The table has to actually be able to produce the item that grants it.
+                var carries = false;
+
+                for (var e = 0; e < table.Entries.Length; e++)
+                {
+                    if (!Grants(table.Entries[e].Item, fruit.Id)) continue;
+
+                    carries = true;
+
+                    // And it has to be gated to world bosses, or an ordinary monster on the
+                    // same table would be able to roll it.
+                    if (table.Entries[e].MinMonsterRank != MonsterRank.WorldBoss)
+                    {
+                        faults.Add("drop table '" + table.Id + "' offers devil fruit item '"
+                            + table.Entries[e].Item + "' at rank "
+                            + table.Entries[e].MinMonsterRank
+                            + "; a devil fruit must be world-boss only");
+                    }
+                }
+
+                if (!carries)
+                {
+                    faults.Add("drop table '" + table.Id + "' carries no item granting '"
+                        + fruit.Id + "'");
+                }
+            }
+
             // --- an item that grants a fruit this world does not have is a dead item -------
             DefinitionRegistry<DevilFruitDefinition> fruits = Build(_devilFruits);
 
@@ -335,6 +410,33 @@ namespace ChibiFantasy.Data
             }
 
             return faults.Count == 0;
+        }
+
+        /// <summary>Whether an item is the one that grants a given fruit.</summary>
+        /// <remarks>Asked of the item's authored effects rather than of its id, so a drop
+        /// table and a fruit are linked by what the item does and not by a naming
+        /// convention somebody could break.</remarks>
+        private bool Grants(DefinitionId item, DefinitionId fruit)
+        {
+            if (!item.IsValid || !fruit.IsValid) return false;
+
+            for (var i = 0; i < _items.Length; i++)
+            {
+                if (_items[i] == null || _items[i].Id != item) continue;
+
+                ItemUseEffect[] uses = _items[i].UseEffects;
+
+                for (var u = 0; u < uses.Length; u++)
+                {
+                    if (uses[u].Kind == ItemEffectKind.ConsumeDevilFruit
+                        && uses[u].DevilFruit == fruit)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         /// <summary>A fruit ability nobody authored would be an ability that does nothing.</summary>

@@ -1,0 +1,57 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 18350cc79c3163a43bfe83fba9ffcdfb, type: 3}
+  m_Name: monster_ancient_slime_king
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.MonsterDefinition
+  _id:
+    _value: monster.ancient_slime_king
+  _nameKey:
+    _key: monster.ancient_slime_king.name
+  _level: 20
+  _rank: 4
+  _baseStats:
+  - _stat:
+      _value: stat.max_hp
+    _value: 900
+  - _stat:
+      _value: stat.atk
+    _value: 26
+  - _stat:
+      _value: stat.def
+    _value: 12
+  - _stat:
+      _value: stat.mdef
+    _value: 14
+  - _stat:
+      _value: stat.matk
+    _value: 20
+  _element: 0
+  _movementType: 1
+  _aggressionType: 2
+  _model:
+    _address: 
+  _animatorController:
+    _address: 
+  _lootTable:
+    _value: drop.ancient_slime_king
+  _experienceReward: 900
+  _currencyReward: 250
+  _respawn:
+    _respawnDelaySeconds: 1800
+    _maxAliveInArea: 1
+  _detectionRange: 12
+  _attackRange: 2.5
+  _attackCooldownSeconds: 2.5
+  _leashRange: 40
+  _moveSpeed: 1.6
+  _allowedMaps:
+  - _value: map.harbor_town

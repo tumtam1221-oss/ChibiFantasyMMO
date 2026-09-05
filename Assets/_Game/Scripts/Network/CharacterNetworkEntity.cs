@@ -323,6 +323,12 @@ namespace ChibiFantasy.Network
             {
                 TargetPublishDevilFruit(connection, _devilFruit(connection.ClientId));
             }
+
+            if (_loot != null && _loot.TryBuildLootSnapshot(connection.ClientId,
+                out LootSnapshot piles))
+            {
+                TargetPublishLoot(connection, piles);
+            }
         }
 
         /// <summary>Where the owner's active fruit id is read from at spawn.</summary>
@@ -371,6 +377,36 @@ namespace ChibiFantasy.Network
 
             DevilFruitChanged?.Invoke(DevilFruit);
         }
+
+        /// <summary>What is on the ground near this player, as far as they know.</summary>
+        public LootSnapshot Loot { get; private set; }
+
+        /// <summary>Raised on the owning client when the ground around them changes.</summary>
+        public event System.Action<LootSnapshot> LootChanged;
+
+        [TargetRpc]
+        private void TargetPublishLoot(NetworkConnection connection, LootSnapshot snapshot)
+        {
+            Loot = snapshot;
+
+            LootChanged?.Invoke(snapshot);
+        }
+
+        [Server]
+        public void ServerPublishLoot(in LootSnapshot snapshot)
+        {
+            if (Owner == null || !Owner.IsActive) return;
+
+            TargetPublishLoot(Owner, snapshot);
+        }
+
+        [Server]
+        public void ServerUseLootSink(ICharacterLootRequestSink loot)
+        {
+            _loot = loot;
+        }
+
+        private ICharacterLootRequestSink _loot;
 
         [Server]
         public void ServerPublishDevilFruit(string fruit)
@@ -511,6 +547,24 @@ namespace ChibiFantasy.Network
             if (connectionId < 0) return;
 
             _inventory.Submit(connectionId, action, from, to, quantity, sequence);
+        }
+
+        /// <summary>
+        /// Asks to pick up a pile of loot.
+        /// </summary>
+        /// <remarks>A pile and a slot, and nothing else. Which item that is, who may take
+        /// it, how far away they are and whether it is still there are all answered on the
+        /// server from state this call cannot reach.</remarks>
+        [ServerRpc]
+        public void RequestPickup(string lootId, int index, long sequence)
+        {
+            if (_loot == null) return;
+
+            int connectionId = Owner == null ? -1 : Owner.ClientId;
+
+            if (connectionId < 0) return;
+
+            _loot.Submit(connectionId, lootId, index, sequence);
         }
 
         [ServerRpc]

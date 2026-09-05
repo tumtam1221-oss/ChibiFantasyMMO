@@ -1,0 +1,31 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 97ee55f7852492a4c8b6c843afcb61f2, type: 3}
+  m_Name: drop_ancient_slime_king
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.DropTableDefinition
+  _id:
+    _value: drop.ancient_slime_king
+  _nameKey:
+    _key: 
+  _entries:
+  - _item:
+      _value: item.devil_fruit.darkness
+    _minQuantity: 1
+    _maxQuantity: 1
+    _chance: 0.0000001
+    _disabled: 0
+    _rarityOverride:
+      _value: 
+    _minKillerLevel: 0
+    _maxKillerLevel: 0
+    _minMonsterRank: 4
+  _maxEntries: 0

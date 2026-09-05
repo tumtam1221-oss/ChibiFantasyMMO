@@ -37,6 +37,9 @@ namespace ChibiFantasy.Server
         private readonly WorldCharacterRegistry _characters;
         private readonly NetworkObject _prefab;
         private readonly ICharacterCombatRequestSink _combat;
+
+        /// <summary>Where a pickup request goes. Null in a world with no loot.</summary>
+        private ICharacterLootRequestSink _lootSink;
         private readonly ICharacterMovementRequestSink _movement;
         private ICharacterInventoryRequestSink _inventory;
 
@@ -89,6 +92,12 @@ namespace ChibiFantasy.Server
         public void UseStatus(ICharacterStatusSource status)
         {
             _status = status;
+        }
+
+        /// <summary>Points every spawned character at where pickup requests land.</summary>
+        public void UseLoot(ICharacterLootRequestSink loot)
+        {
+            _lootSink = loot;
         }
 
         public void UseInventory(ICharacterInventoryRequestSink inventory)
@@ -182,6 +191,7 @@ namespace ChibiFantasy.Server
             entity.ServerUseMovementSink(_movement);
             entity.ServerUseInventorySink(_inventory);
             entity.ServerUseStatusSource(_status);
+            entity.ServerUseLootSink(_lootSink);
 
             // The owner's fruit at spawn, read from the live state rather than captured, so
             // a reconnecting player is told what they own before anything else happens.

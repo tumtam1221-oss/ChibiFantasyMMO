@@ -23,9 +23,9 @@ MonoBehaviour:
   _rarity:
     _value: rarity.legendary
   _sourceBoss:
-    _value: 
+    _value: monster.ancient_slime_king
   _dropTable:
-    _value: 
+    _value: drop.ancient_slime_king
   _usage: 0
   _uniqueEffectId:
     _value: 

@@ -401,21 +401,56 @@ namespace ChibiFantasy.Tests.EditMode
             // independently written number.
             const double Percent = 0.00001d;
             const double Fraction = 1e-7d;
+            const float FractionF = 0.0000001f;
 
             Assert.That(Percent / 100d, Is.EqualTo(Fraction).Within(1e-18),
                 "percent and fraction disagree");
 
-            // The shipped monster is not a source of fruit, and the shipped fruit names no
-            // ordinary drop table -- rarity is not enforced by making a slime generous.
+            // 18.11 could only assert that no source existed yet. 18.12 authored one, so the
+            // stronger statement is now available and is made here instead: the fruit comes
+            // from exactly one world boss, at exactly that fraction.
             WorldContentCatalogue catalogue = Catalogue();
 
             catalogue.BuildDevilFruits()
                 .TryGet(new DefinitionId(Darkness), out DevilFruitDefinition fruit);
 
-            Assert.That(fruit.SourceBoss.IsValid, Is.False,
-                "a world boss is authored, so the drop rule must be checked against it");
-            Assert.That(fruit.DropTable.IsValid, Is.False,
-                "the fruit is on a drop table, so its rate must be checked");
+            Assert.That(fruit.SourceBoss.IsValid, Is.True, "the fruit comes from nowhere");
+            Assert.That(fruit.DropTable.IsValid, Is.True, "the fruit is on no drop table");
+
+            Assert.That(catalogue.BuildMonsters()
+                .TryGet(fruit.SourceBoss, out MonsterDefinition boss), Is.True);
+
+            Assert.That(boss.Rank, Is.EqualTo(MonsterRank.WorldBoss),
+                "an ordinary monster is the authored source of a Devil Fruit");
+
+            Assert.That(catalogue.BuildDropTables()
+                .TryGet(fruit.DropTable, out DropTableDefinition table), Is.True);
+
+            var offered = 0;
+
+            foreach (DropEntry entry in table.Entries)
+            {
+                if (entry.Item.Value != DarknessItem) continue;
+
+                offered++;
+
+                Assert.That(entry.Chance, Is.EqualTo(FractionF).Within(1e-12f),
+                    "the production chance is not exactly one in ten million");
+
+                Assert.That(entry.MinMonsterRank, Is.EqualTo(MonsterRank.WorldBoss),
+                    "the fruit is offered below world-boss rank");
+            }
+
+            Assert.That(offered, Is.EqualTo(1),
+                "the fruit is offered " + offered + " times on its own table");
+
+            // And the training slime is still not a source of it.
+            catalogue.BuildMonsters()
+                .TryGet(new DefinitionId("monster.training_slime"), out MonsterDefinition slime);
+
+            Assert.That(slime.Rank, Is.Not.EqualTo(MonsterRank.WorldBoss));
+            Assert.That(slime.LootTable, Is.Not.EqualTo(fruit.DropTable),
+                "the training slime shares the boss drop table");
         }
 
         // ---- one of everything -----------------------------------------------------------------------

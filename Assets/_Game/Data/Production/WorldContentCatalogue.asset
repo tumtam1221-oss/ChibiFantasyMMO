@@ -42,6 +42,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 237e52f3c384d8e4a90c8951c316302a, type: 2}
   _monsters:
   - {fileID: 11400000, guid: 10930e6afcf62524da5ecbecfc81bc89, type: 2}
+  - {fileID: 11400000, guid: 8e4f2727c5b17b34da76a9759e27ffd2, type: 2}
   _skills:
   - {fileID: 11400000, guid: 00d6db5004cf501458f5a0a5e57b388f, type: 2}
   - {fileID: 11400000, guid: d43a9974c613e6d4baa8b86259d99987, type: 2}
@@ -51,6 +52,8 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 516310861e8090f4bb9c61dd30185bd2, type: 2}
   _devilFruits:
   - {fileID: 11400000, guid: 75728ea0d9df78547b3f5847722619e5, type: 2}
+  _dropTables:
+  - {fileID: 11400000, guid: 189db9046827b1547b8a1a61d28c4a47, type: 2}
   _maxHealthStat:
     _value: stat.max_hp
   _maxManaStat:

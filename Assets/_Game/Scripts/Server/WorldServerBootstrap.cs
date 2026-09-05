@@ -235,6 +235,9 @@ namespace ChibiFantasy.Server
             Simulation = null;
             Characters = null;
             MonsterConfiguration = null;
+            Loot = null;
+            Rewards = null;
+            LootAuthority = null;
 
             // A session-only process: it admits, places and releases, and simulates nothing.
             // Legitimate, and not a fault.
@@ -290,7 +293,24 @@ namespace ChibiFantasy.Server
             var skillRules = new SkillExecutionRules(_content.DefenceStat,
                 _content.MagicDefenceStat, MinimumDamage);
 
-            var combat = new ServerCombatPipeline(commands, monsters, null,
+            // What a defeated monster leaves on the ground, and who is allowed to take it.
+            // Both existed since Phase 17.15 and the shipped world never composed them, so
+            // until now nothing production could drop anything at all.
+            var loot = new MonsterLootRegistry(players, items);
+
+            DefinitionRegistry<CharacterProgressionDefinition> progressions =
+                _content.BuildProgressions();
+
+            CharacterProgressionDefinition curve = progressions.All.Count > 0
+                ? progressions.All[0]
+                : null;
+
+            var rewards = new MonsterRewardAuthority(monsters, players, curve, loot, items,
+                _content.BuildDropTables(), _rolls ?? new SystemRandomSource(),
+                _quantities as IRandomRangeSource ?? new SystemRandomSource(),
+                _lootLifetimeSeconds, _lootPersonalWindowSeconds);
+
+            var combat = new ServerCombatPipeline(commands, monsters, rewards,
                 BasicAttackRules.Melee(_content.AttackStat, _content.DefenceStat,
                     MinimumDamage, _meleeReachMetres),
                 default, skills, skillRules, effects, fruits);
@@ -311,12 +331,23 @@ namespace ChibiFantasy.Server
             replication.UseInventory(new CharacterInventoryAuthority(players, _ => true,
                 items, replication, fruits, effects, skills, maps, _spawnPoints));
 
+            // How a player asks for what a boss left behind. The registry above already
+            // decides every rule; this is the identity a client can name and the distance
+            // they must walk to name it.
+            LootAuthority = new CharacterLootAuthority(players, loot, replication,
+                _lootReachMetres);
+
+            replication.UseLoot(LootAuthority);
+
             var stat = new CharacterStatAuthority(players, _content.Formulas, stats, effects,
                 new EquipmentModifierResolver.Context(items),
                 _content.MaxHealthStat, _content.MaxManaStat, fruits, skills);
 
             Simulation = new WorldSimulation(players, replication, status, stat, movement,
-                combat, monsters);
+                combat, monsters, loot);
+
+            Loot = loot;
+            Rewards = rewards;
 
             Characters = players;
             Replication = replication;
@@ -342,6 +373,42 @@ namespace ChibiFantasy.Server
 
         /// <summary>The live characters this world holds, or null when unready.</summary>
         public WorldCharacterRegistry Characters { get; private set; }
+
+        /// <summary>What is lying on the ground in this world. Null when unready.</summary>
+        public MonsterLootRegistry Loot { get; private set; }
+
+        /// <summary>Who has been paid for which defeat. Null when unready.</summary>
+        public MonsterRewardAuthority Rewards { get; private set; }
+
+        /// <summary>Where a pickup request lands. Null when unready.</summary>
+        public CharacterLootAuthority LootAuthority { get; private set; }
+
+        [Tooltip("How close a character must be to take a pile, in metres.")]
+        [SerializeField] private float _lootReachMetres = 4f;
+
+        /// <summary>
+        /// The roll a rare drop is decided by.
+        /// </summary>
+        /// <remarks>
+        /// <b>A seam, not a switch.</b> A test replaces the source of randomness so a
+        /// one-in-ten-million drop can be observed; it never replaces the one-in-ten-million.
+        /// The authored chance stays exactly what content says it is, which is the only
+        /// reason a test proving the rare path can be believed.
+        /// </remarks>
+        public void UseRandom(IRandomResultSource rolls, IRandomRangeSource quantities = null)
+        {
+            _rolls = rolls;
+            _quantities = quantities;
+        }
+
+        private IRandomResultSource _rolls;
+        private IRandomRangeSource _quantities;
+
+        [Tooltip("How long a dropped pile lasts. Zero means it never expires on its own.")]
+        [SerializeField] private float _lootLifetimeSeconds = 300f;
+
+        [Tooltip("How long the killer alone may take their drops. Zero disables the window.")]
+        [SerializeField] private float _lootPersonalWindowSeconds = 30f;
 
         /// <summary>What spawns and publishes character objects, or null when unready.</summary>
         public CharacterReplicationService Replication { get; private set; }

@@ -221,7 +221,7 @@ cd backend && php vendor/phpunit/phpunit/phpunit
 
 # Unity EditMode — the live tests need the two commands below
 php backend/bin/integration-fixture.php
-DB_DATABASE=chibifantasy_test php -S 127.0.0.1:8099 -t backend/public
+DB_DATABASE=chibifantasy_integration php -S 127.0.0.1:8099 -t backend/public
 
 # Unity PlayMode — needs nothing; opens a loopback socket
 ```
