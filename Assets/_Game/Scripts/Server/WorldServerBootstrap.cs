@@ -171,7 +171,8 @@ namespace ChibiFantasy.Server
             VersionRequirement required = default,
             ICharacterStateStore characters = null,
             IMonsterSpawnConfigurationSource spawnConfiguration = null,
-            IPartyStateStore parties = null)
+            IPartyStateStore parties = null,
+            IMonsterRewardOutbox rewardOutbox = null)
         {
             Registry = new WorldConnectionRegistry();
 
@@ -183,11 +184,12 @@ namespace ChibiFantasy.Server
                 authority = BackendAuthority.WorldServicesOverHttp(_apiBaseAddress,
                     _apiTimeoutSeconds, out ICharacterStateStore store,
                     out IMonsterSpawnConfigurationSource nests, out _authorityLifetime,
-                    out IPartyStateStore partyStore);
+                    out IPartyStateStore partyStore, out IMonsterRewardOutbox outbox);
 
                 characters = characters ?? store;
                 spawnConfiguration = spawnConfiguration ?? nests;
                 parties = parties ?? partyStore;
+                rewardOutbox = rewardOutbox ?? outbox;
             }
 
             Coordinator = new WorldEntryCoordinator(authority, Registry, required);
@@ -205,7 +207,7 @@ namespace ChibiFantasy.Server
             _networkManager.ServerManager.SetAuthenticator(_authenticator);
             _networkManager.ServerManager.OnRemoteConnectionState += OnRemoteConnectionState;
 
-            ComposeWorld(characters, spawnConfiguration, parties);
+            ComposeWorld(characters, spawnConfiguration, parties, rewardOutbox);
         }
 
         /// <summary>
@@ -228,7 +230,8 @@ namespace ChibiFantasy.Server
         /// </remarks>
         private void ComposeWorld(ICharacterStateStore characters,
             IMonsterSpawnConfigurationSource spawnConfiguration,
-            IPartyStateStore parties)
+            IPartyStateStore parties,
+            IMonsterRewardOutbox rewardOutbox)
         {
             IsWorldReady = false;
             _contentFaults.Clear();
@@ -244,6 +247,7 @@ namespace ChibiFantasy.Server
             LootAuthority = null;
             Parties = null;
             PartyStore = null;
+            RewardOutbox = null;
 
             // A session-only process: it admits, places and releases, and simulates nothing.
             // Legitimate, and not a fault.
@@ -321,7 +325,13 @@ namespace ChibiFantasy.Server
                 _content.BuildDropTables(), _rolls ?? new SystemRandomSource(),
                 _quantities as IRandomRangeSource ?? new SystemRandomSource(),
                 _lootLifetimeSeconds, _lootPersonalWindowSeconds,
-                Parties, _rewardRangeMetres);
+                Parties, _rewardRangeMetres, rewardOutbox);
+
+            RewardOutbox = rewardOutbox;
+
+            // The pile registry tells the reward authority what leaves it, so a defeat that
+            // is still being finished knows which of its items are already carried.
+            loot?.Observe(rewards);
 
             var combat = new ServerCombatPipeline(commands, monsters, rewards,
                 BasicAttackRules.Melee(_content.AttackStat, _content.DefenceStat,
@@ -401,6 +411,9 @@ namespace ChibiFantasy.Server
 
         /// <summary>Where parties are kept between sessions. Null in a world with none.</summary>
         public IPartyStateStore PartyStore { get; private set; }
+
+        /// <summary>Where this world writes a defeat down before it pays it.</summary>
+        public IMonsterRewardOutbox RewardOutbox { get; private set; }
 
         [Tooltip("How near a party member must be to share a kill, in metres. "
             + "Zero shares with the whole map.")]
@@ -629,6 +642,14 @@ namespace ChibiFantasy.Server
                 {
                     Parties.Restore(outcome.Admission.Session,
                         outcome.Admission.Character, PartyStore);
+                }
+
+                // And whatever this world still owed when it last stopped. Read here
+                // because a pending reward is scoped to a server and channel, and the
+                // session is what tells the backend which -- at world boot there is none.
+                if (admitted.IsSpawned && Rewards != null && RewardOutbox != null)
+                {
+                    Rewards.RecoverPending();
                 }
 
                 if (!admitted.IsSpawned)

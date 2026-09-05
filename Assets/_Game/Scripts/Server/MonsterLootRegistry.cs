@@ -231,9 +231,30 @@ namespace ChibiFantasy.Server
 
             CharacterPersistenceResult saved = _characters.Save(taker);
 
+            // And telling whoever is holding this defeat's decision that the entry is gone.
+            // Without it a restart would republish an item that is already being carried.
+            _takenObserver?.NoteLootTaken(loot, index, character);
+
             if (pile.IsEmpty) Remove(loot);
 
             return new LootPickupOutcome(result, saved.IsOk, saved.Failure);
+        }
+
+        /// <summary>Told when an entry leaves a pile for somebody's bag.</summary>
+        /// <remarks>An interface rather than a direct reference so this registry stays
+        /// ignorant of rewards and persistence: it knows a thing was taken, and something
+        /// else decides what that means.</remarks>
+        public interface ILootTakenObserver
+        {
+            void NoteLootTaken(InstanceId loot, int index, CharacterId taker);
+        }
+
+        private ILootTakenObserver _takenObserver;
+
+        /// <summary>Starts telling an observer what leaves these piles.</summary>
+        public void Observe(ILootTakenObserver observer)
+        {
+            _takenObserver = observer;
         }
 
         /// <summary>Takes a pile out of the world.</summary>

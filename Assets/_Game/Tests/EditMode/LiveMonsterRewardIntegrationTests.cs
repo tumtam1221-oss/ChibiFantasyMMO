@@ -609,6 +609,132 @@ namespace ChibiFantasy.Tests.EditMode
             return read.Party;
         }
 
+        /// <summary>
+        /// A decided defeat, through the real stack and back, and finished exactly once.
+        /// </summary>
+        /// <remarks>
+        /// Unity -> HTTP -> PHP -> MySQL -> a new store -> back. The decision that goes in is
+        /// the one that comes out: the same defeat, the same claimant, the same item, and the
+        /// same one in ten million roll that was already spent. Nothing here re-decides
+        /// anything, which is the entire reason the row exists.
+        /// </remarks>
+        [Test]
+        public void ADecidedDefeatSurvivesARealRoundTripThroughPhpAndMySql()
+        {
+            var outbox = new HttpMonsterRewardOutbox(_transport, new ApiToken(_api));
+
+            var me = new CharacterId(_fixture.RewardCharacterId);
+            var defeat = new InstanceId("defeat-live-18-15-" + RequestId.New().Value);
+            var loot = new InstanceId("loot-live-18-15-" + RequestId.New().Value);
+            string rewardId = "reward-live-18-15-" + RequestId.New().Value;
+
+            var decided = new PersistedMonsterReward(rewardId, defeat,
+                new DefinitionId("monster.ancient_slime_king"),
+                new DefinitionId("map.harbor_town"), me,
+                loot, 1, me, 1.5f, 2.25f, -3.75f,
+                new PartyId("party-live-18-15"), 1, true,
+                new[] { new MonsterRewardGrant(me, 450) },
+                new[]
+                {
+                    new MonsterRewardLootEntry(0,
+                        new DefinitionId("item.devil_fruit.darkness"), 1),
+                });
+
+            // A: the decision reaches MySQL.
+            MonsterRewardOutboxResult recorded = outbox.Record(_api.Session, decided);
+
+            Assert.That(recorded.IsOk, Is.True, "live record failed: " + recorded.Detail);
+            Assert.That(recorded.WasAlreadyRecorded, Is.False);
+
+            // The same defeat again, as a world that never heard the answer would ask.
+            MonsterRewardOutboxResult twice = outbox.Record(_api.Session,
+                new PersistedMonsterReward("reward-live-18-15-second", defeat,
+                    decided.Monster, decided.Map, me, loot, 1, me, 0f, 0f, 0f,
+                    decided.Party, 1, true, decided.Experience, decided.Entries));
+
+            Assert.That(twice.IsOk, Is.True);
+            Assert.That(twice.WasAlreadyRecorded, Is.True,
+                "one defeat produced a second reward in MySQL");
+            Assert.That(twice.RewardId, Is.EqualTo(recorded.RewardId));
+
+            // B: a brand new store, as a restarted world would use.
+            var reader = new HttpMonsterRewardOutbox(_transport, new ApiToken(_api));
+
+            PersistedMonsterReward restored = Pending(reader, defeat);
+
+            Assert.That(restored.Exists, Is.True, "the decision did not survive MySQL");
+            Assert.That(restored.Killer, Is.EqualTo(me));
+            Assert.That(restored.Claimant, Is.EqualTo(me),
+                "the decided claimant did not come back");
+            Assert.That(restored.Loot, Is.EqualTo(loot),
+                "the pile lost the identity it was decided with");
+            Assert.That(restored.HasCursor, Is.True);
+            Assert.That(restored.Cursor, Is.EqualTo(1),
+                "the turn this defeat must land on was forgotten");
+            Assert.That(restored.X, Is.EqualTo(1.5f).Within(0.01f));
+            Assert.That(restored.Z, Is.EqualTo(-3.75f).Within(0.01f),
+                "a fractional coordinate was rounded on the way through PHP");
+
+            // E: the item is the one that was rolled, named by its authored id.
+            Assert.That(restored.Entries.Count, Is.EqualTo(1));
+            Assert.That(restored.Entries[0].Item.Value,
+                Is.EqualTo("item.devil_fruit.darkness"),
+                "the decided drop came back as a different item");
+            Assert.That(restored.Entries[0].IsClaimed, Is.False);
+
+            // C: half delivered, then read back by yet another store.
+            MonsterRewardOutboxResult half = reader.Progress(_api.Session,
+                restored.RewardId, restored.Revision, new[] { me }, null, true, true,
+                false);
+
+            Assert.That(half.IsOk, Is.True, "live progress failed: " + half.Detail);
+
+            PersistedMonsterReward midway = Pending(
+                new HttpMonsterRewardOutbox(_transport, new ApiToken(_api)), defeat);
+
+            Assert.That(midway.Exists, Is.True, "a half-delivered reward stopped being owed");
+            Assert.That(midway.Experience[0].IsDelivered, Is.True,
+                "the payment that landed was not remembered");
+            Assert.That(midway.IsCursorCommitted, Is.True);
+            Assert.That(midway.Entries[0].IsClaimed, Is.False,
+                "an item nobody took was marked as taken");
+
+            // A stale attempt, as a second recovery would make. It must change nothing.
+            MonsterRewardOutboxResult stale = reader.Progress(_api.Session,
+                restored.RewardId, restored.Revision, new[] { me }, null, null, null, true);
+
+            Assert.That(stale.IsOk, Is.False, "two recoveries both believed they were first");
+            Assert.That(stale.Failure,
+                Is.EqualTo(MonsterRewardOutboxFailure.StaleRevision));
+
+            // D: finished, and no longer owed.
+            MonsterRewardOutboxResult done = reader.Progress(_api.Session,
+                midway.RewardId, midway.Revision, null,
+                new[]
+                {
+                    new MonsterRewardLootEntry(0, midway.Entries[0].Item, 1, default,
+                        true, me),
+                }, null, null, true);
+
+            Assert.That(done.IsOk, Is.True, "live completion failed: " + done.Detail);
+
+            Assert.That(Pending(new HttpMonsterRewardOutbox(_transport, new ApiToken(_api)),
+                    defeat).Exists, Is.False,
+                "a completed reward is still being handed out as pending");
+        }
+
+        /// <summary>One pending reward for a defeat, or nothing when it is no longer owed.</summary>
+        private PersistedMonsterReward Pending(HttpMonsterRewardOutbox outbox,
+            InstanceId defeat)
+        {
+            foreach (PersistedMonsterReward reward in outbox.Pending(_api.Session))
+            {
+                if (reward.Defeat == defeat) return reward;
+            }
+
+            return default;
+        }
+
         // ---- devil fruit reaches MySQL ------------------------------------------------------------
 
         /// <summary>

@@ -17,6 +17,7 @@ use ChibiFantasy\Session\SessionRepository;
 use ChibiFantasy\Session\SessionService;
 use ChibiFantasy\Session\VersionPolicy;
 use ChibiFantasy\Support\Env;
+use ChibiFantasy\World\MonsterRewardRepository;
 use ChibiFantasy\World\MonsterSpawnRepository;
 use PDO;
 
@@ -48,6 +49,7 @@ final class Api
     private readonly CharacterStateRepository $characterState;
     private readonly PartyRepository $parties;
     private readonly MonsterSpawnRepository $monsterSpawns;
+    private readonly MonsterRewardRepository $monsterRewards;
     private readonly IdempotencyStore $idempotency;
 
     public function __construct(private readonly PDO $pdo)
@@ -60,6 +62,7 @@ final class Api
         $this->characterState = new CharacterStateRepository($pdo);
         $this->parties = new PartyRepository($pdo);
         $this->monsterSpawns = new MonsterSpawnRepository($pdo);
+        $this->monsterRewards = new MonsterRewardRepository($pdo);
         $this->idempotency = new IdempotencyStore($pdo);
         $this->flow = new SessionService(
             $pdo,
@@ -149,6 +152,15 @@ final class Api
 
             $request->method === 'GET' && $path === '/api/world/spawn-configuration'
                 => $this->spawnConfiguration($request, $requestId),
+
+            $request->method === 'POST' && $path === '/api/world/monster-reward'
+                => $this->recordMonsterReward($request, $requestId),
+
+            $request->method === 'GET' && $path === '/api/world/monster-rewards'
+                => $this->pendingMonsterRewards($request, $requestId),
+
+            $request->method === 'POST' && $path === '/api/world/monster-reward/progress'
+                => $this->progressMonsterReward($request, $requestId),
 
             $request->method === 'GET' && $path === '/api/health'
                 => Response::ok(['status' => 'ok']),
@@ -654,6 +666,185 @@ final class Api
      * a misconfigured nest appears in an operator's log instead of silently failing
      * to populate.
      */
+    /**
+     * Records what a monster defeat decided, before any of it is handed over.
+     *
+     * The world server calls this, with a session that has reached the world -- the same
+     * bar the rest of world persistence sets. Nothing here decides anything: the roll, the
+     * split and the claimant arrive already settled, and this only writes them down so a
+     * restart can finish what it started.
+     *
+     * Repeating the call with the same defeat is not an error. A world that saved and never
+     * heard the answer must be able to ask again, and the UNIQUE on `defeat_id` is what
+     * makes the second call return the first call's reward instead of a second one.
+     */
+    private function recordMonsterReward(Request $request, string $requestId): Response
+    {
+        $session = $this->requireSession($request);
+
+        if ($session instanceof ApiProblem) {
+            return Response::problem($session, $requestId);
+        }
+
+        $experience = [];
+
+        foreach ($request->nested('experience') as $grant) {
+            $experience[] = [
+                'character_id' => trim((string) ($grant['character_id'] ?? '')),
+                'experience'   => (int) ($grant['experience'] ?? 0),
+            ];
+        }
+
+        $loot = [];
+
+        foreach ($request->nested('loot') as $entry) {
+            $loot[] = [
+                'item_definition_id'   => trim((string) ($entry['item_definition_id'] ?? '')),
+                'quantity'             => (int) ($entry['quantity'] ?? 0),
+                'rarity_definition_id' => trim((string) ($entry['rarity_definition_id'] ?? '')),
+            ];
+        }
+
+        // The world this reward belongs to comes from the session, never from the body: a
+        // caller that could name its own server and channel could hand another world's
+        // pending rewards to itself.
+        $result = $this->monsterRewards->record([
+            'reward_id'             => trim((string) $request->string('reward_id')),
+            'defeat_id'             => trim((string) $request->string('defeat_id')),
+            'server_id'             => (string) ($session['selected_server_id'] ?? ''),
+            'channel_id'            => (string) ($session['selected_channel_id'] ?? ''),
+            'monster_definition_id' => trim((string) $request->string('monster_definition_id')),
+            'map_definition_id'     => trim((string) $request->string('map_definition_id')),
+            'killer_character_id'   => trim((string) $request->string('killer_character_id')),
+            'loot_id'               => trim((string) $request->string('loot_id')),
+            'loot_policy'           => $request->int('loot_policy'),
+            'claimant_character_id' => trim((string) $request->string('claimant_character_id')),
+            'position_x'            => $request->float('position_x'),
+            'position_y'            => $request->float('position_y'),
+            'position_z'            => $request->float('position_z'),
+            'party_id'              => trim((string) $request->string('party_id')),
+            // Absent and zero are different answers: zero is the first member's turn, and
+            // absent means this defeat owes no rotation anything at all.
+            'party_cursor'          => $request->has('party_cursor')
+                ? $request->int('party_cursor') : null,
+        ], $experience, $loot);
+
+        if (!($result['ok'] ?? false)) {
+            return Response::problem(
+                ApiProblem::validation((string) ($result['reason'] ?? 'invalid_reward'),
+                    'error.monster_reward.' . ((string) ($result['reason'] ?? 'invalid'))),
+                $requestId
+            );
+        }
+
+        return Response::ok([
+            'reward_id'  => (string) ($result['reward_id'] ?? ''),
+            'revision'   => (int) ($result['revision'] ?? 0),
+            'existing'   => (bool) ($result['existing'] ?? false),
+            'request_id' => $requestId,
+        ]);
+    }
+
+    /**
+     * What this world still owes.
+     *
+     * Scoped to the session's own server and channel, so a restarting world sees its own
+     * unfinished work and cannot pick up another channel's.
+     */
+    private function pendingMonsterRewards(Request $request, string $requestId): Response
+    {
+        $session = $this->requireSession($request);
+
+        if ($session instanceof ApiProblem) {
+            return Response::problem($session, $requestId);
+        }
+
+        return Response::ok([
+            'rewards' => $this->monsterRewards->pending(
+                (string) ($session['selected_server_id'] ?? ''),
+                (string) ($session['selected_channel_id'] ?? '')
+            ),
+        ]);
+    }
+
+    /**
+     * Records that part of a reward has landed, and optionally that all of it has.
+     *
+     * One endpoint rather than one per column: every step is the same statement -- this
+     * side effect happened -- and they all have to be checked against one revision, or two
+     * recovering workers could each believe they were the one who delivered.
+     */
+    private function progressMonsterReward(Request $request, string $requestId): Response
+    {
+        $session = $this->requireSession($request);
+
+        if ($session instanceof ApiProblem) {
+            return Response::problem($session, $requestId);
+        }
+
+        $rewardId = trim((string) $request->string('reward_id'));
+
+        $reward = $this->monsterRewards->find($rewardId);
+
+        if ($reward === null) {
+            return Response::problem(
+                ApiProblem::notFound('unknown_reward', 'error.monster_reward.unknown'),
+                $requestId
+            );
+        }
+
+        // A world may only move its own rewards on.
+        if ($reward['server_id'] !== (string) ($session['selected_server_id'] ?? '')
+            || $reward['channel_id'] !== (string) ($session['selected_channel_id'] ?? '')) {
+            return Response::problem(
+                ApiProblem::forbidden('not_this_world', 'error.monster_reward.not_this_world'),
+                $requestId
+            );
+        }
+
+        $paid = [];
+
+        foreach ($request->nested('experience_delivered') as $characterId) {
+            $paid[] = trim((string) $characterId);
+        }
+
+        $claimed = [];
+
+        foreach ($request->nested('loot_claimed') as $entry) {
+            $claimed[] = [
+                'entry_index'  => (int) ($entry['entry_index'] ?? -1),
+                'character_id' => trim((string) ($entry['character_id'] ?? '')),
+            ];
+        }
+
+        $result = $this->monsterRewards->progress(
+            $rewardId,
+            $request->int('revision'),
+            $paid,
+            $claimed,
+            $request->has('cursor_committed') ? (bool) $request->int('cursor_committed') : null,
+            $request->has('loot_published') ? (bool) $request->int('loot_published') : null,
+            (bool) $request->int('complete')
+        );
+
+        if (!($result['ok'] ?? false)) {
+            $reason = (string) ($result['reason'] ?? 'progress_failed');
+
+            $problem = $reason === 'unknown_reward'
+                ? ApiProblem::notFound($reason, 'error.monster_reward.unknown')
+                : ApiProblem::conflict($reason, 'error.monster_reward.' . $reason);
+
+            return Response::problem($problem, $requestId);
+        }
+
+        return Response::ok([
+            'reward_id'  => $rewardId,
+            'revision'   => (int) ($result['revision'] ?? 0),
+            'state'      => (int) ($result['state'] ?? 0),
+            'request_id' => $requestId,
+        ]);
+    }
+
     private function spawnConfiguration(Request $request, string $requestId): Response
     {
         $mapId = (string) $request->query('map_id', '');

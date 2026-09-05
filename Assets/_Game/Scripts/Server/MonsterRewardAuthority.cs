@@ -52,7 +52,17 @@ namespace ChibiFantasy.Server
         /// member the same turn again, so the defeat is held instead: the roll that was
         /// already made is kept, and a retry finishes it without rolling a second one.
         /// </remarks>
-        PartyRotationNotCommitted = 11
+        PartyRotationNotCommitted = 11,
+
+        /// <summary>
+        /// The defeat's decision could not be written down, so none of it was handed over.
+        /// </summary>
+        /// <remarks>A defeat is resolved once: the drop tables are rolled, the rare chance
+        /// is spent and the split is settled. Paying any of that out before the decision is
+        /// durable means a world that stops loses it -- and a restart would resolve the same
+        /// defeat again, giving a second go at a one in ten million item. So nothing is paid
+        /// until the decision is safe.</remarks>
+        RewardNotRecorded = 12
     }
 
     /// <summary>
@@ -186,7 +196,7 @@ namespace ChibiFantasy.Server
     /// retries it. The result says plainly that it is not persisted rather than reporting a
     /// success the database never saw.
     /// </remarks>
-    public sealed class MonsterRewardAuthority
+    public sealed class MonsterRewardAuthority : MonsterLootRegistry.ILootTakenObserver
     {
         private readonly MonsterWorldRuntime _monsters;
         private readonly WorldCharacterRegistry _characters;
@@ -227,11 +237,56 @@ namespace ChibiFantasy.Server
         /// </remarks>
         private sealed class HeldDefeat
         {
+            /// <summary>The monster's runtime instance: one life, one reward.</summary>
             public InstanceId Monster;
-            public MonsterDefeatResult Defeat;
-            public DefeatRewardContext Context;
+
+            public DefinitionId Definition;
+            public DefinitionId Map;
+            public CharacterId Killer;
+
+            /// <summary>The pile this defeat produced, built and possibly not yet published.</summary>
             public LootObjectState Pile;
-            public int Experience;
+
+            /// <summary>What each eligible character is owed, and whether they have had it.</summary>
+            public List<MonsterRewardGrant> Grants = new List<MonsterRewardGrant>();
+
+            /// <summary>What fell, in pile order, and whether it has been taken.</summary>
+            public List<MonsterRewardLootEntry> Entries =
+                new List<MonsterRewardLootEntry>();
+
+            public PartyId Party;
+            public CharacterId Claimant;
+            public int Cursor;
+            public bool HasCursor;
+            public bool CursorCommitted;
+            public bool LootPublished;
+
+            /// <summary>This decision's durable identity, once it has one.</summary>
+            public string RewardId;
+
+            public int Revision;
+
+            /// <summary>Whether the decision is safely written down.</summary>
+            public bool Recorded;
+
+            /// <summary>Whether anything here is still owed to somebody.</summary>
+            public bool IsOutstanding
+            {
+                get
+                {
+                    for (var i = 0; i < Grants.Count; i++)
+                    {
+                        if (!Grants[i].IsDelivered) return true;
+                    }
+
+                    for (var i = 0; i < Entries.Count; i++)
+                    {
+                        if (!Entries[i].IsClaimed) return true;
+                    }
+
+                    return false;
+                }
+            }
         }
 
         private readonly Dictionary<string, HeldDefeat> _held =
@@ -251,6 +306,15 @@ namespace ChibiFantasy.Server
         private const int RetryTickInterval = 300;
 
         private int _ticksUntilRetry;
+
+        /// <summary>Where a decided defeat is written down before it is paid.</summary>
+        /// <remarks>Optional: a world composed without one behaves exactly as it did before
+        /// there was an outbox, keeping its decisions in memory. That is what every test
+        /// world that never asked for durability still gets.</remarks>
+        private readonly IMonsterRewardOutbox _outbox;
+
+        /// <summary>Whether this world has already asked storage what it still owes.</summary>
+        private bool _recovered;
 
         /// <param name="monsters">The authoritative monster runtime.</param>
         /// <param name="characters">Where players are, and the only way to a character.</param>
@@ -283,7 +347,8 @@ namespace ChibiFantasy.Server
             float lootLifetimeSeconds = 0f,
             float personalWindowSeconds = 0f,
             WorldPartyRegistry parties = null,
-            float rewardRangeMetres = 0f)
+            float rewardRangeMetres = 0f,
+            IMonsterRewardOutbox outbox = null)
         {
             _parties = parties;
             _rewardRangeMetres = rewardRangeMetres;
@@ -297,6 +362,7 @@ namespace ChibiFantasy.Server
             _quantities = quantities;
             _lootLifetimeSeconds = lootLifetimeSeconds;
             _personalWindowSeconds = personalWindowSeconds;
+            _outbox = outbox;
         }
 
         /// <summary>Whether this server is composed to produce loot at all.</summary>
@@ -348,16 +414,16 @@ namespace ChibiFantasy.Server
             // A defeat already decided but never paid. Asked before the granted guard
             // because the monster is in _paid already: its claim was consumed, and this
             // is the same defeat being finished rather than a second one.
-            if (_held.TryGetValue(monster.Value, out HeldDefeat held))
+            if (_held.TryGetValue(monster.Value, out HeldDefeat waitingDefeat))
             {
                 if (!TryResolveRecipient(killer, out LivingCharacter waiting)
-                    || waiting.Character != held.Context.Killer)
+                    || waiting.Character != waitingDefeat.Killer)
                 {
                     return MonsterRewardResult.Refused(
                         MonsterRewardRejection.RewardAlreadyGranted);
                 }
 
-                return Settle(waiting, held);
+                return Settle(waiting, waitingDefeat);
             }
 
             if (HasGranted(monster))
@@ -433,14 +499,57 @@ namespace ChibiFantasy.Server
             // unclaimable and a party somebody joins later cannot make it theirs.
             //
             // Built, not yet published: it is in no map until the turn behind it is safe.
-            return Settle(recipient, new HeldDefeat
+            CharacterId claimant = ClaimantFor(context);
+
+            var held = new HeldDefeat
             {
                 Monster = monster,
-                Defeat = defeat,
-                Context = context,
-                Pile = BuildLoot(defeat, living, ClaimantFor(context), rolled),
-                Experience = defeat.ExperienceReward,
-            });
+                Definition = living.State.Definition.Id,
+                Map = context.Map,
+                Killer = context.Killer,
+                Party = context.Party,
+                Claimant = claimant,
+                Pile = BuildLoot(defeat, living, claimant, rolled),
+            };
+
+            // The split is part of the decision, not something to work out again later: a
+            // party that loses a member between the kill and the payment must not change
+            // what the kill was worth to the members who were there.
+            var shares = new List<PartyExperienceShare>();
+
+            PartyExperiencePolicy.Share(defeat.ExperienceReward, context.Eligible, shares);
+
+            for (var i = 0; i < shares.Count; i++)
+            {
+                held.Grants.Add(new MonsterRewardGrant(shares[i].Character,
+                    shares[i].Experience));
+            }
+
+            // Nobody eligible is still a defeat that owes the killer nothing, and the
+            // killer's own result has to come from somewhere.
+            if (held.Grants.Count == 0)
+            {
+                held.Grants.Add(new MonsterRewardGrant(context.Killer, 0));
+            }
+
+            if (held.Pile != null && rolled != null)
+            {
+                for (var i = 0; i < rolled.Count; i++)
+                {
+                    held.Entries.Add(new MonsterRewardLootEntry(i, rolled[i].Item,
+                        rolled[i].Quantity, rolled[i].RarityOverride));
+                }
+            }
+
+            // The turn this defeat will spend, worked out now and not mutated: it belongs
+            // to the decision, so a recovered world commits the same one.
+            if (held.Pile != null && RestsOnTheTurn(context))
+            {
+                held.Cursor = _parties.NextRotation(context.Party);
+                held.HasCursor = true;
+            }
+
+            return Settle(recipient, held);
         }
 
         /// <summary>
@@ -460,42 +569,478 @@ namespace ChibiFantasy.Server
         /// </remarks>
         private MonsterRewardResult Settle(LivingCharacter recipient, HeldDefeat held)
         {
-            if (held.Pile != null && RestsOnTheTurn(held.Context))
+            // 1. The decision, written down before any of it is handed over. Everything
+            //    below can be attempted again; the roll above it cannot.
+            if (!Record(held))
+            {
+                Hold(held, "its decision could not be written down");
+
+                return MonsterRewardResult.Refused(
+                    MonsterRewardRejection.RewardNotRecorded);
+            }
+
+            // 2. The party's turn, when this pile is handed out by one.
+            if (held.Pile != null && !held.CursorCommitted && held.HasCursor
+                && _parties != null)
             {
                 PartyPersistenceResult committed =
-                    _parties.TryCommitNextRotation(held.Context.Party);
+                    _parties.TryCommitNextRotation(held.Party);
 
                 if (!committed.IsOk)
                 {
-                    // Nothing is spent: no pile in the world, no experience paid, and the
-                    // cursor -- runtime and durable alike -- exactly where it was. What was
-                    // already decided is kept so the retry cannot roll again.
-                    _held[held.Monster.Value] = held;
-
-                    // Ready to be tried on the very next tick. The backend may already be
-                    // back, and waiting out the interval before the first attempt would
-                    // hold a reward for no reason.
-                    _ticksUntilRetry = 0;
-
-                    UnityEngine.Debug.LogWarning("[party] holding the reward for "
-                        + held.Monster + ": its loot turn could not be written down ("
+                    Hold(held, "its loot turn could not be written down ("
                         + committed.Failure + ")");
 
                     return MonsterRewardResult.Refused(
                         MonsterRewardRejection.PartyRotationNotCommitted);
                 }
+
+                held.CursorCommitted = true;
+
+                Progress(held, cursorCommitted: true);
             }
-            else if (held.Pile != null && held.Context.Party.IsValid && _parties != null)
+            else if (held.Pile != null && !held.CursorCommitted && held.Party.IsValid
+                && _parties != null)
             {
-                // A turn is spent only when a party is actually given something.
-                _parties.AdvanceRotation(held.Context.Party);
+                // Personal and NeedGreed do not hand the pile out by rotation, so their
+                // claim does not rest on the turn and is not made to wait on a write.
+                _parties.AdvanceRotation(held.Party);
+
+                held.CursorCommitted = true;
             }
 
-            _held.Remove(held.Monster.Value);
+            // 3. The pile becomes real. Only entries nobody has taken go back on the
+            //    ground, which is what stops a restart respawning an item already carried.
+            if (held.Pile != null && !held.LootPublished && HasUnclaimedLoot(held))
+            {
+                if (PublishLoot(held.Pile, held.Map) != null)
+                {
+                    held.LootPublished = true;
 
-            LootObjectState pile = PublishLoot(held.Pile, held.Context.Map);
+                    Progress(held, lootPublished: true);
+                }
+            }
 
-            return ApplyShared(held.Monster, recipient, held.Experience, held.Context, pile);
+            // 4. Experience, per recipient, skipping anybody already paid.
+            MonsterRewardResult mine = Pay(held, recipient);
+
+            // 5. And done, when there is nothing left that could still be lost.
+            //
+            // A world with no outbox has nothing to lose it to: its rewards were never
+            // durable, so an unclaimed pile is just a pile and the defeat is finished.
+            if (_outbox == null)
+            {
+                _held.Remove(held.Monster.Value);
+
+                return mine;
+            }
+
+            if (!held.IsOutstanding)
+            {
+                _held.Remove(held.Monster.Value);
+
+                Progress(held, complete: true);
+            }
+            else
+            {
+                _held[held.Monster.Value] = held;
+            }
+
+            return mine;
+        }
+
+        /// <summary>Whether anything in this pile is still on the ground rather than carried.</summary>
+        private static bool HasUnclaimedLoot(HeldDefeat held)
+        {
+            for (var i = 0; i < held.Entries.Count; i++)
+            {
+                if (!held.Entries[i].IsClaimed) return true;
+            }
+
+            return held.Entries.Count == 0;
+        }
+
+        /// <summary>
+        /// Writes the decision down, if this world was composed to keep them.
+        /// </summary>
+        /// <remarks>Recording the same defeat twice is not an error and must not mint a
+        /// second reward: the backend keys on the defeat, so a world that saved and never
+        /// heard the answer is handed back the reward it already wrote.</remarks>
+        private bool Record(HeldDefeat held)
+        {
+            if (_outbox == null || held.Recorded) return true;
+
+            if (string.IsNullOrEmpty(held.RewardId))
+            {
+                held.RewardId = InstanceId.New().Value;
+            }
+
+            if (!TryWorldSession(out SessionId session)) return false;
+
+            MonsterRewardOutboxResult saved = _outbox.Record(session,
+                new PersistedMonsterReward(held.RewardId, held.Monster, held.Definition,
+                    held.Map, held.Killer,
+                    held.Pile == null ? default : held.Pile.LootId,
+                    (int)LootPolicy.OwnerOnly, held.Claimant,
+                    held.Pile == null ? 0f : held.Pile.Position.X,
+                    held.Pile == null ? 0f : held.Pile.Position.Y,
+                    held.Pile == null ? 0f : held.Pile.Position.Z,
+                    held.Party, held.Cursor, held.HasCursor,
+                    held.Grants, held.Entries));
+
+            if (!saved.IsOk) return false;
+
+            held.RewardId = saved.RewardId;
+            held.Revision = saved.Revision;
+            held.Recorded = true;
+
+            return true;
+        }
+
+        /// <summary>Records that part of a reward has landed.</summary>
+        /// <remarks>Best effort by design: the side effect has already happened, and
+        /// failing to write the bookkeeping must not undo it. What it costs is a repeat
+        /// attempt later, which every step here is built to survive.</remarks>
+        private void Progress(HeldDefeat held, bool? cursorCommitted = null,
+            bool? lootPublished = null, bool complete = false,
+            IReadOnlyList<CharacterId> paid = null,
+            IReadOnlyList<MonsterRewardLootEntry> claimed = null)
+        {
+            if (_outbox == null || !held.Recorded) return;
+
+            if (!TryWorldSession(out SessionId session)) return;
+
+            MonsterRewardOutboxResult moved = _outbox.Progress(session, held.RewardId,
+                held.Revision, paid, claimed, cursorCommitted, lootPublished, complete);
+
+            if (moved.IsOk)
+            {
+                held.Revision = moved.Revision;
+
+                return;
+            }
+
+            UnityEngine.Debug.LogWarning("[reward] could not record progress for "
+                + held.Monster + ": " + moved.Failure);
+        }
+
+        /// <summary>Holds a decided defeat so a retry can finish it without deciding again.</summary>
+        private void Hold(HeldDefeat held, string why)
+        {
+            _held[held.Monster.Value] = held;
+
+            // Ready on the very next tick: the backend may already be back, and waiting out
+            // the interval before the first attempt would hold a reward for no reason.
+            _ticksUntilRetry = 0;
+
+            UnityEngine.Debug.LogWarning("[reward] holding the reward for " + held.Monster
+                + ": " + why);
+        }
+
+        /// <summary>
+        /// Pays everyone this defeat still owes, and reports the killer's own share.
+        /// </summary>
+        /// <remarks>
+        /// <b>Skipping whoever has already been paid is the whole point.</b> A reward that
+        /// crashed between paying one member and recording it comes back with that member
+        /// already marked, so recovery pays the rest and leaves them alone.
+        ///
+        /// The split itself is Phase 13's arithmetic and was done once, at the defeat. This
+        /// only hands the decided amounts over.
+        /// </remarks>
+        private MonsterRewardResult Pay(HeldDefeat held, LivingCharacter killer)
+        {
+            MonsterRewardResult mine = default;
+
+            var paid = new List<CharacterId>();
+            var found = false;
+
+            for (var i = 0; i < held.Grants.Count; i++)
+            {
+                MonsterRewardGrant grant = held.Grants[i];
+
+                if (grant.IsDelivered)
+                {
+                    if (grant.Character == held.Killer && !found)
+                    {
+                        // Already paid on an earlier attempt. Reported as granted, because
+                        // it was, rather than paid a second time.
+                        mine = MonsterRewardResult.Granted(true,
+                            MonsterRewardRejection.None, held.Monster, grant.Character,
+                            0, 0, 0, 0, LootIdOf(held), LootCountOf(held));
+
+                        found = true;
+                    }
+
+                    continue;
+                }
+
+                LivingCharacter recipient = null;
+
+                if (grant.Character == held.Killer && killer != null
+                    && killer.Character == held.Killer)
+                {
+                    recipient = killer;
+                }
+                else if (!_characters.TryGetByCharacter(grant.Character,
+                    out recipient))
+                {
+                    // Not in this world right now. Their share stays owed, which is what
+                    // lets somebody log in tomorrow and still be paid.
+                    continue;
+                }
+
+                MonsterRewardResult result = Apply(held.Monster, recipient,
+                    grant.Experience, held.Pile);
+
+                if (!result.IsGranted) continue;
+
+                held.Grants[i] = new MonsterRewardGrant(grant.Character, grant.Experience,
+                    true);
+
+                paid.Add(grant.Character);
+
+                if (grant.Character == held.Killer && !found)
+                {
+                    mine = result;
+                    found = true;
+                }
+            }
+
+            if (paid.Count > 0) Progress(held, paid: paid);
+
+            return found
+                ? mine
+                : MonsterRewardResult.Granted(true, MonsterRewardRejection.None,
+                    held.Monster, held.Killer, 0, 0, 0, 0, LootIdOf(held),
+                    LootCountOf(held));
+        }
+
+        private static InstanceId LootIdOf(HeldDefeat held)
+        {
+            return held.Pile == null ? default : held.Pile.LootId;
+        }
+
+        private static int LootCountOf(HeldDefeat held)
+        {
+            return held.Pile == null ? 0 : held.Pile.Count;
+        }
+
+        /// <summary>
+        /// Picks up whatever this world still owed when it last stopped.
+        /// </summary>
+        /// <remarks>
+        /// <b>Read once, when somebody arrives.</b> A pending reward is scoped to a server
+        /// and a channel, and the backend works out which from the session -- so this needs
+        /// a session, and the first character through the door provides one. Asking at world
+        /// boot would mean asking with no session at all.
+        ///
+        /// <b>Nothing is decided here.</b> The roll, the split and the claimant were settled
+        /// when the monster died and are read back exactly as they were stored. This
+        /// rebuilds the same decision; it does not make a new one, which is the entire
+        /// reason the row exists.
+        ///
+        /// <b>Already-taken loot does not come back.</b> An entry somebody carried off is
+        /// marked in storage, so a recovered pile contains only what is still owed -- and a
+        /// pile with nothing owed is not republished at all.
+        /// </remarks>
+        public int RecoverPending()
+        {
+            if (_outbox == null || _recovered) return 0;
+
+            if (!TryWorldSession(out SessionId session)) return 0;
+
+            _recovered = true;
+
+            IReadOnlyList<PersistedMonsterReward> pending = _outbox.Pending(session);
+
+            var restored = 0;
+
+            for (var i = 0; i < pending.Count; i++)
+            {
+                PersistedMonsterReward reward = pending[i];
+
+                if (!reward.Exists) continue;
+
+                // Already being carried by this world -- a reward it wrote and has not
+                // finished. Storage does not get to overwrite live progress.
+                if (_held.ContainsKey(reward.Defeat.Value)) continue;
+
+                HeldDefeat held = Rebuild(reward);
+
+                if (held == null)
+                {
+                    // Refused rather than repaired. A row naming an item or a monster this
+                    // build does not have is an operator's problem, and substituting
+                    // something else would quietly hand out the wrong reward.
+                    UnityEngine.Debug.LogWarning("[reward] cannot recover " + reward.RewardId
+                        + ": it names content this world does not have");
+
+                    continue;
+                }
+
+                // The defeat was claimed in the world that decided it, and that world is
+                // gone. Claiming it again here is what stops this monster paying twice if
+                // it somehow still exists.
+                _paid.Add(reward.Defeat.Value);
+
+                _held[reward.Defeat.Value] = held;
+
+                restored++;
+            }
+
+            if (restored > 0)
+            {
+                _ticksUntilRetry = 0;
+
+                UnityEngine.Debug.Log("[reward] recovered " + restored
+                    + " unfinished monster reward(s)");
+            }
+
+            return restored;
+        }
+
+        /// <summary>
+        /// Turns a stored decision back into the one this world was carrying.
+        /// </summary>
+        /// <remarks>Returns null when the row names content this build cannot resolve. The
+        /// alternative -- dropping the entry and completing the reward -- would silently
+        /// swallow a rare drop, and substituting another item would hand out something
+        /// nobody rolled.</remarks>
+        private HeldDefeat Rebuild(PersistedMonsterReward reward)
+        {
+            var held = new HeldDefeat
+            {
+                Monster = reward.Defeat,
+                Definition = reward.Monster,
+                Map = reward.Map,
+                Killer = reward.Killer,
+                Party = reward.Party,
+                Claimant = reward.Claimant,
+                Cursor = reward.Cursor,
+                HasCursor = reward.HasCursor,
+                CursorCommitted = reward.IsCursorCommitted,
+                LootPublished = false,
+                RewardId = reward.RewardId,
+                Revision = reward.Revision,
+                Recorded = true,
+            };
+
+            for (var i = 0; i < reward.Experience.Count; i++)
+            {
+                held.Grants.Add(reward.Experience[i]);
+            }
+
+            var outstanding = new List<LootResult>();
+
+            for (var i = 0; i < reward.Entries.Count; i++)
+            {
+                MonsterRewardLootEntry entry = reward.Entries[i];
+
+                held.Entries.Add(entry);
+
+                if (entry.IsClaimed) continue;
+
+                if (_items != null && !_items.Contains(entry.Item)) return null;
+
+                outstanding.Add(new LootResult(reward.Defeat, entry.Item, entry.Quantity,
+                    entry.Rarity));
+            }
+
+            if (outstanding.Count > 0 && reward.Loot.IsValid)
+            {
+                // The same pile id it had before, so a world that publishes it again is
+                // republishing one object rather than minting a second.
+                held.Pile = new LootObjectState(reward.Loot, reward.Defeat,
+                    new CombatPosition(reward.X, reward.Y, reward.Z),
+                    outstanding, (LootPolicy)reward.LootPolicy, reward.Claimant,
+                    _lootLifetimeSeconds, _personalWindowSeconds);
+            }
+
+            return held;
+        }
+
+        /// <summary>
+        /// Records that somebody carried an entry off a recovered or live pile.
+        /// </summary>
+        /// <remarks>
+        /// <b>Written before the reward can be called finished.</b> This is the evidence
+        /// that stops a restart putting an item back on the floor that is already in
+        /// somebody's bag. The pickup itself has already happened and been saved with the
+        /// character; this only records that it did.
+        ///
+        /// <b>Implemented explicitly, so it is not part of this authority's surface.</b>
+        /// Only the pile registry it is handed to can call it. Nothing on this class takes
+        /// a figure or an identity from a caller, and an observer callback is not the place
+        /// to start.
+        /// </remarks>
+        void MonsterLootRegistry.ILootTakenObserver.NoteLootTaken(InstanceId loot,
+            int index, CharacterId taker)
+        {
+            if (!loot.IsValid) return;
+
+            foreach (KeyValuePair<string, HeldDefeat> pair in _held)
+            {
+                HeldDefeat held = pair.Value;
+
+                if (held.Pile == null || held.Pile.LootId != loot) continue;
+
+                for (var i = 0; i < held.Entries.Count; i++)
+                {
+                    MonsterRewardLootEntry entry = held.Entries[i];
+
+                    if (entry.Index != index || entry.IsClaimed) continue;
+
+                    held.Entries[i] = new MonsterRewardLootEntry(entry.Index, entry.Item,
+                        entry.Quantity, entry.Rarity, true, taker);
+
+                    Progress(held, claimed: new[] { held.Entries[i] });
+
+                    if (!held.IsOutstanding)
+                    {
+                        _held.Remove(pair.Key);
+
+                        Progress(held, complete: true);
+                    }
+
+                    return;
+                }
+
+                return;
+            }
+        }
+
+        /// <summary>
+        /// A session this world can speak to the backend as.
+        /// </summary>
+        /// <remarks>
+        /// <b>Any character in this world will do.</b> A pending reward belongs to a server
+        /// and a channel, and every session here names the same pair -- so the backend
+        /// scopes the call correctly whoever it is made through.
+        ///
+        /// That is what closes the old limitation where a held reward needed the killer to
+        /// be connected. The reward is the world's to finish, not one player's; if nobody
+        /// at all is here there is no session and it simply waits, which is the honest
+        /// answer rather than a lost drop.
+        /// </remarks>
+        private bool TryWorldSession(out SessionId session)
+        {
+            session = default;
+
+            if (_characters == null) return false;
+
+            IReadOnlyList<LivingCharacter> here = _characters.All();
+
+            for (var i = 0; i < here.Count; i++)
+            {
+                if (here[i] == null || !here[i].Session.IsValid) continue;
+
+                session = here[i].Session;
+
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>Whether this defeat's pile is handed out by the party's rotation.</summary>
@@ -545,14 +1090,17 @@ namespace ChibiFantasy.Server
             {
                 if (!_held.TryGetValue(key, out HeldDefeat held)) continue;
 
-                if (!_characters.TryGetByCharacter(held.Context.Killer,
-                    out LivingCharacter killer))
-                {
-                    // Whoever earned it is not here. Held, not discarded.
-                    continue;
-                }
+                // The killer is not required. Once the decision is durable it owes what it
+                // owes whether or not the person who earned it is connected: the pile goes
+                // back on the ground, the turn is committed, and each share is paid to
+                // whichever member is here. What is still owed simply stays owed.
+                _characters.TryGetByCharacter(held.Killer, out LivingCharacter killer);
 
-                if (Settle(killer, held).IsGranted) finished++;
+                Settle(killer, held);
+
+                // Finished means gone from the queue. A reward that is still waiting on a
+                // pile nobody has picked up has not finished, however well the attempt went.
+                if (!_held.ContainsKey(key)) finished++;
             }
 
             // Whatever is still waiting waits a while before the next attempt.
@@ -711,55 +1259,6 @@ namespace ChibiFantasy.Server
             }
 
             return false;
-        }
-
-        /// <summary>
-        /// Pays every member the defeat is allowed to pay.
-        /// </summary>
-        /// <remarks>
-        /// <b>The split is Phase 13's arithmetic, not a second one.</b>
-        /// <see cref="PartyExperiencePolicy.Share"/> divides the monster's experience and
-        /// hands the remainder out a point at a time, so a hundred experience across three
-        /// members is 34/33/33 and never 33/33/33 with one point quietly lost.
-        ///
-        /// <b>The killer's own result is what is returned.</b> The caller asked what this
-        /// command did, and what it did for them is their share -- the others are paid, and
-        /// a reward event for somebody else's screen is not this method's business.
-        /// </remarks>
-        private MonsterRewardResult ApplyShared(InstanceId monster, LivingCharacter killer,
-            int experience, in DefeatRewardContext context, LootObjectState pile)
-        {
-            var shares = new List<PartyExperienceShare>();
-
-            PartyExperiencePolicy.Share(experience, context.Eligible, shares);
-
-            MonsterRewardResult mine = default;
-
-            var paid = false;
-
-            for (var i = 0; i < shares.Count; i++)
-            {
-                PartyExperienceShare share = shares[i];
-
-                if (share.Character == context.Killer)
-                {
-                    mine = Apply(monster, killer, share.Experience, pile);
-                    paid = true;
-
-                    continue;
-                }
-
-                if (!_characters.TryGetByCharacter(share.Character,
-                    out LivingCharacter member))
-                {
-                    continue;
-                }
-
-                Apply(monster, member, share.Experience, pile);
-            }
-
-            // No share at all -- an experience reward of zero, which is legitimate content.
-            return paid ? mine : Apply(monster, killer, 0, pile);
         }
 
         private bool TryResolveRecipient(InstanceId killer, out LivingCharacter recipient)

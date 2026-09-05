@@ -151,6 +151,23 @@ final class Request
         return is_string($value) && is_numeric($value) ? (int) $value : $default;
     }
 
+    /**
+     * A number that is allowed a fractional part.
+     *
+     * Separate from int() because a world position is not a whole number and reading one
+     * through int() would quietly floor it, moving a recovered loot pile.
+     */
+    public function float(string $key, float $default = 0.0): float
+    {
+        $value = $this->body[$key] ?? null;
+
+        if (is_float($value) || is_int($value)) {
+            return (float) $value;
+        }
+
+        return is_string($value) && is_numeric($value) ? (float) $value : $default;
+    }
+
     public function bool(string $key, bool $default = false): bool
     {
         $value = $this->body[$key] ?? null;
