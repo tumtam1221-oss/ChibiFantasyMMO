@@ -133,6 +133,21 @@ namespace ChibiFantasy.Backend
                     cards));
             }
 
+            var pets = new List<PersistedPet>();
+
+            foreach (JsonReader row in json.Array("pets"))
+            {
+                pets.Add(new PersistedPet(
+                    new InstanceId(row.String("instance_id")),
+                    new DefinitionId(row.String("definition_id")),
+                    row.Int("level"),
+                    row.Int("experience"),
+                    row.Int("evolution_stage"),
+                    row.Int("revision")));
+            }
+
+            string activePet = json.String("active_pet_instance_id");
+
             var persisted = new PersistedCharacter(
                 character,
                 new AccountId(json.String("account_id")),
@@ -154,7 +169,9 @@ namespace ChibiFantasy.Backend
                 items,
                 json.Int("inventory_capacity"),
                 new DefinitionId(json.String("devil_fruit")),
-                json.String("devil_fruit_source"));
+                json.String("devil_fruit_source"),
+                pets,
+                string.IsNullOrEmpty(activePet) ? default : new InstanceId(activePet));
 
             return CharacterPersistenceResult.Loaded(persisted);
         }
@@ -362,7 +379,29 @@ namespace ChibiFantasy.Backend
                 builder.Append(withEquipment);
             }
 
-            builder.Append("]}");
+            // Pets. Always sent when the character has the collection, empty included:
+            // "owns none" is an answer the server has to be able to write down, and a row
+            // at level one with no experience is still a pet.
+            builder.Append("],\"pets\":[");
+
+            for (int i = 0; i < character.Pets.Count; i++)
+            {
+                if (i > 0) builder.Append(',');
+
+                PersistedPet pet = character.Pets[i];
+
+                builder.Append(new JsonWriter()
+                    .Add("instance_id", pet.Instance.Value)
+                    .Add("definition_id", pet.Pet.Value)
+                    .Add("level", pet.Level)
+                    .Add("experience", pet.Experience)
+                    .Add("evolution_stage", pet.EvolutionStage)
+                    .Add("revision", pet.Revision)
+                    .ToJson());
+            }
+
+            builder.Append("],\"active_pet_instance_id\":\"")
+                .Append(character.ActivePet.Value ?? string.Empty).Append("\"}");
 
             return builder.ToString();
         }

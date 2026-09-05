@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using ChibiFantasy.Core;
 
 namespace ChibiFantasy.Network
 {
@@ -182,6 +183,28 @@ namespace ChibiFantasy.Network
     /// <b>Slots and a quantity, never a result.</b> A client says "move slot 3 to slot 7",
     /// not "my inventory now looks like this". The server reads what is actually in slot 3.
     /// </remarks>
+    /// <summary>
+    /// Where a request to put a pet out goes once the network has carried it.
+    /// </summary>
+    /// <remarks>
+    /// <b>A pet and nothing else.</b> No character, no account, no level, no experience, no
+    /// evolution and no buff: the connection says who is asking and the server reads the
+    /// rest off state it already holds. A request that could carry any of those would be a
+    /// request to invent a companion.
+    ///
+    /// The fourth seam beside combat, movement and inventory, for the same reason -- the
+    /// authority lives in the server assembly, which already references this one.
+    /// </remarks>
+    public interface ICharacterPetRequestSink
+    {
+        /// <param name="connectionId">Whose object it arrived through. Not client-supplied.</param>
+        /// <param name="pet">Which owned pet to put out. Checked against that character's own.</param>
+        void Activate(int connectionId, InstanceId pet);
+
+        /// <param name="connectionId">Whose object it arrived through. Not client-supplied.</param>
+        void Deactivate(int connectionId);
+    }
+
     public interface ICharacterInventoryRequestSink
     {
         /// <param name="connectionId">Whose object it arrived through. Not client-supplied.</param>

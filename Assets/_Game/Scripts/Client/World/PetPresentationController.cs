@@ -51,6 +51,24 @@ namespace ChibiFantasy.Client.World
         private PetCompanionState _companion;
         private IDefinitionRegistry<PetDefinition> _pets;
 
+        /// <summary>
+        /// The pet the server says is out, for a character whose state this client has not
+        /// got. Empty when none is.
+        /// </summary>
+        /// <remarks>
+        /// <b>Two sources, one presenter.</b> The owner's own client holds real
+        /// <see cref="PetCompanionState"/>; every other viewer has only what was replicated.
+        /// Both answer the same question -- which authored pet is out -- so both drive the
+        /// same follower rather than a second controller for remote pets.
+        ///
+        /// <b>It is read, never written back.</b> Nothing here can summon, dismiss or move
+        /// anybody's pet: the value arrives from the server and the follower is drawn from
+        /// it. A viewer that disagreed would simply be drawing the wrong thing on its own
+        /// screen, which is what presentation already is.
+        /// </remarks>
+        private DefinitionId _replicated;
+        private bool _hasReplicated;
+
         /// <summary>The behaviour of the pet currently out. Follow when nothing is out.</summary>
         public PetFollowBehavior Behavior { get; private set; } = PetFollowBehavior.Follow;
 
@@ -70,6 +88,35 @@ namespace ChibiFantasy.Client.World
         }
 
         /// <summary>
+        /// Shows the pet the server says this character has out.
+        /// </summary>
+        /// <remarks>
+        /// The presentation seam for a character this client does not own. It takes an
+        /// authored id and nothing else -- no position, no offset, no behaviour -- because
+        /// every one of those is either content this looks up or something only the server
+        /// may decide. An empty id means nothing is out, which is how putting a pet away
+        /// arrives.
+        /// </remarks>
+        /// <param name="petDefinitionId">The authored pet, or empty for none.</param>
+        public void PresentReplicated(string petDefinitionId,
+            IDefinitionRegistry<PetDefinition> pets = null)
+        {
+            if (pets != null) _pets = pets;
+
+            _replicated = new DefinitionId(petDefinitionId ?? string.Empty);
+            _hasReplicated = _replicated.IsValid;
+
+            ReadDefinition();
+            Apply();
+        }
+
+        /// <summary>Whether a pet should be drawn beside this owner at all.</summary>
+        /// <remarks>Either source can say so; neither invents one. Aura forms draw no
+        /// follower, which is <see cref="PetCompanionState.IsAuraForm"/>'s answer and not
+        /// one this makes up.</remarks>
+        public bool IsOut => (_companion != null && _companion.IsSummoned) || _hasReplicated;
+
+        /// <summary>
         /// Reads the summoned pet's authored presentation values.
         /// </summary>
         /// <remarks>Called when the pet changes rather than every frame: a definition lookup
@@ -80,13 +127,21 @@ namespace ChibiFantasy.Client.World
             Behavior = PetFollowBehavior.Follow;
             VerticalOffset = 0f;
 
-            if (_companion == null || !_companion.IsSummoned || _pets == null) return;
+            if (_pets == null) return;
 
-            PetInstance pet = _companion.Summoned;
-            if (pet == null) return;
+            // The owner's own state when this client has it, the replicated id otherwise.
+            // Both name the same authored definition, so the lookup below is one path.
+            DefinitionId id = _replicated;
+
+            if (_companion != null && _companion.IsSummoned && _companion.Summoned != null)
+            {
+                id = _companion.Summoned.DefinitionId;
+            }
+
+            if (!id.IsValid) return;
 
             PetDefinition definition;
-            if (!_pets.TryGet(pet.DefinitionId, out definition) || definition == null) return;
+            if (!_pets.TryGet(id, out definition) || definition == null) return;
 
             Behavior = definition.FollowBehavior;
             VerticalOffset = definition.VerticalOffset;
@@ -99,8 +154,8 @@ namespace ChibiFantasy.Client.World
         /// waiting a frame for <see cref="Update"/>.</remarks>
         public void Apply()
         {
-            bool out_ = _companion != null && _companion.IsSummoned;
-            bool aura = out_ && _companion.IsAuraForm;
+            bool out_ = IsOut;
+            bool aura = _companion != null && _companion.IsSummoned && _companion.IsAuraForm;
 
             if (follower != null) follower.gameObject.SetActive(out_ && !aura);
             if (auraVisual != null) auraVisual.SetActive(aura);
@@ -125,8 +180,9 @@ namespace ChibiFantasy.Client.World
 
         private void Update()
         {
-            if (_companion == null || !_companion.IsSummoned) return;
-            if (_companion.IsAuraForm || follower == null || owner == null) return;
+            if (!IsOut) return;
+            if (follower == null || owner == null) return;
+            if (_companion != null && _companion.IsSummoned && _companion.IsAuraForm) return;
 
             Move(Time.deltaTime);
         }
@@ -143,7 +199,12 @@ namespace ChibiFantasy.Client.World
         {
             if (follower == null || owner == null || deltaSeconds <= 0f) return;
 
-            PetFollowMode mode = _companion == null ? PetFollowMode.Idle : _companion.Mode;
+            // A viewer without the owner's state has no mode to read. Follow is what a
+            // pet beside somebody looks like, and the server's position is what it is
+            // actually doing -- this only keeps the visual from standing still.
+            PetFollowMode mode = _companion != null
+                ? _companion.Mode
+                : (_hasReplicated ? PetFollowMode.Follow : PetFollowMode.Idle);
 
             if (mode == PetFollowMode.Idle) return;
 

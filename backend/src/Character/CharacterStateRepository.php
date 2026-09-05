@@ -51,7 +51,7 @@ final class CharacterStateRepository
             'SELECT character_id, account_id, server_id, name, gender, level, experience,
                     current_health, current_mana, class_definition_id, job_definition_id,
                     map_definition_id, spawn_definition_id, appearance_definition_id,
-                    availability, revision
+                    active_pet_instance_id, availability, revision
              FROM `character`
              WHERE character_id = :cid AND account_id = :aid'
         );
@@ -92,6 +92,11 @@ final class CharacterStateRepository
             'inventory_capacity' => $this->loadInventoryCapacity($characterId),
             'devil_fruit'   => $this->loadDevilFruit($characterId)['fruit'],
             'devil_fruit_source' => $this->loadDevilFruit($characterId)['source'],
+
+            'pets'          => $this->loadPets($characterId),
+            'active_pet_instance_id' => $row['active_pet_instance_id'] === null
+                ? '' : (string) $row['active_pet_instance_id'],
+
             'revisions'     => $this->loadRevisions($characterId),
         ];
     }
@@ -532,6 +537,7 @@ final class CharacterStateRepository
             }
 
             $this->writeCharacterRow($characterId, $state);
+            $this->writePets($accountId, $characterId, $state);
             $this->replaceStats($characterId, $state['stats'] ?? []);
             $this->replaceAppearance($characterId, $state['appearance'] ?? []);
             $this->replaceSkills($characterId, $state['skills'] ?? []);
@@ -579,6 +585,155 @@ final class CharacterStateRepository
     }
 
     /** @param array<string,mixed> $state */
+    /**
+     * Replaces this character's pets, then points them at whichever is out.
+     *
+     * **Replacement, like every other owned collection here.** The server holds the
+     * authoritative set, so a pet missing from it is a pet the character no longer has.
+     * Merging would leave a released pet owned forever.
+     *
+     * **Pets before the pointer.** `character.active_pet_instance_id` has a foreign key to
+     * `pet_instance`, so the row it names has to exist by the time it is written -- and the
+     * selection is cleared first so a pet about to be deleted cannot hold the write hostage.
+     *
+     * **Ownership is checked here, not only in the world.** A selection naming a pet this
+     * character does not own is dropped rather than stored: the foreign key can say the pet
+     * exists, but only this can say it is theirs.
+     *
+     * @param array<string,mixed> $state
+     */
+    private function writePets(string $accountId, string $characterId, array $state): void
+    {
+        // Absent means "this save is not about pets" -- an older client, or a caller that
+        // only touched stats. Present but empty means "this character owns none", which is
+        // a real answer and does clear them.
+        if (!array_key_exists('pets', $state)) {
+            return;
+        }
+
+        $owner = $this->petOwnerId($accountId, $characterId);
+
+        // Released first, so a pet that is about to be deleted is not still being pointed at.
+        $this->pdo->prepare(
+            'UPDATE `character` SET active_pet_instance_id = NULL WHERE character_id = :cid'
+        )->execute([':cid' => $characterId]);
+
+        $keep = [];
+
+        $upsert = $this->pdo->prepare(
+            'INSERT INTO pet_instance
+                (instance_id, definition_id, owner_id, level, experience,
+                 evolution_stage, revision, created_at, updated_at)
+             VALUES (:iid, :did, :owner, :level, :xp, :stage, :rev, NOW(3), NOW(3))
+             ON DUPLICATE KEY UPDATE
+                definition_id = VALUES(definition_id),
+                owner_id = VALUES(owner_id),
+                level = VALUES(level),
+                experience = VALUES(experience),
+                evolution_stage = VALUES(evolution_stage),
+                revision = VALUES(revision),
+                updated_at = NOW(3)'
+        );
+
+        foreach ((array) ($state['pets'] ?? []) as $row) {
+            $instanceId = trim((string) ($row['instance_id'] ?? ''));
+            $definitionId = trim((string) ($row['definition_id'] ?? ''));
+
+            // A row with no identity or no kind is not a pet. Skipped rather than
+            // defaulted: inventing either would be inventing somebody's companion.
+            if ($instanceId === '' || $definitionId === '') {
+                continue;
+            }
+
+            $upsert->execute([
+                ':iid'   => $instanceId,
+                ':did'   => $definitionId,
+                ':owner' => $owner,
+                ':level' => max(1, (int) ($row['level'] ?? 1)),
+                ':xp'    => max(0, (int) ($row['experience'] ?? 0)),
+                ':stage' => max(0, (int) ($row['evolution_stage'] ?? 0)),
+                ':rev'   => max(0, (int) ($row['revision'] ?? 0)),
+            ]);
+
+            $keep[$instanceId] = true;
+        }
+
+        // Anything this character owned and no longer does.
+        $existing = $this->pdo->prepare(
+            'SELECT instance_id FROM pet_instance WHERE owner_id = :owner'
+        );
+
+        $existing->execute([':owner' => $owner]);
+
+        $drop = $this->pdo->prepare(
+            'DELETE FROM pet_instance WHERE instance_id = :iid AND owner_id = :owner'
+        );
+
+        foreach ($existing->fetchAll() as $row) {
+            $instanceId = (string) $row['instance_id'];
+
+            if (isset($keep[$instanceId])) {
+                continue;
+            }
+
+            $drop->execute([':iid' => $instanceId, ':owner' => $owner]);
+        }
+
+        $active = trim((string) ($state['active_pet_instance_id'] ?? ''));
+
+        // Only a pet this character actually owns may be the one that is out.
+        if ($active === '' || !isset($keep[$active])) {
+            return;
+        }
+
+        $this->pdo->prepare(
+            'UPDATE `character` SET active_pet_instance_id = :pid WHERE character_id = :cid'
+        )->execute([':pid' => $active, ':cid' => $characterId]);
+    }
+
+    /**
+     * The owner id pets are filed under.
+     *
+     * Pets belong to a character rather than to an account: two characters on one account
+     * do not share a companion, which is the same rule equipment already follows.
+     */
+    private function petOwnerId(string $accountId, string $characterId): string
+    {
+        return $characterId;
+    }
+
+    /**
+     * Every pet this character owns, oldest first.
+     *
+     * @return list<array{instance_id:string,definition_id:string,level:int,
+     *                    experience:int,evolution_stage:int,revision:int}>
+     */
+    private function loadPets(string $characterId): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT instance_id, definition_id, level, experience, evolution_stage, revision
+             FROM pet_instance WHERE owner_id = :owner
+             ORDER BY created_at ASC, instance_id ASC'
+        );
+
+        $statement->execute([':owner' => $characterId]);
+
+        $pets = [];
+
+        foreach ($statement as $row) {
+            $pets[] = [
+                'instance_id'     => (string) $row['instance_id'],
+                'definition_id'   => (string) $row['definition_id'],
+                'level'           => (int) $row['level'],
+                'experience'      => (int) $row['experience'],
+                'evolution_stage' => (int) $row['evolution_stage'],
+                'revision'        => (int) $row['revision'],
+            ];
+        }
+
+        return $pets;
+    }
+
     private function writeCharacterRow(string $characterId, array $state): void
     {
         $statement = $this->pdo->prepare(

@@ -43,6 +43,9 @@ namespace ChibiFantasy.Server
         private readonly ICharacterMovementRequestSink _movement;
         private ICharacterInventoryRequestSink _inventory;
 
+        /// <summary>Where a spawned character's pet requests are decided.</summary>
+        private ICharacterPetRequestSink _pets;
+
         /// <summary>Where a spawning character's first status snapshot is built from.</summary>
         private ICharacterStatusSource _status;
 
@@ -98,6 +101,12 @@ namespace ChibiFantasy.Server
         public void UseLoot(ICharacterLootRequestSink loot)
         {
             _lootSink = loot;
+        }
+
+        /// <summary>Points every spawned character's pet requests at the server's authority.</summary>
+        public void UsePets(ICharacterPetRequestSink pets)
+        {
+            _pets = pets;
         }
 
         public void UseInventory(ICharacterInventoryRequestSink inventory)
@@ -190,6 +199,7 @@ namespace ChibiFantasy.Server
             entity.ServerUseCombatSink(_combat);
             entity.ServerUseMovementSink(_movement);
             entity.ServerUseInventorySink(_inventory);
+            entity.ServerUsePetSink(_pets);
             entity.ServerUseStatusSource(_status);
             entity.ServerUseLootSink(_lootSink);
 
@@ -248,6 +258,14 @@ namespace ChibiFantasy.Server
                 limits.MaxMana,
                 character.Domain.Progression.Level,
                 character.Domain.Progression.Experience);
+
+            // Which pet is out, by authored id. Read off the character's own companion
+            // state rather than tracked here: this service publishes what the world says
+            // and holds no opinion about pets.
+            entity.ServerPublishPet(
+                character.Companion == null || character.Companion.Summoned == null
+                    ? string.Empty
+                    : character.Companion.Summoned.DefinitionId.Value);
         }
 
         /// <summary>Removes objects whose character the registry no longer holds.</summary>

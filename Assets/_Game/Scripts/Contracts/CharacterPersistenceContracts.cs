@@ -200,6 +200,63 @@ namespace ChibiFantasy.Contracts
     }
 
     /// <summary>
+    /// A pet as storage remembers it.
+    /// </summary>
+    /// <remarks>
+    /// <b>Owned, not carried.</b> A pet has no bag slot and no item row: Phase 12 made it an
+    /// owned entity rather than an inventory item, and the database says the same thing by
+    /// the absence of a relationship. Nothing here turns it back into an item.
+    ///
+    /// <b>Its identity is its own.</b> Two pets of the same kind are two pets, so the
+    /// instance id is what a save and a load agree on -- never the definition, which several
+    /// pets may share.
+    ///
+    /// <b>A pet at level one with no experience is still a pet.</b> Whether this row exists
+    /// is decided by the character owning one, never by its numbers being interesting. That
+    /// distinction is what Phase 18.16A got wrong for equipment, and it is written down here
+    /// so it is not got wrong again.
+    /// </remarks>
+    public readonly struct PersistedPet
+    {
+        public PersistedPet(InstanceId instance, DefinitionId pet, int level,
+            int experience, int evolutionStage, int revision = 0)
+        {
+            Instance = instance;
+            Pet = pet;
+            Level = level;
+            Experience = experience;
+            EvolutionStage = evolutionStage;
+            Revision = revision;
+        }
+
+        /// <summary>This pet, as distinct from every other copy of the same kind.</summary>
+        public InstanceId Instance { get; }
+
+        /// <summary>The authored pet it is. Content, named by id and never copied.</summary>
+        public DefinitionId Pet { get; }
+
+        public int Level { get; }
+
+        public int Experience { get; }
+
+        /// <summary>How far along its authored evolutions it has come.</summary>
+        public int EvolutionStage { get; }
+
+        public int Revision { get; }
+
+        /// <summary>Whether this describes a pet at all.</summary>
+        public bool Exists => Instance.IsValid && Pet.IsValid;
+
+        public override string ToString()
+        {
+            return Exists
+                ? Pet + " " + Instance + " lv" + Level + " xp" + Experience
+                    + " stage" + EvolutionStage
+                : "no pet";
+        }
+    }
+
+    /// <summary>
     /// A character as the database holds it, before anything turns it into a domain object.
     /// </summary>
     /// <remarks>
@@ -224,8 +281,11 @@ namespace ChibiFantasy.Contracts
             IReadOnlyList<PersistedAppearance> appearance, IReadOnlyList<PersistedSkill> skills,
             int saveRevision, IReadOnlyList<PersistedItem> items = null,
             int inventoryCapacity = 0, DefinitionId devilFruit = default,
-            string devilFruitSource = null)
+            string devilFruitSource = null,
+            IReadOnlyList<PersistedPet> pets = null, InstanceId activePet = default)
         {
+            Pets = pets ?? System.Array.Empty<PersistedPet>();
+            ActivePet = activePet;
             DevilFruit = devilFruit;
             DevilFruitSource = devilFruitSource ?? string.Empty;
             Items = items ?? System.Array.Empty<PersistedItem>();
@@ -310,6 +370,16 @@ namespace ChibiFantasy.Contracts
         /// "this row carries no inventory", which is what a load from before the column
         /// existed genuinely is.</remarks>
         public IReadOnlyList<PersistedItem> Items { get; }
+
+        /// <summary>Every pet this character owns, whichever is out.</summary>
+        public IReadOnlyList<PersistedPet> Pets { get; }
+
+        /// <summary>
+        /// The pet currently out, if any.
+        /// </summary>
+        /// <remarks>One field rather than a flag on each pet, because "at most one" is then
+        /// something the shape guarantees instead of something a reader has to check.</remarks>
+        public InstanceId ActivePet { get; }
 
         /// <summary>
         /// How many slots the bag has. Zero means the server's default.

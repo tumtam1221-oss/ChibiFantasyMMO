@@ -69,6 +69,12 @@ namespace ChibiFantasy.Data
             new DevilFruitDefinition[0];
 
         [Tooltip("What monsters leave behind. Rank gating lives on the table's entries.")]
+        /// <summary>The pets a character can own.</summary>
+        /// <remarks>Content, like every other definition here. A pet is an owned entity
+        /// rather than an inventory item, so it is shipped in its own list rather than
+        /// among the items.</remarks>
+        [SerializeField] private PetDefinition[] _pets = new PetDefinition[0];
+
         /// <summary>Cards a piece of equipment can be socketed with.</summary>
         /// <remarks>Shipped alongside the items rather than inside them: a card is authored
         /// content in its own right -- what it fits, what it grants -- and the item that
@@ -152,6 +158,8 @@ namespace ChibiFantasy.Data
 
         public DefinitionRegistry<DevilFruitDefinition> BuildDevilFruits() =>
             Build(_devilFruits);
+
+        public DefinitionRegistry<PetDefinition> BuildPets() => Build(_pets);
 
         public DefinitionRegistry<CardDefinition> BuildCards() => Build(_cards);
 

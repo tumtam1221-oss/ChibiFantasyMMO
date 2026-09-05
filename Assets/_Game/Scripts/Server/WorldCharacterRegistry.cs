@@ -82,10 +82,24 @@ namespace ChibiFantasy.Server
             CharacterLocationState location, SpawnPointDefinition spawn, int saveRevision,
             CombatTeam team, ItemContainerState inventory = null,
             CharacterEquipmentState equipment = null,
-            CharacterDevilFruitState devilFruit = null)
+            CharacterDevilFruitState devilFruit = null,
+            IReadOnlyList<PetInstance> pets = null)
         {
             Inventory = inventory;
             Equipment = equipment;
+
+            // Phase 12's own types, held rather than modelled. This class keeps a
+            // character's pets the way it keeps their bag: the rules about what a pet is,
+            // how it levels and which one may be out all live in PetService, and nothing
+            // here re-decides any of them.
+            _pets = pets == null
+                ? new List<PetInstance>()
+                : new List<PetInstance>(pets);
+
+            // One companion state per character, always present even when nothing is out,
+            // so every reader asks the same object instead of null-checking a second
+            // representation into existence -- the same argument the fruit state makes.
+            Companion = new PetCompanionState(character.Identity.CharacterId);
 
             // One live fruit state per character, always present even when empty, so every
             // reader asks the same object rather than null-checking a second representation
@@ -120,6 +134,53 @@ namespace ChibiFantasy.Server
             // silence therefore read the same list.
             Status = new StatusEffectRuntimeState(character.Identity.CharacterId);
             Combatant.Status = Status;
+        }
+
+        private readonly List<PetInstance> _pets;
+
+        /// <summary>Every pet this character owns, whichever is out.</summary>
+        /// <remarks>Owned entities, not inventory: Phase 12 deliberately gave a pet no bag
+        /// slot and no item row, and this keeps that true by holding them somewhere a
+        /// container cannot reach.</remarks>
+        public IReadOnlyList<PetInstance> Pets => _pets;
+
+        /// <summary>Which pet is out, and whether it is following or an aura.</summary>
+        public PetCompanionState Companion { get; }
+
+        /// <summary>Starts owning a pet. The rules about acquiring one are PetService's.</summary>
+        internal bool AddPet(PetInstance pet)
+        {
+            if (pet == null || !pet.InstanceId.IsValid) return false;
+
+            for (var i = 0; i < _pets.Count; i++)
+            {
+                // One object per identity. Two pets of the same kind are two pets, but the
+                // same pet twice is a bookkeeping mistake that would double a buff later.
+                if (_pets[i].InstanceId == pet.InstanceId) return false;
+            }
+
+            _pets.Add(pet);
+
+            return true;
+        }
+
+        /// <summary>The pet with that identity, if this character owns it.</summary>
+        public bool TryGetPet(InstanceId instance, out PetInstance pet)
+        {
+            pet = null;
+
+            if (!instance.IsValid) return false;
+
+            for (var i = 0; i < _pets.Count; i++)
+            {
+                if (_pets[i].InstanceId != instance) continue;
+
+                pet = _pets[i];
+
+                return true;
+            }
+
+            return false;
         }
 
         public int ConnectionId { get; internal set; }
@@ -333,6 +394,12 @@ namespace ChibiFantasy.Server
         /// <summary>Authored fruits, for resolving a persisted id. Null in a world with none.</summary>
         private readonly IDefinitionRegistry<DevilFruitDefinition> _devilFruits;
 
+        /// <summary>The pets this world can resolve. Content, never a copy of one.</summary>
+        private readonly IDefinitionRegistry<PetDefinition> _petDefinitions;
+
+        /// <summary>The effects a pet's buff may name, applied through Phase 09's service.</summary>
+        private readonly IDefinitionRegistry<StatusEffectDefinition> _statusEffects;
+
         private readonly Dictionary<int, LivingCharacter> _byConnection =
             new Dictionary<int, LivingCharacter>();
 
@@ -355,13 +422,17 @@ namespace ChibiFantasy.Server
             IDefinitionRegistry<SpawnPointDefinition> spawnPoints,
             IDefinitionRegistry<ItemDefinition> items = null,
             int defaultInventoryCapacity = 30,
-            IDefinitionRegistry<DevilFruitDefinition> devilFruits = null)
+            IDefinitionRegistry<DevilFruitDefinition> devilFruits = null,
+            IDefinitionRegistry<PetDefinition> pets = null,
+            IDefinitionRegistry<StatusEffectDefinition> statusEffects = null)
         {
             _store = store;
             _spawnPoints = spawnPoints;
             _items = items;
             _defaultInventoryCapacity = defaultInventoryCapacity;
             _devilFruits = devilFruits;
+            _petDefinitions = pets;
+            _statusEffects = statusEffects;
         }
 
         public int Count => _byConnection.Count;
@@ -464,9 +535,36 @@ namespace ChibiFantasy.Server
                     new InstanceId(loaded.Character.DevilFruitSource ?? string.Empty));
             }
 
+            // The pets they own, by stable identity. A row naming a pet this world does
+            // not have, or carrying impossible progress, is refused for the same reason a
+            // missing fruit is: handing somebody a different companion is worse than
+            // telling an operator the data is wrong.
+            var pets = new List<PetInstance>();
+
+            if (!PersistedCharacterMapper.TryReadPets(loaded.Character, owner,
+                _petDefinitions, pets, out string petFault))
+            {
+                return WorldSpawnResult.Refused(WorldSpawnRejection.CorruptCharacter,
+                    petFault);
+            }
+
             var living = new LivingCharacter(connectionId, admission.Session, admission.Account,
                 admission.Server, admission.Channel, domain.Character, domain.Skills, location,
-                spawn, loaded.Character.SaveRevision, team, inventory, equipment, fruit);
+                spawn, loaded.Character.SaveRevision, team, inventory, equipment, fruit, pets);
+
+            // Whichever was out when they left. Through PetService, so the one-active rule
+            // and the aura decision are made in the one place that owns them.
+            if (loaded.Character.ActivePet.IsValid)
+            {
+                if (!living.TryGetPet(loaded.Character.ActivePet, out PetInstance active))
+                {
+                    return WorldSpawnResult.Refused(WorldSpawnRejection.CorruptCharacter,
+                        "active pet '" + loaded.Character.ActivePet
+                        + "' is not owned by this character");
+                }
+
+                PetService.TrySummon(living.Companion, active, PetContext(living));
+            }
 
             living.Combatant.SetLimits(limits);
 
@@ -523,6 +621,15 @@ namespace ChibiFantasy.Server
             return character.IsValid && _byCharacter.ContainsKey(character.Value);
         }
 
+        /// <summary>The registries and owner a pet decision is made against.</summary>
+        /// <remarks>Built per character so the owner is the one the connection resolved to.
+        /// Every rule about pets is PetService's; this only says who is asking.</remarks>
+        private PetService.Context PetContext(LivingCharacter living)
+        {
+            return new PetService.Context(_petDefinitions, _items, _statusEffects,
+                living.Status, living.Owner);
+        }
+
         /// <summary>
         /// Writes a character back if anything changed.
         /// </summary>
@@ -555,7 +662,8 @@ namespace ChibiFantasy.Server
 
             PersistedCharacter row = PersistedCharacterMapper.ToPersisted(living.Domain,
                 living.Skills, living.Location, living.Server, living.Account,
-                living.SaveRevision, living.Inventory, living.Equipment, living.DevilFruit);
+                living.SaveRevision, living.Inventory, living.Equipment, living.DevilFruit,
+                living.Pets, living.Companion);
 
             CharacterPersistenceResult result = _store.Save(living.Session, row,
                 living.SaveRevision);

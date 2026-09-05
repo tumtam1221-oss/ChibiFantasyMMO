@@ -225,7 +225,9 @@ namespace ChibiFantasy.Server
             CharacterSkillsState skills, CharacterLocationState location, ServerId server,
             AccountId account, int saveRevision, ItemContainerState inventory = null,
             CharacterEquipmentState equipment = null,
-            CharacterDevilFruitState devilFruit = null)
+            CharacterDevilFruitState devilFruit = null,
+            IReadOnlyList<PetInstance> pets = null,
+            PetCompanionState companion = null)
         {
             if (character == null) return null;
 
@@ -284,7 +286,11 @@ namespace ChibiFantasy.Server
                 ItemsOf(inventory, equipment),
                 inventory == null ? 0 : inventory.Capacity,
                 devilFruit == null ? default : devilFruit.ActiveFruit,
-                devilFruit == null ? null : devilFruit.SourceInstance.Value);
+                devilFruit == null ? null : devilFruit.SourceInstance.Value,
+                PetsOf(pets),
+                companion == null || companion.Summoned == null
+                    ? default
+                    : companion.Summoned.InstanceId);
         }
 
         /// <summary>
@@ -382,6 +388,101 @@ namespace ChibiFantasy.Server
                 slotIndex, (int)content.LockState, (int)equipmentSlot,
                 piece.EnhancementLevel, piece.Rarity, enchants, cards,
                 isEquipment: true);
+        }
+
+        /// <summary>
+        /// Rebuilds the pets a character owns, or says why it cannot.
+        /// </summary>
+        /// <remarks>
+        /// <b>Refused rather than repaired.</b> A row naming a pet this world does not have,
+        /// carrying an impossible level, or repeating an identity is a content or data fault
+        /// an operator has to see. Substituting another pet, resetting to level one or
+        /// quietly dropping the row would each hand somebody a companion they did not have
+        /// and make the fault invisible.
+        ///
+        /// <b>Level and experience are taken as stored, not recomputed.</b> The authored
+        /// curve decides what a level means, and re-deriving it here would let a content
+        /// change silently demote every pet in the database.
+        /// </remarks>
+        public static bool TryReadPets(PersistedCharacter row, OwnerId owner,
+            IDefinitionRegistry<PetDefinition> pets, List<PetInstance> into,
+            out string fault)
+        {
+            fault = null;
+
+            if (into == null) return false;
+
+            if (row == null || row.Pets.Count == 0) return true;
+
+            var seen = new HashSet<string>();
+
+            for (var i = 0; i < row.Pets.Count; i++)
+            {
+                PersistedPet stored = row.Pets[i];
+
+                if (!stored.Exists)
+                {
+                    fault = "a pet row has no identity or no definition";
+
+                    return false;
+                }
+
+                if (!seen.Add(stored.Instance.Value))
+                {
+                    fault = "pet " + stored.Instance + " appears twice";
+
+                    return false;
+                }
+
+                if (pets != null && !pets.Contains(stored.Pet))
+                {
+                    fault = "unknown pet '" + stored.Pet + "'";
+
+                    return false;
+                }
+
+                if (stored.Level < 1 || stored.Experience < 0 || stored.EvolutionStage < 0)
+                {
+                    fault = "pet " + stored.Instance + " has impossible progress";
+
+                    return false;
+                }
+
+                into.Add(new PetInstance(stored.Instance, stored.Pet, owner, stored.Level,
+                    stored.Experience, stored.EvolutionStage));
+            }
+
+            return true;
+        }
+
+        /// <summary>The pets a character owns, as rows.</summary>
+        private static IReadOnlyList<PersistedPet> PetsOf(IReadOnlyList<PetInstance> pets)
+        {
+            var rows = new List<PersistedPet>();
+
+            WritePets(pets, rows);
+
+            return rows;
+        }
+
+        /// <summary>Writes down the pets a character owns, level one and all.</summary>
+        /// <remarks>Whether a row exists is decided by the character owning a pet, never by
+        /// its numbers being interesting: a pet at level one with no experience is still a
+        /// pet, and inferring otherwise is the mistake Phase 18.16A found in equipment.
+        /// </remarks>
+        public static void WritePets(IReadOnlyList<PetInstance> pets, List<PersistedPet> into)
+        {
+            if (pets == null || into == null) return;
+
+            for (var i = 0; i < pets.Count; i++)
+            {
+                PetInstance pet = pets[i];
+
+                if (pet == null || !pet.InstanceId.IsValid) continue;
+
+                into.Add(new PersistedPet(pet.InstanceId, pet.DefinitionId, pet.Level,
+                    pet.Experience, pet.EvolutionStage));
+            }
         }
 
         /// <summary>

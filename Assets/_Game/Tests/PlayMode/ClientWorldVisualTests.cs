@@ -59,6 +59,12 @@ namespace ChibiFantasy.Tests.PlayMode
         private const string CameraSettingsPath =
             "Assets/_Game/Prefabs/Prototype/ProtoCameraSettings.asset";
 
+        /// <summary>The pet the production catalogue ships, loaded rather than invented.</summary>
+        private const string PetAssetPath =
+            "Assets/_Game/Data/Production/Pets/pet_lumi_slime.asset";
+
+        private const string LumiSlime = "pet.lumi_slime";
+
         private const string HomeMap = "map.home";
         private const float Speed = 4f;
 
@@ -93,6 +99,8 @@ namespace ChibiFantasy.Tests.PlayMode
         private FakeStore _store;
         private WorldCharacterRegistry _players;
         private CharacterMovementAuthority _movement;
+        private DefinitionRegistry<PetDefinition> _pets;
+        private CharacterPetAuthority _petAuthority;
         private CharacterReplicationService _replication;
 
         private readonly List<Object> _created = new List<Object>();
@@ -120,8 +128,14 @@ namespace ChibiFantasy.Tests.PlayMode
             var spawns = new DefinitionRegistry<SpawnPointDefinition>();
             spawns.Register(PlayerSpawn());
 
+            _pets = new DefinitionRegistry<PetDefinition>();
+            _pets.Register(UnityEditor.AssetDatabase
+                .LoadAssetAtPath<PetDefinition>(PetAssetPath));
+
             _store = new FakeStore();
-            _players = new WorldCharacterRegistry(_store, spawns);
+            _players = new WorldCharacterRegistry(_store, spawns, null, 30, null, _pets);
+
+            _petAuthority = new CharacterPetAuthority(_players, _pets);
 
             _movement = new CharacterMovementAuthority(_players, _ => true, maps, Speed);
 
@@ -623,6 +637,95 @@ namespace ChibiFantasy.Tests.PlayMode
             Assert.That(mapped, Is.True, "Chest is not mapped at all any more");
         }
 
+        // ---- I: somebody else's pet --------------------------------------------------------------------
+
+        [UnityTest]
+        public IEnumerator ThePetACharacterHasOutIsSeenByEverybodyWhoCanSeeThem()
+        {
+            yield return StartServerAndOneClient();
+            yield return StartSecondClient();
+
+            List<int> connections = Connections();
+
+            // A owns a pet and has it out; B owns none and is only watching.
+            EnterWorld("char-a", connections[0], CharacterGender.Male, "Aldric",
+                new[]
+                {
+                    new PersistedPet(new InstanceId("pet-1"), new DefinitionId(LumiSlime),
+                        1, 0, 0)
+                },
+                activePet: "pet-1");
+
+            EnterWorld("char-b", connections[1], CharacterGender.Female, "Brenna");
+
+            _replication.Synchronise();
+
+            yield return Until(() => Entity(_clientB, "char-a") != null
+                && Entity(_clientB, "char-a").ActivePetDefinitionId == LumiSlime);
+
+            // The other player's client was told which pet, by its authored id. Not the
+            // instance, which is A's private business, and not a position, which is the
+            // server's answer rather than anything a viewer is asked to agree with.
+            Assert.That(Entity(_clientB, "char-a").ActivePetDefinitionId,
+                Is.EqualTo(LumiSlime), "a viewer was not told about somebody's pet");
+
+            Assert.That(Entity(_clientB, "char-b").ActivePetDefinitionId, Is.Empty,
+                "a character with no pet out was drawn with one");
+
+            // And that id is all a viewer needs: the presenter reads the authored height
+            // out of content rather than off the wire.
+            var host = new GameObject("A as B sees them");
+            _created.Add(host);
+
+            var followerObject = new GameObject("follower");
+            followerObject.transform.SetParent(host.transform, false);
+
+            PetPresentationController presenter =
+                host.AddComponent<PetPresentationController>();
+
+            typeof(PetPresentationController)
+                .GetField("owner", System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.NonPublic)
+                .SetValue(presenter, host.transform);
+
+            typeof(PetPresentationController)
+                .GetField("follower", System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.NonPublic)
+                .SetValue(presenter, followerObject.transform);
+
+            presenter.PresentReplicated(
+                Entity(_clientB, "char-a").ActivePetDefinitionId, _pets);
+
+            Assert.That(presenter.IsOut, Is.True);
+            Assert.That(followerObject.activeSelf, Is.True,
+                "the viewer drew no follower for a pet the server said is out");
+
+            PetDefinition shipped = UnityEditor.AssetDatabase
+                .LoadAssetAtPath<PetDefinition>(PetAssetPath);
+
+            Assert.That(presenter.VerticalOffset,
+                Is.EqualTo(shipped.VerticalOffset).Within(0.0001f),
+                "the height came from somewhere other than the shipped definition");
+
+            // Put away on the server, and the viewer stops being told about it.
+            ICharacterPetRequestSink sink = _petAuthority;
+
+            sink.Deactivate(connections[0]);
+
+            _replication.Synchronise();
+
+            yield return Until(() => Entity(_clientB, "char-a").ActivePetDefinitionId == "");
+
+            Assert.That(Entity(_clientB, "char-a").ActivePetDefinitionId, Is.Empty,
+                "a pet that was put away is still being drawn beside its owner");
+
+            presenter.PresentReplicated(
+                Entity(_clientB, "char-a").ActivePetDefinitionId, _pets);
+
+            Assert.That(presenter.IsOut, Is.False);
+            Assert.That(followerObject.activeSelf, Is.False);
+        }
+
         // ---- composition ---------------------------------------------------------------------------------
 
         /// <summary>
@@ -754,7 +857,8 @@ namespace ChibiFantasy.Tests.PlayMode
         }
 
         private LivingCharacter EnterWorld(string character, int connection,
-            CharacterGender gender, string name)
+            CharacterGender gender, string name, PersistedPet[] pets = null,
+            string activePet = null)
         {
             string session = "session-" + character;
 
@@ -764,7 +868,8 @@ namespace ChibiFantasy.Tests.PlayMode
                     new CharacterId(character), new AccountId("acc-" + character),
                     new ServerId("srv-1"), name, (int)gender, 5, 0, 100, 50,
                     new DefinitionId("class.novice"), default, new DefinitionId(HomeMap),
-                    default, null, null, null, 1);
+                    default, null, null, null, 1, null, 0, default, null, pets,
+                    activePet == null ? default : new InstanceId(activePet));
             }
 
             WorldSpawnResult spawned = _players.Spawn(connection,

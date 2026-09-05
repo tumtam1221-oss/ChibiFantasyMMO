@@ -249,6 +249,8 @@ namespace ChibiFantasy.Server
             PartyStore = null;
             RewardOutbox = null;
             Cards = null;
+            Pets = null;
+            PetAuthority = null;
 
             // A session-only process: it admits, places and releases, and simulates nothing.
             // Legitimate, and not a fault.
@@ -286,8 +288,19 @@ namespace ChibiFantasy.Server
 
             DefinitionRegistry<DevilFruitDefinition> fruits = _content.BuildDevilFruits();
 
+            // The pets this world can resolve, and the effects their buffs may name.
+            // Both are content: a pet row naming something absent is refused rather than
+            // substituted, which is what the registry needs them for.
+            DefinitionRegistry<PetDefinition> pets = _content.BuildPets();
+
             var players = new WorldCharacterRegistry(characters, _spawnPoints, items,
-                devilFruits: fruits);
+                devilFruits: fruits, pets: pets, statusEffects: effects);
+
+            Pets = pets;
+
+            // Which pet a character has out, decided by the server. Phase 12's PetService
+            // owns every rule; this is the seam a connection reaches it through.
+            PetAuthority = new CharacterPetAuthority(players, pets, items, effects);
 
             var monsters = new MonsterWorldRuntime(players, _content.BuildMonsters(),
                 _content.MaxHealthStat, new CombatTeam(_monsterTeam));
@@ -359,6 +372,8 @@ namespace ChibiFantasy.Server
 
             Cards = cards;
 
+            replication.UsePets(PetAuthority);
+
             replication.UseInventory(new CharacterInventoryAuthority(players, _ => true,
                 items, replication, fruits, effects, skills, maps, _spawnPoints, cards));
 
@@ -425,6 +440,12 @@ namespace ChibiFantasy.Server
 
         /// <summary>The cards this world can resolve when a socketed piece is worn.</summary>
         public DefinitionRegistry<CardDefinition> Cards { get; private set; }
+
+        /// <summary>The pets this world can resolve.</summary>
+        public DefinitionRegistry<PetDefinition> Pets { get; private set; }
+
+        /// <summary>Where a request to put a pet out is decided.</summary>
+        public CharacterPetAuthority PetAuthority { get; private set; }
 
         [Tooltip("How near a party member must be to share a kill, in metres. "
             + "Zero shares with the whole map.")]

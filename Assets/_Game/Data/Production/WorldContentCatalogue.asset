@@ -54,6 +54,8 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 35a64e804dacd4849831eaea65823019, type: 2}
   _devilFruits:
   - {fileID: 11400000, guid: 75728ea0d9df78547b3f5847722619e5, type: 2}
+  _pets:
+  - {fileID: 11400000, guid: 5010660ef2a327d46b6161e3123f02b5, type: 2}
   _cards:
   - {fileID: 11400000, guid: 52e26aac59e3096459a39f71baf1077c, type: 2}
   _dropTables:

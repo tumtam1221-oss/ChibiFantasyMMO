@@ -140,6 +140,24 @@ namespace ChibiFantasy.Network
         private readonly SyncVar<int> _level = new SyncVar<int>();
         private readonly SyncVar<long> _experience = new SyncVar<long>();
 
+        /// <summary>
+        /// Which pet this character has out, as an authored id. Empty when none is.
+        /// </summary>
+        /// <remarks>
+        /// <b>Public in the same sense a name is.</b> A pet standing beside somebody is
+        /// visible to everybody who can see them, so it is a synchronised value rather than
+        /// a message to its owner -- unlike the bag, which nobody else may read.
+        ///
+        /// <b>The definition, not the instance.</b> What a viewer needs is which pet to draw
+        /// and how high it floats, both of which are authored content named by this id. The
+        /// instance id is the owner's private business and says nothing a viewer can use.
+        ///
+        /// <b>It is an answer, never a request.</b> The server writes it from the character
+        /// it already holds; a client that assigned it would be telling other clients about
+        /// a pet the server never summoned, so nothing outside the server can.
+        /// </remarks>
+        private readonly SyncVar<string> _activePet = new SyncVar<string>();
+
         private readonly SyncVar<float> _x = new SyncVar<float>();
         private readonly SyncVar<float> _y = new SyncVar<float>();
         private readonly SyncVar<float> _z = new SyncVar<float>();
@@ -157,6 +175,9 @@ namespace ChibiFantasy.Network
 
         /// <summary>Where inventory requests go. Server-side only, and never sent anywhere.</summary>
         private ICharacterInventoryRequestSink _inventory;
+
+        /// <summary>Where a pet request is decided. Server-side only.</summary>
+        private ICharacterPetRequestSink _pets;
 
         /// <summary>
         /// Where the owner's status is read from. Server-side only, and never sent anywhere.
@@ -201,6 +222,9 @@ namespace ChibiFantasy.Network
         /// <remarks>Zero means the server said nothing, which a presenter treats as "use the
         /// fallback" rather than guessing a gender.</remarks>
         public int GenderCode => _gender.Value;
+
+        /// <summary>The pet this character has out, or empty. Read-only to everyone.</summary>
+        public string ActivePetDefinitionId => _activePet.Value ?? string.Empty;
 
         /// <summary>The name to show above them, as the server holds it.</summary>
         public string DisplayName => _displayName.Value ?? string.Empty;
@@ -250,6 +274,13 @@ namespace ChibiFantasy.Network
         public void ServerUseInventorySink(ICharacterInventoryRequestSink sink)
         {
             _inventory = sink;
+        }
+
+        /// <summary>Points this object's pet requests at the server's authority.</summary>
+        [Server]
+        public void ServerUsePetSink(ICharacterPetRequestSink sink)
+        {
+            _pets = sink;
         }
 
         /// <summary>Points this object at where the server keeps this character's status.</summary>
@@ -486,6 +517,16 @@ namespace ChibiFantasy.Network
             _experience.Value = experience < 0 ? 0 : experience;
         }
 
+        /// <summary>Publishes which pet is out, or empty for none.</summary>
+        /// <remarks>Separate from the per-tick state above because it changes on a summon
+        /// rather than on a step, and because a viewer rebuilds a visual when it changes.
+        /// </remarks>
+        [Server]
+        public void ServerPublishPet(string petDefinitionId)
+        {
+            _activePet.Value = petDefinitionId ?? string.Empty;
+        }
+
         /// <summary>
         /// Asks the server to attack something.
         /// </summary>
@@ -536,6 +577,38 @@ namespace ChibiFantasy.Network
         /// refuses this from a connection that does not own the object, so a client cannot
         /// reach into another player's bag by editing a field -- there is no field.
         /// </remarks>
+        /// <summary>
+        /// Asks the server to put one of this character's own pets out.
+        /// </summary>
+        /// <remarks>The pet is named by its instance id, which the owner already knows from
+        /// their own state. Everything the pet is -- what it grants, how far it has come,
+        /// whether it is an aura -- is read on the server from the character this connection
+        /// resolves to, so naming somebody else's pet finds nothing.</remarks>
+        [ServerRpc]
+        public void RequestActivatePet(string petInstanceId)
+        {
+            if (_pets == null) return;
+
+            int connectionId = Owner == null ? -1 : Owner.ClientId;
+
+            if (connectionId < 0) return;
+
+            _pets.Activate(connectionId, new InstanceId(petInstanceId ?? string.Empty));
+        }
+
+        /// <summary>Asks the server to put away whatever is out.</summary>
+        [ServerRpc]
+        public void RequestDeactivatePet()
+        {
+            if (_pets == null) return;
+
+            int connectionId = Owner == null ? -1 : Owner.ClientId;
+
+            if (connectionId < 0) return;
+
+            _pets.Deactivate(connectionId);
+        }
+
         [ServerRpc]
         public void RequestInventoryAction(InventoryAction action, int from, int to,
             int quantity, long sequence)
