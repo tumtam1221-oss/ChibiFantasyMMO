@@ -313,7 +313,7 @@ namespace ChibiFantasy.Server
 
             // The parties this world is running. Phase 13 decides what a party is; this
             // world just keeps them, so a defeat can ask who was in one.
-            Parties = new WorldPartyRegistry();
+            Parties = new WorldPartyRegistry(parties);
 
             PartyStore = parties;
 
@@ -357,7 +357,7 @@ namespace ChibiFantasy.Server
                 _content.MaxHealthStat, _content.MaxManaStat, fruits, skills);
 
             Simulation = new WorldSimulation(players, replication, status, stat, movement,
-                combat, monsters, loot);
+                combat, monsters, loot, rewards: rewards);
 
             Loot = loot;
             Rewards = rewards;

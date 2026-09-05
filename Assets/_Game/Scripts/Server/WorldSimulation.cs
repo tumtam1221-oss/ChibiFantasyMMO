@@ -44,6 +44,7 @@ namespace ChibiFantasy.Server
         private readonly ServerCombatPipeline _combat;
         private readonly MonsterWorldRuntime _monsters;
         private readonly MonsterLootRegistry _loot;
+        private readonly MonsterRewardAuthority _rewards;
         private readonly CharacterReplicationService _replication;
         private readonly MonsterReplicationService _monsterReplication;
 
@@ -55,7 +56,8 @@ namespace ChibiFantasy.Server
             ServerCombatPipeline combat = null,
             MonsterWorldRuntime monsters = null,
             MonsterLootRegistry loot = null,
-            MonsterReplicationService monsterReplication = null)
+            MonsterReplicationService monsterReplication = null,
+            MonsterRewardAuthority rewards = null)
         {
             _characters = characters;
             _replication = replication;
@@ -66,6 +68,7 @@ namespace ChibiFantasy.Server
             _monsters = monsters;
             _loot = loot;
             _monsterReplication = monsterReplication;
+            _rewards = rewards;
         }
 
         /// <summary>How many ticks have run. For diagnostics and for the no-work test.</summary>
@@ -168,6 +171,11 @@ namespace ChibiFantasy.Server
             // 4. Monsters: spawning, thinking, retiring, and the piles they left.
             _monsters?.Tick(deltaSeconds);
             _loot?.Tick(deltaSeconds);
+
+            // A defeat whose party turn would not commit is decided but unpaid. Retried
+            // here because this is already the step that owns monsters and their piles,
+            // and because the pile it is holding belongs in this world, not another one.
+            _rewards?.RetryHeld();
 
             // 5. And only now is any of it published.
             _replication?.Synchronise();

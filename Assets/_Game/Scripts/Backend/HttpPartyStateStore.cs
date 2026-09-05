@@ -187,11 +187,24 @@ namespace ChibiFantasy.Backend
         }
 
         /// <summary>What went wrong, in terms the world can act on.</summary>
-        /// <remarks>Mapped from the status alone. The server's problem document is not
-        /// forwarded, because it is written for an operator and a world has nothing to do
-        /// with its wording.</remarks>
+        /// <remarks>
+        /// <b>The status, plus one machine-readable code.</b> The problem document's
+        /// <c>code</c> is a stable identifier the API already publishes -- never its
+        /// <c>message_key</c> and never its prose, which are written for an operator and a
+        /// translator. Two different refusals share the 409: somebody else wrote first, and
+        /// a member who belongs to another party. Those need different answers from the
+        /// world, and the code is the only thing that separates them.
+        /// </remarks>
         private static PartyPersistenceFailure FailureFor(in HttpExchange exchange)
         {
+            if (exchange.Status == 409
+                && CodeOf(exchange.Body) == "character_already_in_a_party")
+            {
+                // Not a lost race: re-reading and re-sending will be refused for as long
+                // as that member belongs to somebody else's party.
+                return PartyPersistenceFailure.AlreadyInAParty;
+            }
+
             switch (exchange.Status)
             {
                 case 403: return PartyPersistenceFailure.NotAMember;
@@ -205,6 +218,16 @@ namespace ChibiFantasy.Backend
                 case 422: return PartyPersistenceFailure.InvalidParty;
                 default: return PartyPersistenceFailure.Unreachable;
             }
+        }
+
+        /// <summary>The problem document's code, or empty when there is not one.</summary>
+        /// <remarks>A body that will not parse is not a failure of its own -- the status
+        /// already said what happened, and this only ever refines it.</remarks>
+        private static string CodeOf(string body)
+        {
+            if (string.IsNullOrEmpty(body)) return string.Empty;
+
+            return JsonReader.Parse(body).String("code") ?? string.Empty;
         }
 
         private bool TryToken(SessionId session, out string token)

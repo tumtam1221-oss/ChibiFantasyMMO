@@ -44,6 +44,10 @@ namespace ChibiFantasy.Tests.EditMode
 
             public bool Broken { get; set; }
 
+            /// <summary>Refuse the next writes with this, rather than with Unreachable.</summary>
+            public PartyPersistenceFailure RefuseSavesWith { get; set; }
+                = PartyPersistenceFailure.None;
+
             /// <summary>The session id is the character id, so a fake can key on it.</summary>
             public PartyPersistenceResult Load(SessionId session)
             {
@@ -63,6 +67,11 @@ namespace ChibiFantasy.Tests.EditMode
             public PartyPersistenceResult Save(SessionId session, PersistedParty party)
             {
                 Saves++;
+
+                if (RefuseSavesWith != PartyPersistenceFailure.None)
+                {
+                    return PartyPersistenceResult.Failed(RefuseSavesWith, "refused on purpose");
+                }
 
                 if (Broken)
                 {
@@ -536,10 +545,12 @@ namespace ChibiFantasy.Tests.EditMode
         private sealed class CannedTransport : IHttpTransport, HttpCharacterStateStore.ITokenSource
         {
             private readonly string _body;
+            private readonly int _status;
 
-            public CannedTransport(string body)
+            public CannedTransport(string body, int status = 200)
             {
                 _body = body;
+                _status = status;
             }
 
             public HttpExchange Send(string method, string path, string jsonBody,
@@ -547,7 +558,7 @@ namespace ChibiFantasy.Tests.EditMode
             {
                 Sent = jsonBody;
 
-                return HttpExchange.Responded(200, _body);
+                return HttpExchange.Responded(_status, _body);
             }
 
             /// <summary>The last body posted, so a test can read what went out.</summary>
@@ -913,6 +924,258 @@ namespace ChibiFantasy.Tests.EditMode
 
             Assert.That(transport.Sent, Does.Contain("\"round_robin_cursor\":1"),
                 "the turn was not sent");
+        }
+    
+
+        // ---- a turn is not spent until it is written down -----------------------------
+
+        [Test]
+        public void TheNextTurnCanBeReadWithoutSpendingIt()
+        {
+            var registry = new WorldPartyRegistry();
+            PartyState party = PartyOf(Ann, Ben, Cal);
+
+            registry.Register(party);
+
+            Assert.That(registry.NextRotation(party.Id), Is.EqualTo(1));
+
+            // Asked twice, and still nobody's turn has moved.
+            Assert.That(registry.NextRotation(party.Id), Is.EqualTo(1));
+            Assert.That(registry.RotationOf(party.Id), Is.Zero,
+                "reading the next turn spent it");
+        }
+
+        [Test]
+        public void TheNextTurnWrapsAtTheEndOfThePartyRatherThanCounting()
+        {
+            var registry = new WorldPartyRegistry();
+            PartyState party = PartyOf(Ann, Ben);
+
+            registry.Register(party);
+            registry.AdvanceRotation(party.Id);
+
+            Assert.That(registry.NextRotation(party.Id), Is.Zero,
+                "the next turn ran off the end of the party");
+        }
+
+        [Test]
+        public void ACommittedTurnMovesTheRuntimeCursorExactlyOnce()
+        {
+            var store = new FakeStore();
+            var registry = new WorldPartyRegistry();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben, Cal }, 1));
+
+            PartyState party = registry.Restore(Session(Ann), Ann, store);
+
+            Assert.That(registry.TryCommitNextRotation(party.Id).IsOk, Is.True);
+
+            Assert.That(registry.RotationOf(party.Id), Is.EqualTo(1));
+
+            // And storage agrees, which is the only reason the runtime number moved.
+            Assert.That(new WorldPartyRegistry().Restore(Session(Ben), Ben, store), Is.Not.Null);
+            Assert.That(store.Load(Session(Ben)).Party.Cursor, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void AFailedWriteLeavesTheRuntimeCursorExactlyWhereItWas()
+        {
+            // The defect this gate closes: before it, the turn moved in memory and the
+            // failure was only logged, so a restart offered the same member the same turn.
+            var store = new FakeStore();
+            var registry = new WorldPartyRegistry();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben, Cal }, 1));
+
+            PartyState party = registry.Restore(Session(Ann), Ann, store);
+
+            store.Broken = true;
+
+            PartyPersistenceResult refused = registry.TryCommitNextRotation(party.Id);
+
+            Assert.That(refused.IsOk, Is.False);
+            Assert.That(registry.RotationOf(party.Id), Is.Zero,
+                "the runtime turn ran ahead of the durable one");
+
+            store.Broken = false;
+
+            Assert.That(store.Load(Session(Ann)).Party.Cursor, Is.Zero,
+                "storage moved despite the refusal");
+        }
+
+        [Test]
+        public void AStaleRevisionIsNotSuccessAndSpendsNoTurn()
+        {
+            // Somebody else wrote this party first. Overwriting their cursor because this
+            // world wanted a turn would silently discard whatever they recorded.
+            var store = new FakeStore();
+            var registry = new WorldPartyRegistry();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben }, 4));
+
+            PartyState party = registry.Restore(Session(Ann), Ann, store);
+
+            store.RefuseSavesWith = PartyPersistenceFailure.StaleRevision;
+
+            PartyPersistenceResult refused = registry.TryCommitNextRotation(party.Id);
+
+            Assert.That(refused.IsOk, Is.False);
+            Assert.That(refused.Failure, Is.EqualTo(PartyPersistenceFailure.StaleRevision));
+            Assert.That(registry.RotationOf(party.Id), Is.Zero);
+        }
+
+        [Test]
+        public void RetryingACommitDoesNotAdvanceTheTurnTwice()
+        {
+            var store = new FakeStore();
+            var registry = new WorldPartyRegistry();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben, Cal }, 1));
+
+            PartyState party = registry.Restore(Session(Ann), Ann, store);
+
+            store.Broken = true;
+
+            // Three refused attempts, as a world retrying every few seconds would make.
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                Assert.That(registry.TryCommitNextRotation(party.Id).IsOk, Is.False);
+            }
+
+            Assert.That(registry.RotationOf(party.Id), Is.Zero);
+
+            store.Broken = false;
+
+            Assert.That(registry.TryCommitNextRotation(party.Id).IsOk, Is.True);
+
+            // One turn for however many attempts it took to write one down.
+            Assert.That(registry.RotationOf(party.Id), Is.EqualTo(1),
+                "the retries added up into more than one turn");
+
+            Assert.That(new WorldPartyRegistry().Restore(Session(Cal), Cal, store), Is.Not.Null);
+            Assert.That(store.Load(Session(Cal)).Party.Cursor, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void AWorldWithNoStoreCannotCommitATurnAndSaysSo()
+        {
+            // Better than silently succeeding: a world composed without persistence must
+            // not be able to spend a RoundRobin turn it can never write down.
+            var registry = new WorldPartyRegistry();
+            PartyState party = PartyOf(Ann, Ben);
+
+            registry.Register(party);
+
+            PartyPersistenceResult refused = registry.TryCommitNextRotation(party.Id);
+
+            Assert.That(refused.IsOk, Is.False);
+            Assert.That(refused.Failure, Is.EqualTo(PartyPersistenceFailure.Unreachable));
+            Assert.That(registry.RotationOf(party.Id), Is.Zero);
+        }
+
+        [Test]
+        public void AWorldIsDurableExactlyWhenItWasComposedWithAStore()
+        {
+            // What tells a reward apart from one that must wait. A world with no party
+            // store loses its parties when it stops, so there is no durable turn for a
+            // runtime one to contradict -- and withholding loot to protect a cursor that
+            // does not exist would break every RoundRobin drop in such a world.
+            Assert.That(new WorldPartyRegistry().IsDurable, Is.False);
+            Assert.That(new WorldPartyRegistry(new FakeStore()).IsDurable, Is.True);
+
+            // A bare registry that has since spoken to a store counts too, which is how a
+            // party restored on a member's arrival becomes persistable.
+            var late = new WorldPartyRegistry();
+            var store = new FakeStore();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben }, 1));
+
+            late.Restore(Session(Ann), Ann, store);
+
+            Assert.That(late.IsDurable, Is.True);
+        }
+
+        [Test]
+        public void CommittingATurnForAPartyThisWorldDoesNotRunIsRefused()
+        {
+            var registry = new WorldPartyRegistry();
+
+            Assert.That(registry.TryCommitNextRotation(new PartyId("p-nowhere")).IsOk,
+                Is.False);
+
+            Assert.That(registry.TryCommitNextRotation(default).IsOk, Is.False);
+        }
+
+        [Test]
+        public void ThereIsStillOneRotationAndOnePartyDirectory()
+        {
+            // The durable path must not have grown a second cursor beside the first.
+            string[] fields = typeof(WorldPartyRegistry)
+                .GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
+                .Select(f => f.Name.ToLowerInvariant()).ToArray();
+
+            Assert.That(fields.Count(f => f.Contains("rotation") || f.Contains("cursor")),
+                Is.EqualTo(1), "a second rotation state appeared: "
+                    + string.Join(", ", fields));
+        }
+
+        // ---- the problem document separates two different 409s -------------------------
+
+        [Test]
+        public void AMemberAlreadyInAnotherPartyIsNotReportedAsALostRace()
+        {
+            // Both come back as 409. Telling them apart matters because one is worth
+            // retrying and the other will be refused for as long as it stays true.
+            var transport = new CannedTransport(
+                "{\"code\":\"character_already_in_a_party\","
+                + "\"message_key\":\"error.party.character_already_in_a_party\","
+                + "\"request_id\":\"req-1\"}", 409);
+
+            PartyPersistenceResult result =
+                new HttpPartyStateStore(transport, transport).Save(Session(Ann),
+                    new PersistedParty(new PartyId("p-1"), Ann, PartyLootPolicy.Personal,
+                        new[] { Ann }, 0));
+
+            Assert.That(result.Failure,
+                Is.EqualTo(PartyPersistenceFailure.AlreadyInAParty));
+        }
+
+        [Test]
+        public void APlainConflictIsStillAStaleRevision()
+        {
+            var transport = new CannedTransport(
+                "{\"code\":\"stale_revision\",\"message_key\":\"error.party.stale_revision\","
+                + "\"request_id\":\"req-1\"}", 409);
+
+            PartyPersistenceResult result =
+                new HttpPartyStateStore(transport, transport).Save(Session(Ann),
+                    new PersistedParty(new PartyId("p-1"), Ann, PartyLootPolicy.Personal,
+                        new[] { Ann }, 0));
+
+            Assert.That(result.Failure,
+                Is.EqualTo(PartyPersistenceFailure.StaleRevision));
+        }
+
+        [Test]
+        public void AConflictWithNoReadableBodyStillMapsToSomething()
+        {
+            // The status already said what happened; the code only ever refines it, so an
+            // unparseable body must not turn a refusal into an exception.
+            var transport = new CannedTransport("not json at all", 409);
+
+            PartyPersistenceResult result =
+                new HttpPartyStateStore(transport, transport).Save(Session(Ann),
+                    new PersistedParty(new PartyId("p-1"), Ann, PartyLootPolicy.Personal,
+                        new[] { Ann }, 0));
+
+            Assert.That(result.IsOk, Is.False);
+            Assert.That(result.Failure,
+                Is.EqualTo(PartyPersistenceFailure.StaleRevision));
         }
     }
 }

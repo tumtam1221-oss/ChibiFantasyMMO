@@ -53,6 +53,9 @@ namespace ChibiFantasy.Tests.PlayMode
 
             public int Saves { get; private set; }
 
+            /// <summary>Refuse every write, as an unreachable backend would.</summary>
+            public bool Broken { get; set; }
+
             public PartyPersistenceResult Load(SessionId session)
             {
                 Loads++;
@@ -70,6 +73,12 @@ namespace ChibiFantasy.Tests.PlayMode
             public PartyPersistenceResult Save(SessionId session, PersistedParty party)
             {
                 Saves++;
+
+                if (Broken)
+                {
+                    return PartyPersistenceResult.Failed(
+                        PartyPersistenceFailure.Unreachable, "backend down");
+                }
 
                 foreach (string key in _byCharacter.Keys.ToArray())
                 {
@@ -656,6 +665,254 @@ namespace ChibiFantasy.Tests.PlayMode
             Assert.That(PartyLootPolicyService.MemberOnTurn(restored,
                 _bootstrap.Parties.RotationOf(restored.Id)),
                 Is.EqualTo(new CharacterId("char-3")));
+        }
+
+        // ---- N: a turn is not spent unless it is written down ---------------------------
+
+        /// <summary>
+        /// The happy path, stated so the failing paths below have something to differ from.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator ARoundRobinBossDropMovesTheTurnFromTheFirstMemberToTheSecond()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter ann = Admit("char-ann", 1);
+            LivingCharacter ben = Admit("char-ben", 2);
+
+            PartyState party = Party(PartyLootPolicy.RoundRobin, ann, ben);
+            _bootstrap.Parties.Persist(Session("char-ann"), party, _parties);
+
+            Assert.That(_bootstrap.Parties.RotationOf(party.Id), Is.Zero);
+
+            Kill(ann, Spawn());
+
+            Assert.That(_bootstrap.Parties.RotationOf(party.Id), Is.EqualTo(1),
+                "the turn did not move to the second member");
+
+            Assert.That(_parties.Load(Session("char-ben")).Party.Cursor, Is.EqualTo(1),
+                "the turn moved in memory only");
+
+            Assert.That(_bootstrap.Loot.All().Count, Is.EqualTo(1));
+            Assert.That(_bootstrap.Rewards.HeldCount, Is.Zero);
+        }
+
+        [UnityTest]
+        public IEnumerator ATurnThatCannotBeWrittenDownIsNotSpentAndPaysNobody()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter ann = Admit("char-ann", 1);
+            LivingCharacter ben = Admit("char-ben", 2);
+
+            PartyState party = Party(PartyLootPolicy.RoundRobin, ann, ben);
+            _bootstrap.Parties.Persist(Session("char-ann"), party, _parties);
+
+            long annBefore = ann.Domain.Progression.Experience;
+            long benBefore = ben.Domain.Progression.Experience;
+
+            _parties.Broken = true;
+
+            LogAssert.Expect(LogType.Warning,
+                new System.Text.RegularExpressions.Regex("holding the reward"));
+
+            Kill(ann, Spawn());
+
+            // Nothing at all was handed over.
+            Assert.That(_bootstrap.Loot.All().Count, Is.Zero,
+                "a pile reached the world while its turn was unwritten");
+
+            Assert.That(ann.Domain.Progression.Experience, Is.EqualTo(annBefore),
+                "experience was paid for a defeat that did not commit");
+            Assert.That(ben.Domain.Progression.Experience, Is.EqualTo(benBefore));
+
+            // And the turn is exactly where it was, in memory and in storage alike.
+            Assert.That(_bootstrap.Parties.RotationOf(party.Id), Is.Zero,
+                "the runtime turn ran ahead of the durable one");
+
+            _parties.Broken = false;
+
+            Assert.That(_parties.Load(Session("char-ann")).Party.Cursor, Is.Zero);
+
+            // Held rather than lost: the roll that was already made is kept.
+            Assert.That(_bootstrap.Rewards.HeldCount, Is.EqualTo(1),
+                "the defeat was dropped instead of held");
+
+            Assert.That(_rolls.RareRolls, Is.EqualTo(1));
+        }
+
+        [UnityTest]
+        public IEnumerator WhenThePartyStoreComesBackTheHeldDefeatPaysOutExactlyOnce()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter ann = Admit("char-ann", 1);
+            LivingCharacter ben = Admit("char-ben", 2);
+
+            PartyState party = Party(PartyLootPolicy.RoundRobin, ann, ben);
+            _bootstrap.Parties.Persist(Session("char-ann"), party, _parties);
+
+            long annBefore = ann.Domain.Progression.Experience;
+            long benBefore = ben.Domain.Progression.Experience;
+
+            _parties.Broken = true;
+
+            LogAssert.Expect(LogType.Warning,
+                new System.Text.RegularExpressions.Regex("holding the reward"));
+
+            Kill(ann, Spawn());
+
+            _parties.Broken = false;
+
+            // The world's own tick is what retries it; nothing in this test finishes it
+            // by hand. Several ticks, to prove the retry does not pay twice.
+            for (var i = 0; i < 4; i++) _bootstrap.Simulation.Tick(10f);
+
+            Assert.That(_bootstrap.Rewards.HeldCount, Is.Zero,
+                "the defeat is still being held after the store came back");
+
+            // Exactly one pile, one roll, one turn.
+            Assert.That(_bootstrap.Loot.All().Count, Is.EqualTo(1),
+                "recovery published more than one pile");
+
+            Assert.That(_rolls.RareRolls, Is.EqualTo(1),
+                "the one in ten million chance was rolled again on recovery");
+
+            Assert.That(_bootstrap.Parties.RotationOf(party.Id), Is.EqualTo(1),
+                "recovery spent more than one turn");
+
+            Assert.That(_parties.Load(Session("char-ben")).Party.Cursor, Is.EqualTo(1));
+
+            // 900 split two ways, once, however many retries it took.
+            Assert.That(ann.Domain.Progression.Experience - annBefore, Is.EqualTo(450),
+                "experience was paid more or less than once");
+            Assert.That(ben.Domain.Progression.Experience - benBefore, Is.EqualTo(450));
+
+            // And the member whose turn it was -- the first, since the cursor was zero --
+            // is the one who can take it.
+            LootObjectState pile = _bootstrap.Loot.All()[0];
+
+            StandOn(ben, pile);
+            StandOn(ann, pile);
+
+            Assert.That(Pickup(ben, pile).IsAccepted, Is.False,
+                "the wrong member took a recovered drop");
+            Assert.That(Pickup(ann, pile).IsAccepted, Is.True,
+                "the member whose turn it was could not take the recovered drop");
+
+            Assert.That(Held(ann, DarknessItem), Is.EqualTo(1),
+                "recovery produced more than one fruit");
+            Assert.That(Held(ben, DarknessItem), Is.Zero);
+        }
+
+        [UnityTest]
+        public IEnumerator AFailureAfterOneSuccessLeavesTheSecondMembersTurnIntact()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter ann = Admit("char-ann", 1);
+            LivingCharacter ben = Admit("char-ben", 2);
+            LivingCharacter cal = Admit("char-cal", 3);
+
+            PartyState party = Party(PartyLootPolicy.RoundRobin, ann, ben, cal);
+            _bootstrap.Parties.Persist(Session("char-ann"), party, _parties);
+
+            // First boss: char-ann's turn, and it commits.
+            Kill(ann, Spawn());
+
+            Assert.That(_bootstrap.Parties.RotationOf(party.Id), Is.EqualTo(1));
+            Assert.That(_parties.Load(Session("char-ann")).Party.Cursor, Is.EqualTo(1));
+
+            // Second boss: char-ben's turn, and the write fails.
+            _parties.Broken = true;
+
+            LogAssert.Expect(LogType.Warning,
+                new System.Text.RegularExpressions.Regex("holding the reward"));
+
+            Kill(ann, Spawn());
+
+            Assert.That(_bootstrap.Parties.RotationOf(party.Id), Is.EqualTo(1),
+                "a failed write still moved the turn past char-ben");
+
+            _parties.Broken = false;
+
+            yield return TearDownWorld();
+            yield return LoadWorld(roll: 0f);
+
+            Admit("char-ann", 1);
+
+            yield return Tick();
+
+            Assert.That(_bootstrap.Parties.TryGetPartyOf(new CharacterId("char-ann"),
+                out PartyState restored), Is.True);
+
+            // Not char-cal, because char-ben's turn was never taken; and not char-ann,
+            // because char-ann's was.
+            Assert.That(_bootstrap.Parties.RotationOf(restored.Id), Is.EqualTo(1),
+                "the restarted world moved char-ben's turn somewhere else");
+
+            Assert.That(PartyLootPolicyService.MemberOnTurn(restored,
+                _bootstrap.Parties.RotationOf(restored.Id)),
+                Is.EqualTo(new CharacterId("char-ben")),
+                "char-ben lost their turn because a write failed");
+        }
+
+        [UnityTest]
+        public IEnumerator APersonalPartyIsNotMadeToWaitOnTheRotationBeingWritten()
+        {
+            // Personal hands the pile to the killer whatever the cursor says, so its claim
+            // does not rest on the turn and must not be blocked by a write it never needed.
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter ann = Admit("char-ann", 1);
+            LivingCharacter ben = Admit("char-ben", 2);
+
+            PartyState party = Party(PartyLootPolicy.Personal, ann, ben);
+            _bootstrap.Parties.Persist(Session("char-ann"), party, _parties);
+
+            long annBefore = ann.Domain.Progression.Experience;
+
+            _parties.Broken = true;
+
+            LogAssert.Expect(LogType.Warning,
+                new System.Text.RegularExpressions.Regex("could not save the loot turn"));
+
+            Kill(ann, Spawn());
+
+            Assert.That(_bootstrap.Rewards.HeldCount, Is.Zero,
+                "a Personal defeat was held for a rotation it does not use");
+
+            Assert.That(_bootstrap.Loot.All().Count, Is.EqualTo(1),
+                "a Personal drop was withheld");
+
+            Assert.That(ann.Domain.Progression.Experience - annBefore, Is.EqualTo(450),
+                "a Personal party stopped being paid");
+
+            LootObjectState pile = _bootstrap.Loot.All()[0];
+
+            StandOn(ann, pile);
+
+            Assert.That(Pickup(ann, pile).IsAccepted, Is.True,
+                "the killer could not take their own Personal drop");
+        }
+
+        [UnityTest]
+        public IEnumerator ASoloKillIsUntouchedByAnyOfThis()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter alone = Admit("char-ann", 1);
+
+            _parties.Broken = true;
+
+            long before = alone.Domain.Progression.Experience;
+
+            Kill(alone, Spawn());
+
+            Assert.That(_bootstrap.Rewards.HeldCount, Is.Zero);
+            Assert.That(_bootstrap.Loot.All().Count, Is.EqualTo(1));
+            Assert.That(alone.Domain.Progression.Experience - before, Is.EqualTo(900),
+                "a solo kill was affected by party persistence");
         }
 
         // ---- harness --------------------------------------------------------------------------------------------

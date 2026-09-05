@@ -48,6 +48,21 @@ namespace ChibiFantasy.Server
         /// combat can be written where it is spent.</summary>
         private IPartyStateStore _store;
 
+        public WorldPartyRegistry(IPartyStateStore store = null)
+        {
+            _store = store;
+        }
+
+        /// <summary>
+        /// Whether this world's parties outlive it.
+        /// </summary>
+        /// <remarks>A world composed without a party store keeps its parties in memory and
+        /// loses them when it stops, so there is no durable turn for a runtime one to run
+        /// ahead of. Callers that must not spend a turn they cannot write down ask this
+        /// first -- refusing to hand out RoundRobin loot in a world that never persisted a
+        /// cursor would protect nothing and break every drop.</remarks>
+        public bool IsDurable => _store != null;
+
         private readonly PartyDirectory _directory = new PartyDirectory();
 
         /// <summary>Phase 13's own directory, so membership has one answer.</summary>
@@ -114,6 +129,68 @@ namespace ChibiFantasy.Server
         }
 
         /// <summary>
+        /// The turn after this one, worked out without spending it.
+        /// </summary>
+        /// <remarks>Separate from <see cref="AdvanceRotation"/> because a caller that must
+        /// write the turn down before acting on it needs to know the number first. Reading
+        /// it changes nothing, so a caller that then fails has spent no turn.</remarks>
+        public int NextRotation(PartyId party)
+        {
+            if (!party.IsValid) return 0;
+
+            if (!_byParty.TryGetValue(party.Value, out PartyState state) || state == null)
+            {
+                return 0;
+            }
+
+            return Bounded(RotationOf(party) + 1, state.MemberCount);
+        }
+
+        /// <summary>
+        /// Writes the next turn down, and only then makes it this world's.
+        /// </summary>
+        /// <remarks>
+        /// <b>Storage first, memory second.</b> <see cref="AdvanceRotation"/> moves the
+        /// turn and then tries to save it, which is right for a policy that does not hand
+        /// the pile out by rotation -- nothing is owed to anybody in particular, so a failed
+        /// write costs only a re-send. Under RoundRobin the turn *is* the claim: if this
+        /// world spends it and the write fails, the restarted world offers the same member
+        /// the same turn again and they receive twice.
+        ///
+        /// So the runtime cursor is never allowed to lead the durable one. On failure
+        /// nothing here changes at all, and the caller still holds an unspent turn.
+        /// </remarks>
+        public PartyPersistenceResult TryCommitNextRotation(PartyId party)
+        {
+            if (!party.IsValid)
+            {
+                return PartyPersistenceResult.Failed(PartyPersistenceFailure.InvalidParty,
+                    "no party");
+            }
+
+            if (!_byParty.TryGetValue(party.Value, out PartyState state) || state == null
+                || !state.IsActive)
+            {
+                return PartyPersistenceResult.Failed(PartyPersistenceFailure.InvalidParty,
+                    "that party is not running here");
+            }
+
+            if (_store == null)
+            {
+                return PartyPersistenceResult.Failed(PartyPersistenceFailure.Unreachable,
+                    "this world has no party store");
+            }
+
+            int next = Bounded(RotationOf(party) + 1, state.MemberCount);
+
+            PartyPersistenceResult saved = WriteTo(state, next);
+
+            if (saved.IsOk) _rotation[party.Value] = next;
+
+            return saved;
+        }
+
+        /// <summary>
         /// Saves the party because its turn moved, if this world can.
         /// </summary>
         /// <remarks>
@@ -134,7 +211,34 @@ namespace ChibiFantasy.Server
 
             if (state == null || !state.IsActive) return;
 
+            int cursor = Bounded(RotationOf(party), state.MemberCount);
+
+            if (WriteTo(state, cursor).IsOk)
+            {
+                _rotation[party.Value] = cursor;
+
+                return;
+            }
+
+            Debug.LogWarning("[party] could not save the loot turn for " + party
+                + "; it will go out with this party's next write.");
+        }
+
+        /// <summary>
+        /// Writes a party and a turn, through whichever member this world can speak as.
+        /// </summary>
+        /// <remarks>Any member's session will do: the party is what is being written, not
+        /// a character. Tried in join order and stopped at the first that is accepted, so
+        /// one member logging out cannot make a party's turn unwritable. What comes back is
+        /// the last refusal, because a caller that must not proceed needs to know why.
+        /// </remarks>
+        private PartyPersistenceResult WriteTo(PartyState state, int cursor)
+        {
             IReadOnlyList<CharacterId> members = state.Members;
+
+            PartyPersistenceResult last = PartyPersistenceResult.Failed(
+                PartyPersistenceFailure.NotAMember,
+                "no member of this party is connected to this world");
 
             for (var i = 0; i < members.Count; i++)
             {
@@ -143,11 +247,32 @@ namespace ChibiFantasy.Server
                     continue;
                 }
 
-                if (Persist(session, state, _store).IsOk) return;
+                last = Write(session, state, _store, cursor);
+
+                if (last.IsOk) return last;
             }
 
-            Debug.LogWarning("[party] could not save the loot turn for " + party
-                + "; it will go out with this party's next write.");
+            return last;
+        }
+
+        /// <summary>The one place a party actually goes out over the wire.</summary>
+        private PartyPersistenceResult Write(SessionId session, PartyState party,
+            IPartyStateStore store, int cursor)
+        {
+            var members = new List<CharacterId>(party.Members);
+
+            PartyPersistenceResult saved = store.Save(session, new PersistedParty(
+                party.Id, party.Leader, party.LootPolicy, members,
+                RevisionOf(party.Id), cursor));
+
+            if (saved.IsOk)
+            {
+                _revisions[party.Id.Value] = saved.Revision;
+
+                _store = store;
+            }
+
+            return saved;
         }
 
         /// <summary>
@@ -284,30 +409,19 @@ namespace ChibiFantasy.Server
                 return PartyPersistenceResult.Failed(PartyPersistenceFailure.InvalidParty);
             }
 
-            var members = new List<CharacterId>(party.Members);
-
             // Reduced against the membership actually being written, so what lands in
             // storage is an index into that list rather than a count that would grow for
             // as long as the world runs. This is also where a party that shrank gets its
             // turn brought back into range, because a leave, a kick and a disband all
             // arrive here as "the party now looks like this".
-            int cursor = Bounded(RotationOf(party.Id), members.Count);
+            int cursor = Bounded(RotationOf(party.Id), party.MemberCount);
 
-            PartyPersistenceResult saved = store.Save(session, new PersistedParty(
-                party.Id, party.Leader, party.LootPolicy, members,
-                RevisionOf(party.Id), cursor));
+            PartyPersistenceResult saved = Write(session, party, store, cursor);
 
-            if (saved.IsOk)
-            {
-                _revisions[party.Id.Value] = saved.Revision;
-
-                // Memory follows storage. A world that saved and a world that restarted
-                // after saving then hold the same number, instead of two that agree only
-                // until the membership changes.
-                _rotation[party.Id.Value] = cursor;
-
-                _store = store;
-            }
+            // Memory follows storage. A world that saved and a world that restarted after
+            // saving then hold the same number, instead of two that agree only until the
+            // membership changes.
+            if (saved.IsOk) _rotation[party.Id.Value] = cursor;
 
             return saved;
         }

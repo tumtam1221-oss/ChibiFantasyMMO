@@ -42,7 +42,17 @@ namespace ChibiFantasy.Server
         PersistenceFailed = 9,
 
         /// <summary>Somebody else wrote the character first. The save must be retried.</summary>
-        ConcurrencyConflict = 10
+        ConcurrencyConflict = 10,
+
+        /// <summary>
+        /// A party's round-robin turn could not be written down, so nothing was paid.
+        /// </summary>
+        /// <remarks>Under RoundRobin the turn is the claim. Handing the pile over while
+        /// the cursor is still at the previous turn would let a restart offer the same
+        /// member the same turn again, so the defeat is held instead: the roll that was
+        /// already made is kept, and a retry finishes it without rolling a second one.
+        /// </remarks>
+        PartyRotationNotCommitted = 11
     }
 
     /// <summary>
@@ -200,6 +210,48 @@ namespace ChibiFantasy.Server
         /// </remarks>
         private readonly HashSet<string> _paid = new HashSet<string>();
 
+        /// <summary>
+        /// A defeat that is decided but not yet paid, because its party's turn would not
+        /// commit.
+        /// </summary>
+        /// <remarks>
+        /// <b>Everything expensive is already in here.</b> The defeat claim, the drop roll
+        /// and the chosen claimant were all settled before the write was attempted, and
+        /// none of them may happen twice -- a second roll would be a second chance at a one
+        /// in ten million item. So the answers are held rather than recomputed, and a retry
+        /// only re-attempts the part that failed.
+        ///
+        /// <b>The pile is built but not published.</b> It exists as an object and is in no
+        /// map, so nothing in the world can see or take it until the turn behind it is
+        /// durable.
+        /// </remarks>
+        private sealed class HeldDefeat
+        {
+            public InstanceId Monster;
+            public MonsterDefeatResult Defeat;
+            public DefeatRewardContext Context;
+            public LootObjectState Pile;
+            public int Experience;
+        }
+
+        private readonly Dictionary<string, HeldDefeat> _held =
+            new Dictionary<string, HeldDefeat>();
+
+        /// <summary>How many world ticks a refused retry waits before trying again.</summary>
+        /// <remarks>
+        /// <b>Ticks, not seconds, and not a number from the caller.</b> Nothing public on
+        /// this authority accepts a figure from anybody -- an amount or a connection id
+        /// could arrive through such a parameter -- so the backoff counts the world's own
+        /// calls rather than being handed a delta.
+        ///
+        /// The wait exists because the write that failed is an HTTP call, and retrying one
+        /// of those on every frame would turn a backend hiccup into a stalled world. The
+        /// first attempt is not made to wait at all: the backend may already be back.
+        /// </remarks>
+        private const int RetryTickInterval = 300;
+
+        private int _ticksUntilRetry;
+
         /// <param name="monsters">The authoritative monster runtime.</param>
         /// <param name="characters">Where players are, and the only way to a character.</param>
         /// <param name="progression">
@@ -293,6 +345,21 @@ namespace ChibiFantasy.Server
                 return MonsterRewardResult.Refused(MonsterRewardRejection.InvalidDefeat);
             }
 
+            // A defeat already decided but never paid. Asked before the granted guard
+            // because the monster is in _paid already: its claim was consumed, and this
+            // is the same defeat being finished rather than a second one.
+            if (_held.TryGetValue(monster.Value, out HeldDefeat held))
+            {
+                if (!TryResolveRecipient(killer, out LivingCharacter waiting)
+                    || waiting.Character != held.Context.Killer)
+                {
+                    return MonsterRewardResult.Refused(
+                        MonsterRewardRejection.RewardAlreadyGranted);
+                }
+
+                return Settle(waiting, held);
+            }
+
             if (HasGranted(monster))
             {
                 return MonsterRewardResult.Refused(
@@ -364,15 +431,134 @@ namespace ChibiFantasy.Server
             // The pile is attributed through Phase 13's own policy. One claimant, recorded
             // immutably on the loot, so a party that disbands later cannot make it
             // unclaimable and a party somebody joins later cannot make it theirs.
-            LootObjectState pile = DropLoot(defeat, living, ClaimantFor(context), rolled);
+            //
+            // Built, not yet published: it is in no map until the turn behind it is safe.
+            return Settle(recipient, new HeldDefeat
+            {
+                Monster = monster,
+                Defeat = defeat,
+                Context = context,
+                Pile = BuildLoot(defeat, living, ClaimantFor(context), rolled),
+                Experience = defeat.ExperienceReward,
+            });
+        }
 
-            if (pile != null && context.Party.IsValid && _parties != null)
+        /// <summary>
+        /// Commits the party's turn if the claim rests on one, then pays the defeat.
+        /// </summary>
+        /// <remarks>
+        /// <b>The order is the whole point of this method.</b> Under RoundRobin the pile
+        /// belongs to whoever the turn names, so the turn has to be durable before the pile
+        /// is real. Publishing first and saving afterwards is what let a failed write leave
+        /// a spent turn behind an unspent cursor, and a restart then gave the same member
+        /// the same turn twice.
+        ///
+        /// <b>Personal and NeedGreed are not made to wait.</b> Neither hands the pile out by
+        /// rotation -- Personal gives it to the killer whatever the cursor says -- so their
+        /// claim does not rest on the turn, and coupling them to a write they do not depend
+        /// on would only invent a way for a solo-style drop to fail.
+        /// </remarks>
+        private MonsterRewardResult Settle(LivingCharacter recipient, HeldDefeat held)
+        {
+            if (held.Pile != null && RestsOnTheTurn(held.Context))
+            {
+                PartyPersistenceResult committed =
+                    _parties.TryCommitNextRotation(held.Context.Party);
+
+                if (!committed.IsOk)
+                {
+                    // Nothing is spent: no pile in the world, no experience paid, and the
+                    // cursor -- runtime and durable alike -- exactly where it was. What was
+                    // already decided is kept so the retry cannot roll again.
+                    _held[held.Monster.Value] = held;
+
+                    // Ready to be tried on the very next tick. The backend may already be
+                    // back, and waiting out the interval before the first attempt would
+                    // hold a reward for no reason.
+                    _ticksUntilRetry = 0;
+
+                    UnityEngine.Debug.LogWarning("[party] holding the reward for "
+                        + held.Monster + ": its loot turn could not be written down ("
+                        + committed.Failure + ")");
+
+                    return MonsterRewardResult.Refused(
+                        MonsterRewardRejection.PartyRotationNotCommitted);
+                }
+            }
+            else if (held.Pile != null && held.Context.Party.IsValid && _parties != null)
             {
                 // A turn is spent only when a party is actually given something.
-                _parties.AdvanceRotation(context.Party);
+                _parties.AdvanceRotation(held.Context.Party);
             }
 
-            return ApplyShared(monster, recipient, defeat.ExperienceReward, context, pile);
+            _held.Remove(held.Monster.Value);
+
+            LootObjectState pile = PublishLoot(held.Pile, held.Context.Map);
+
+            return ApplyShared(held.Monster, recipient, held.Experience, held.Context, pile);
+        }
+
+        /// <summary>Whether this defeat's pile is handed out by the party's rotation.</summary>
+        private bool RestsOnTheTurn(in DefeatRewardContext context)
+        {
+            if (!context.Party.IsValid || _parties == null) return false;
+
+            // A world that does not persist parties has no durable turn to contradict, so
+            // there is nothing here to protect and a drop must not be withheld for it.
+            if (!_parties.IsDurable) return false;
+
+            if (!_parties.TryGetPartyOf(context.Killer, out PartyState party)) return false;
+
+            return party.LootPolicy == PartyLootPolicy.RoundRobin;
+        }
+
+        /// <summary>Defeats decided but not yet paid, because a turn would not commit.</summary>
+        public int HeldCount => _held.Count;
+
+        /// <summary>
+        /// Tries the defeats that are waiting on a party turn again.
+        /// </summary>
+        /// <remarks>
+        /// <b>Driven by the world's own tick</b>, in the step that already runs monsters and
+        /// the piles they left, so recovery needs no clock of its own. The corpse is not
+        /// needed: the pile was built when the monster died and carries its own position,
+        /// so a defeat outlives the body it came from and a slow backend cannot cost a
+        /// party their drop just because the monster was tidied away first.
+        ///
+        /// Returns how many were finished, which is what a test and an operator both want to
+        /// know.
+        /// </remarks>
+        public int RetryHeld()
+        {
+            if (_held.Count == 0) return 0;
+
+            if (_ticksUntilRetry > 0)
+            {
+                _ticksUntilRetry--;
+
+                return 0;
+            }
+
+            var finished = 0;
+
+            foreach (string key in new List<string>(_held.Keys))
+            {
+                if (!_held.TryGetValue(key, out HeldDefeat held)) continue;
+
+                if (!_characters.TryGetByCharacter(held.Context.Killer,
+                    out LivingCharacter killer))
+                {
+                    // Whoever earned it is not here. Held, not discarded.
+                    continue;
+                }
+
+                if (Settle(killer, held).IsGranted) finished++;
+            }
+
+            // Whatever is still waiting waits a while before the next attempt.
+            if (_held.Count > 0) _ticksUntilRetry = RetryTickInterval;
+
+            return finished;
         }
 
         /// <summary>
@@ -450,19 +636,29 @@ namespace ChibiFantasy.Server
         /// Returns null when nothing dropped, which is the common answer: an empty pile in
         /// the world is a pickup request that can only ever be refused.
         /// </remarks>
-        private LootObjectState DropLoot(in MonsterDefeatResult defeat, LivingMonster monster,
-            CharacterId claimant, List<LootResult> rolled)
+        private LootObjectState BuildLoot(in MonsterDefeatResult defeat,
+            LivingMonster monster, CharacterId claimant, List<LootResult> rolled)
         {
             if (!CanDrop || rolled == null || rolled.Count == 0) return null;
 
-            LootObjectState pile = MonsterDefeatService.CreateLoot(defeat, rolled,
+            return MonsterDefeatService.CreateLoot(defeat, rolled,
                 monster.State.Position, LootPolicy.OwnerOnly,
                 claimant, _lootLifetimeSeconds,
                 _personalWindowSeconds);
+        }
 
+        /// <summary>
+        /// Puts a built pile into the world, which is the moment it becomes real.
+        /// </summary>
+        /// <remarks>Separate from building it because this is the line a claim cannot be
+        /// taken back across: before it the pile is an object nobody can see, and after it
+        /// a player can be standing on it. Everything that must be true of the claim is
+        /// made true before this is called.</remarks>
+        private LootObjectState PublishLoot(LootObjectState pile, DefinitionId map)
+        {
             if (pile == null) return null;
 
-            return _loot.Add(pile, monster.Map) ? pile : null;
+            return _loot.Add(pile, map) ? pile : null;
         }
 
         /// <summary>

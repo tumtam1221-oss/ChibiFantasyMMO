@@ -498,6 +498,117 @@ namespace ChibiFantasy.Tests.EditMode
                 PartyLootPolicy.Personal, new CharacterId[0], 0)).IsOk, Is.True);
         }
 
+        /// <summary>A real transport that can be taken away and given back.</summary>
+        /// <remarks>Only the wire is broken. PHP, MySQL and every line of the store above it
+        /// are the production ones, so what this proves about ordering is a fact about the
+        /// real chain rather than about a stub.</remarks>
+        private sealed class InterruptibleTransport : IHttpTransport
+        {
+            private readonly IHttpTransport _inner;
+
+            public InterruptibleTransport(IHttpTransport inner) => _inner = inner;
+
+            public bool Broken { get; set; }
+
+            public HttpExchange Send(string method, string path, string jsonBody,
+                string bearerToken)
+            {
+                return Broken
+                    ? HttpExchange.Unreachable("the network is down for this test")
+                    : _inner.Send(method, path, jsonBody, bearerToken);
+            }
+        }
+
+        /// <summary>
+        /// A turn that would not reach MySQL is a turn nobody spent.
+        /// </summary>
+        /// <remarks>
+        /// The defect 18.14A left behind, proved closed against the real database: the
+        /// runtime cursor used to move first and log the failure afterwards, so a restart
+        /// offered the same member a turn they had already taken.
+        /// </remarks>
+        [Test]
+        public void ATurnThatCannotReachMySqlIsNotSpentByTheRunningWorld()
+        {
+            var wire = new InterruptibleTransport(_transport);
+            var store = new HttpPartyStateStore(wire, new ApiToken(_api));
+
+            var me = new CharacterId(_fixture.RewardCharacterId);
+            var second = new CharacterId("char-live-18-14b-second");
+            var third = new CharacterId("char-live-18-14b-third");
+            var id = new PartyId("party-live-18-14b");
+
+            CharacterId[] members = { me, second, third };
+
+            // Whatever ran before, this character starts in no party.
+            store.Save(_api.Session, new PersistedParty(id, me, PartyLootPolicy.Personal,
+                new CharacterId[0], 0));
+
+            Assert.That(store.Save(_api.Session, new PersistedParty(id, me,
+                PartyLootPolicy.RoundRobin, members, 0, 0)).IsOk, Is.True);
+
+            var world = new WorldPartyRegistry();
+
+            Assert.That(world.Restore(_api.Session, me, store), Is.Not.Null);
+            Assert.That(world.RotationOf(id), Is.Zero);
+
+            // 1. A turn that commits. MySQL and memory move together.
+            Assert.That(world.TryCommitNextRotation(id).IsOk, Is.True);
+            Assert.That(world.RotationOf(id), Is.EqualTo(1));
+            Assert.That(Stored(me).Cursor, Is.EqualTo(1),
+                "the committed turn did not reach MySQL");
+
+            // 2. A turn that cannot be written. Nothing moves.
+            wire.Broken = true;
+
+            PartyPersistenceResult refused = world.TryCommitNextRotation(id);
+
+            Assert.That(refused.IsOk, Is.False);
+            Assert.That(refused.Failure, Is.EqualTo(PartyPersistenceFailure.Unreachable));
+
+            Assert.That(world.RotationOf(id), Is.EqualTo(1),
+                "the running world spent a turn it could not write down");
+
+            wire.Broken = false;
+
+            Assert.That(Stored(me).Cursor, Is.EqualTo(1),
+                "MySQL moved despite the refusal");
+
+            // 3. A fresh world, as a restart is. The same member is still next.
+            var restarted = new WorldPartyRegistry();
+
+            PartyState restored = restarted.Restore(_api.Session, me, store);
+
+            Assert.That(restored, Is.Not.Null);
+            Assert.That(restarted.RotationOf(id), Is.EqualTo(1),
+                "the restarted world disagreed with MySQL about whose turn it is");
+
+            Assert.That(PartyLootPolicyService.MemberOnTurn(restored,
+                restarted.RotationOf(id)), Is.EqualTo(second),
+                "the member who never got their turn lost it to a failed write");
+
+            // 4. With the wire back, that same turn commits and moves on exactly one.
+            Assert.That(restarted.TryCommitNextRotation(id).IsOk, Is.True);
+            Assert.That(restarted.RotationOf(id), Is.EqualTo(2));
+            Assert.That(Stored(me).Cursor, Is.EqualTo(2),
+                "the recovered turn did not reach MySQL");
+
+            // Disbanded, so the next run of this fixture starts clean.
+            Assert.That(store.Save(_api.Session, new PersistedParty(id, me,
+                PartyLootPolicy.Personal, new CharacterId[0], 0)).IsOk, Is.True);
+        }
+
+        /// <summary>What MySQL holds right now, read through a store that remembers nothing.</summary>
+        private PersistedParty Stored(CharacterId member)
+        {
+            PartyPersistenceResult read =
+                new HttpPartyStateStore(_transport, new ApiToken(_api)).Load(_api.Session);
+
+            Assert.That(read.IsOk, Is.True, "live read failed: " + read.Detail);
+
+            return read.Party;
+        }
+
         // ---- devil fruit reaches MySQL ------------------------------------------------------------
 
         /// <summary>
