@@ -28,6 +28,51 @@ namespace ChibiFantasy.Contracts
     }
 
     /// <summary>
+    /// What one pet is owed for one defeat, and whether it has had it.
+    /// </summary>
+    /// <remarks>
+    /// <b>The pet is named by instance, and that is the whole point.</b> A character may own
+    /// two of the same kind, and only the one that was out when the monster died earned
+    /// this. Storing the definition, or storing nothing and asking which pet is active at
+    /// delivery, would both hand the experience to whichever pet the player happens to have
+    /// out later -- which is a different pet, and a different answer.
+    ///
+    /// <b>The owner travels with it.</b> Delivery needs the character in the world to apply
+    /// and persist the pet's progression, and an owner cannot be derived from a pet that may
+    /// no longer exist.
+    /// </remarks>
+    public readonly struct MonsterRewardPetGrant
+    {
+        public MonsterRewardPetGrant(CharacterId owner, InstanceId pet, int experience,
+            bool delivered = false)
+        {
+            Owner = owner;
+            Pet = pet;
+            Experience = experience;
+            IsDelivered = delivered;
+        }
+
+        /// <summary>Whose pet it was at the defeat.</summary>
+        public CharacterId Owner { get; }
+
+        /// <summary>The exact pet that was out. Never a definition, never "the active one".</summary>
+        public InstanceId Pet { get; }
+
+        public int Experience { get; }
+
+        /// <summary>Whether this pet's share has been paid, across any number of restarts.</summary>
+        public bool IsDelivered { get; }
+
+        public bool Exists => Owner.IsValid && Pet.IsValid;
+
+        public override string ToString()
+        {
+            return Pet + " of " + Owner + " " + Experience
+                + (IsDelivered ? " (paid)" : " (owed)");
+        }
+    }
+
+    /// <summary>
     /// One thing a defeat's drop tables produced.
     /// </summary>
     /// <remarks>
@@ -109,8 +154,11 @@ namespace ChibiFantasy.Contracts
             IReadOnlyList<MonsterRewardGrant> experience,
             IReadOnlyList<MonsterRewardLootEntry> entries,
             bool cursorCommitted = false, bool lootPublished = false,
-            bool complete = false, int revision = 0)
+            bool complete = false, int revision = 0,
+            IReadOnlyList<MonsterRewardPetGrant> petExperience = null)
         {
+            PetExperience = petExperience
+                ?? System.Array.Empty<MonsterRewardPetGrant>();
             RewardId = rewardId;
             Defeat = defeat;
             Monster = monster;
@@ -183,6 +231,14 @@ namespace ChibiFantasy.Contracts
 
         public IReadOnlyList<MonsterRewardGrant> Experience { get; }
 
+        /// <summary>
+        /// What this defeat owes each eligible character's pet, frozen at the defeat.
+        /// </summary>
+        /// <remarks>Empty when nobody had a pet out, which is not the same as a row of
+        /// zero: a character with no pet is owed nothing, and writing a phantom row for it
+        /// would invent a delivery that can never be made.</remarks>
+        public IReadOnlyList<MonsterRewardPetGrant> PetExperience { get; }
+
         public IReadOnlyList<MonsterRewardLootEntry> Entries { get; }
 
         public bool IsCursorCommitted { get; }
@@ -203,6 +259,11 @@ namespace ChibiFantasy.Contracts
                 for (var i = 0; i < Experience.Count; i++)
                 {
                     if (!Experience[i].IsDelivered) return true;
+                }
+
+                for (var i = 0; i < PetExperience.Count; i++)
+                {
+                    if (!PetExperience[i].IsDelivered) return true;
                 }
 
                 for (var i = 0; i < Entries.Count; i++)
@@ -319,6 +380,7 @@ namespace ChibiFantasy.Contracts
         MonsterRewardOutboxResult Progress(SessionId session, string rewardId, int revision,
             IReadOnlyList<CharacterId> experienceDelivered,
             IReadOnlyList<MonsterRewardLootEntry> lootClaimed,
-            bool? cursorCommitted, bool? lootPublished, bool complete);
+            bool? cursorCommitted, bool? lootPublished, bool complete,
+            IReadOnlyList<InstanceId> petExperienceDelivered = null);
     }
 }

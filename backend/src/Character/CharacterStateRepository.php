@@ -623,8 +623,9 @@ final class CharacterStateRepository
         $upsert = $this->pdo->prepare(
             'INSERT INTO pet_instance
                 (instance_id, definition_id, owner_id, level, experience,
-                 evolution_stage, revision, created_at, updated_at)
-             VALUES (:iid, :did, :owner, :level, :xp, :stage, :rev, NOW(3), NOW(3))
+                 evolution_stage, revision, applied_reward_id, created_at, updated_at)
+             VALUES (:iid, :did, :owner, :level, :xp, :stage, :rev, :applied,
+                     NOW(3), NOW(3))
              ON DUPLICATE KEY UPDATE
                 definition_id = VALUES(definition_id),
                 owner_id = VALUES(owner_id),
@@ -632,12 +633,14 @@ final class CharacterStateRepository
                 experience = VALUES(experience),
                 evolution_stage = VALUES(evolution_stage),
                 revision = VALUES(revision),
+                applied_reward_id = VALUES(applied_reward_id),
                 updated_at = NOW(3)'
         );
 
         foreach ((array) ($state['pets'] ?? []) as $row) {
             $instanceId = trim((string) ($row['instance_id'] ?? ''));
             $definitionId = trim((string) ($row['definition_id'] ?? ''));
+            $applied = trim((string) ($row['applied_reward_id'] ?? ''));
 
             // A row with no identity or no kind is not a pet. Skipped rather than
             // defaulted: inventing either would be inventing somebody's companion.
@@ -653,6 +656,13 @@ final class CharacterStateRepository
                 ':xp'    => max(0, (int) ($row['experience'] ?? 0)),
                 ':stage' => max(0, (int) ($row['evolution_stage'] ?? 0)),
                 ':rev'   => max(0, (int) ($row['revision'] ?? 0)),
+
+                // The reward whose experience is already part of this pet's progression,
+                // committed in the same transaction as that progression. The two cannot
+                // disagree, which is what lets recovery tell "already paid" from "owed"
+                // without reading the pet's experience total -- a number two different
+                // rewards can leave identical.
+                ':applied' => $applied === '' ? null : $applied,
             ]);
 
             $keep[$instanceId] = true;
@@ -711,7 +721,8 @@ final class CharacterStateRepository
     private function loadPets(string $characterId): array
     {
         $statement = $this->pdo->prepare(
-            'SELECT instance_id, definition_id, level, experience, evolution_stage, revision
+            'SELECT instance_id, definition_id, level, experience, evolution_stage,
+                    revision, applied_reward_id
              FROM pet_instance WHERE owner_id = :owner
              ORDER BY created_at ASC, instance_id ASC'
         );
@@ -728,6 +739,8 @@ final class CharacterStateRepository
                 'experience'      => (int) $row['experience'],
                 'evolution_stage' => (int) $row['evolution_stage'],
                 'revision'        => (int) $row['revision'],
+                'applied_reward_id' => $row['applied_reward_id'] === null
+                    ? '' : (string) $row['applied_reward_id'],
             ];
         }
 

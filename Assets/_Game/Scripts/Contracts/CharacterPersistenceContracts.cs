@@ -219,7 +219,8 @@ namespace ChibiFantasy.Contracts
     public readonly struct PersistedPet
     {
         public PersistedPet(InstanceId instance, DefinitionId pet, int level,
-            int experience, int evolutionStage, int revision = 0)
+            int experience, int evolutionStage, int revision = 0,
+            string appliedRewardId = null)
         {
             Instance = instance;
             Pet = pet;
@@ -227,6 +228,7 @@ namespace ChibiFantasy.Contracts
             Experience = experience;
             EvolutionStage = evolutionStage;
             Revision = revision;
+            AppliedRewardId = appliedRewardId ?? string.Empty;
         }
 
         /// <summary>This pet, as distinct from every other copy of the same kind.</summary>
@@ -243,6 +245,14 @@ namespace ChibiFantasy.Contracts
         public int EvolutionStage { get; }
 
         public int Revision { get; }
+
+        /// <summary>
+        /// The last reward whose experience this pet's numbers already include.
+        /// </summary>
+        /// <remarks>Stored with the progression it describes and written in the same
+        /// transaction, which is what makes "already paid" answerable after a crash. Empty
+        /// for a pet no reward has ever paid.</remarks>
+        public string AppliedRewardId { get; }
 
         /// <summary>Whether this describes a pet at all.</summary>
         public bool Exists => Instance.IsValid && Pet.IsValid;

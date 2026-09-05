@@ -22,6 +22,26 @@ namespace ChibiFantasy.Data
         [SerializeField] private int _experience;
         [SerializeField] private int _evolutionStage;
 
+        /// <summary>
+        /// The last durable reward whose experience is already part of this pet's
+        /// progression. Empty for a pet no reward has ever paid.
+        /// </summary>
+        /// <remarks>
+        /// <b>Bookkeeping, not gameplay.</b> Nothing about what a pet <em>is</em> depends on
+        /// it: no rule reads it, no buff comes from it, and clearing it would change no
+        /// number a player can see. It sits here, beside <see cref="GameInstance.Revision"/>,
+        /// because it has to travel with the progression it describes -- the two are written
+        /// in one transaction, so they cannot disagree about what has been paid.
+        ///
+        /// <b>An opaque id.</b> This assembly does not know what a reward is and does not
+        /// need to; it stores the string the server hands it and gives it back.
+        ///
+        /// <b>Why a total cannot answer the question.</b> "Has reward R been applied?" is
+        /// not answerable from experience, because two different rewards can leave a pet on
+        /// the same number. This is the only durable evidence there is.
+        /// </remarks>
+        [SerializeField] private string _appliedRewardId;
+
         /// <summary>Exists for deserializers.</summary>
         public PetInstance()
         {
@@ -53,6 +73,22 @@ namespace ChibiFantasy.Data
 
         /// <summary>Index into the definition's authored evolution stages. Zero is unevolved.</summary>
         public int EvolutionStage => _evolutionStage;
+
+        /// <summary>The last reward already included in this pet's progression, or empty.</summary>
+        public string AppliedRewardId => _appliedRewardId ?? string.Empty;
+
+        /// <summary>
+        /// Records that a reward's experience is now part of this pet's progression.
+        /// </summary>
+        /// <remarks>
+        /// Called with the same mutation that applied the experience, so that the marker and
+        /// the number it describes are saved together. It deliberately does not advance the
+        /// revision on its own: this says something about a change rather than being one.
+        /// </remarks>
+        public void SetAppliedReward(string rewardId)
+        {
+            _appliedRewardId = string.IsNullOrEmpty(rewardId) ? null : rewardId;
+        }
 
         public void SetLevel(int level)
         {

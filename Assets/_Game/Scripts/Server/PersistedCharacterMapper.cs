@@ -448,8 +448,15 @@ namespace ChibiFantasy.Server
                     return false;
                 }
 
-                into.Add(new PetInstance(stored.Instance, stored.Pet, owner, stored.Level,
-                    stored.Experience, stored.EvolutionStage));
+                var pet = new PetInstance(stored.Instance, stored.Pet, owner, stored.Level,
+                    stored.Experience, stored.EvolutionStage);
+
+                // Which reward's experience these numbers already include. Restored with
+                // them, because a recovered world has to be able to tell a reward it owes
+                // from one it has already paid, and the numbers alone cannot say.
+                pet.SetAppliedReward(stored.AppliedRewardId);
+
+                into.Add(pet);
             }
 
             return true;
@@ -481,7 +488,7 @@ namespace ChibiFantasy.Server
                 if (pet == null || !pet.InstanceId.IsValid) continue;
 
                 into.Add(new PersistedPet(pet.InstanceId, pet.DefinitionId, pet.Level,
-                    pet.Experience, pet.EvolutionStage));
+                    pet.Experience, pet.EvolutionStage, 0, pet.AppliedRewardId));
             }
         }
 

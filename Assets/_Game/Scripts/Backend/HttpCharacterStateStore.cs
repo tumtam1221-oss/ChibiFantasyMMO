@@ -143,7 +143,8 @@ namespace ChibiFantasy.Backend
                     row.Int("level"),
                     row.Int("experience"),
                     row.Int("evolution_stage"),
-                    row.Int("revision")));
+                    row.Int("revision"),
+                    row.String("applied_reward_id")));
             }
 
             string activePet = json.String("active_pet_instance_id");
@@ -397,6 +398,9 @@ namespace ChibiFantasy.Backend
                     .Add("experience", pet.Experience)
                     .Add("evolution_stage", pet.EvolutionStage)
                     .Add("revision", pet.Revision)
+                    // Sent with the progression it describes, so the backend commits both
+                    // in one transaction and they can never disagree about what was paid.
+                    .Add("applied_reward_id", pet.AppliedRewardId ?? string.Empty)
                     .ToJson());
             }
 

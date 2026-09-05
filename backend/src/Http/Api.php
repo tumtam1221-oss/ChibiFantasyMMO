@@ -706,6 +706,20 @@ final class Api
             ];
         }
 
+        // What each eligible character's pet was owed, by the exact instance that was out
+        // when the monster died. The pet is named, never derived: deriving it here would
+        // ask which pet is active now, which is a different question with a different
+        // answer once somebody swaps pets.
+        $petExperience = [];
+
+        foreach ($request->nested('pet_experience') as $grant) {
+            $petExperience[] = [
+                'character_id'    => trim((string) ($grant['character_id'] ?? '')),
+                'pet_instance_id' => trim((string) ($grant['pet_instance_id'] ?? '')),
+                'experience'      => (int) ($grant['experience'] ?? 0),
+            ];
+        }
+
         // The world this reward belongs to comes from the session, never from the body: a
         // caller that could name its own server and channel could hand another world's
         // pending rewards to itself.
@@ -728,7 +742,7 @@ final class Api
             // absent means this defeat owes no rotation anything at all.
             'party_cursor'          => $request->has('party_cursor')
                 ? $request->int('party_cursor') : null,
-        ], $experience, $loot);
+        ], $experience, $loot, $petExperience);
 
         if (!($result['ok'] ?? false)) {
             return Response::problem(
@@ -809,6 +823,12 @@ final class Api
             $paid[] = trim((string) $characterId);
         }
 
+        $petsPaid = [];
+
+        foreach ($request->nested('pet_experience_delivered') as $petInstanceId) {
+            $petsPaid[] = trim((string) $petInstanceId);
+        }
+
         $claimed = [];
 
         foreach ($request->nested('loot_claimed') as $entry) {
@@ -825,7 +845,8 @@ final class Api
             $claimed,
             $request->has('cursor_committed') ? (bool) $request->int('cursor_committed') : null,
             $request->has('loot_published') ? (bool) $request->int('loot_published') : null,
-            (bool) $request->int('complete')
+            (bool) $request->int('complete'),
+            $petsPaid
         );
 
         if (!($result['ok'] ?? false)) {

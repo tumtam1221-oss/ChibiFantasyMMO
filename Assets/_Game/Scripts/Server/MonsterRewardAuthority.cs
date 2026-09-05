@@ -209,6 +209,24 @@ namespace ChibiFantasy.Server
         private readonly float _lootLifetimeSeconds;
         private readonly float _personalWindowSeconds;
 
+        /// <summary>Authored pets, so a pet's own curve decides what its experience buys.</summary>
+        private readonly IDefinitionRegistry<PetDefinition> _pets;
+
+        /// <summary>
+        /// The fraction of a character's own award that their pet earns beside them.
+        /// </summary>
+        /// <remarks>
+        /// <b>Configuration, not a pet's business.</b> One number for the world, applied to
+        /// every pet the same way -- no pet id appears in this file, and a new pet needs no
+        /// code. It is a share of the owner's <em>awarded</em> experience rather than of the
+        /// monster's total, so a party that splits six ways does not multiply what its pets
+        /// earn by six.
+        ///
+        /// Zero, the default, is a world where pets earn nothing from defeats -- which is
+        /// exactly what every world composed before this existed was.
+        /// </remarks>
+        private readonly float _petExperienceShare;
+
         /// <summary>
         /// Monsters that have already paid out, by instance id.
         /// </summary>
@@ -254,6 +272,30 @@ namespace ChibiFantasy.Server
             public List<MonsterRewardLootEntry> Entries =
                 new List<MonsterRewardLootEntry>();
 
+            /// <summary>
+            /// Which pet each eligible character had out, and what it is owed.
+            /// </summary>
+            /// <remarks>Frozen when the monster died. Nothing here is ever re-derived from
+            /// whichever pet somebody has out later: that is a different pet, and paying it
+            /// would be paying the wrong one.</remarks>
+            public List<MonsterRewardPetGrant> PetGrants =
+                new List<MonsterRewardPetGrant>();
+
+            /// <summary>
+            /// Pets this world has given the experience to in memory but has not yet
+            /// managed to save.
+            /// </summary>
+            /// <remarks>
+            /// The difference between "the pet's marker says this reward, because storage
+            /// says so" and "the pet's marker says this reward, because we just set it and
+            /// the save has not landed". The first is delivered; the second is not, and
+            /// stamping it would lose the experience.
+            ///
+            /// In memory only, and correctly so: a process that dies holding this never
+            /// saved the experience either, so recovery finds no marker and pays once.
+            /// </remarks>
+            public readonly HashSet<string> PetApplied = new HashSet<string>();
+
             public PartyId Party;
             public CharacterId Claimant;
             public int Cursor;
@@ -277,6 +319,11 @@ namespace ChibiFantasy.Server
                     for (var i = 0; i < Grants.Count; i++)
                     {
                         if (!Grants[i].IsDelivered) return true;
+                    }
+
+                    for (var i = 0; i < PetGrants.Count; i++)
+                    {
+                        if (!PetGrants[i].IsDelivered) return true;
                     }
 
                     for (var i = 0; i < Entries.Count; i++)
@@ -348,8 +395,12 @@ namespace ChibiFantasy.Server
             float personalWindowSeconds = 0f,
             WorldPartyRegistry parties = null,
             float rewardRangeMetres = 0f,
-            IMonsterRewardOutbox outbox = null)
+            IMonsterRewardOutbox outbox = null,
+            IDefinitionRegistry<PetDefinition> pets = null,
+            float petExperienceShare = 0f)
         {
+            _pets = pets;
+            _petExperienceShare = petExperienceShare < 0f ? 0f : petExperienceShare;
             _parties = parties;
             _rewardRangeMetres = rewardRangeMetres;
             _monsters = monsters;
@@ -547,6 +598,11 @@ namespace ChibiFantasy.Server
                 held.Grants.Add(new MonsterRewardGrant(context.Killer, 0));
             }
 
+            // Which pet each of them had out, at this exact moment. Frozen with the split
+            // and for the same reason: a player who swaps pets on the walk back to town
+            // must not redirect experience their other pet earned.
+            FreezePets(held, shares);
+
             if (held.Pile != null && rolled != null)
             {
                 for (var i = 0; i < rolled.Count; i++)
@@ -566,6 +622,71 @@ namespace ChibiFantasy.Server
             }
 
             return Settle(recipient, held);
+        }
+
+        /// <summary>
+        /// Records which pet each eligible character had out, and what it earned.
+        /// </summary>
+        /// <remarks>
+        /// <b>The instance, not the definition and not "the active one".</b> A character
+        /// owning two of the same kind has two pets, and only the one standing beside them
+        /// when the monster died earned this. Storing anything less specific would let
+        /// delivery hand it to the other one.
+        ///
+        /// <b>Nothing is written for a character with no pet out.</b> A row of zero would be
+        /// a delivery that can never be made and a reward that can never complete; owing
+        /// nothing is expressed by owing nothing.
+        ///
+        /// <b>One share, applied the same way to every pet.</b> No pet id is consulted. The
+        /// amount is a fraction of what its owner was awarded, floored to a whole number,
+        /// so a party's split reaches its pets already split.
+        /// </remarks>
+        private void FreezePets(HeldDefeat held, List<PartyExperienceShare> shares)
+        {
+            if (_pets == null || _petExperienceShare <= 0f || _characters == null) return;
+
+            for (var i = 0; i < shares.Count; i++)
+            {
+                PartyExperienceShare share = shares[i];
+
+                if (share.Experience <= 0) continue;
+
+                if (!_characters.TryGetByCharacter(share.Character,
+                    out LivingCharacter member))
+                {
+                    // Not in this world, so nothing can be said about which pet was out.
+                    continue;
+                }
+
+                if (member.Companion == null || !member.Companion.IsSummoned) continue;
+
+                PetInstance active = member.Companion.Summoned;
+
+                if (active == null || !active.InstanceId.IsValid) continue;
+
+                int amount = PetExperienceFor(share.Experience);
+
+                if (amount <= 0) continue;
+
+                held.PetGrants.Add(new MonsterRewardPetGrant(share.Character,
+                    active.InstanceId, amount));
+            }
+        }
+
+        /// <summary>
+        /// What a pet earns beside an owner awarded this much.
+        /// </summary>
+        /// <remarks>Floored, deliberately: an integer amount is what the pet's authored
+        /// curve is measured in, and rounding up would let a one-experience kill pay a pet
+        /// more of a share than the world was configured to give. Floor also makes the
+        /// arithmetic the same on every machine, which a rounding mode does not.</remarks>
+        private int PetExperienceFor(int ownerAward)
+        {
+            if (ownerAward <= 0 || _petExperienceShare <= 0f) return 0;
+
+            double exact = ownerAward * (double)_petExperienceShare;
+
+            return exact <= 0d ? 0 : (int)System.Math.Floor(exact);
         }
 
         /// <summary>
@@ -640,6 +761,10 @@ namespace ChibiFantasy.Server
             // 4. Experience, per recipient, skipping anybody already paid.
             MonsterRewardResult mine = Pay(held, recipient);
 
+            // 4b. And the pets that were out when it died, to the exact instances the
+            //     decision named.
+            PayPets(held);
+
             // 5. And done, when there is nothing left that could still be lost.
             //
             // A world with no outbox has nothing to lose it to: its rewards were never
@@ -702,7 +827,8 @@ namespace ChibiFantasy.Server
                     held.Pile == null ? 0f : held.Pile.Position.Y,
                     held.Pile == null ? 0f : held.Pile.Position.Z,
                     held.Party, held.Cursor, held.HasCursor,
-                    held.Grants, held.Entries));
+                    held.Grants, held.Entries, false, false, false, 0,
+                    held.PetGrants));
 
             if (!saved.IsOk) return false;
 
@@ -720,14 +846,16 @@ namespace ChibiFantasy.Server
         private void Progress(HeldDefeat held, bool? cursorCommitted = null,
             bool? lootPublished = null, bool complete = false,
             IReadOnlyList<CharacterId> paid = null,
-            IReadOnlyList<MonsterRewardLootEntry> claimed = null)
+            IReadOnlyList<MonsterRewardLootEntry> claimed = null,
+            IReadOnlyList<InstanceId> petsPaid = null)
         {
             if (_outbox == null || !held.Recorded) return;
 
             if (!TryWorldSession(out SessionId session)) return;
 
             MonsterRewardOutboxResult moved = _outbox.Progress(session, held.RewardId,
-                held.Revision, paid, claimed, cursorCommitted, lootPublished, complete);
+                held.Revision, paid, claimed, cursorCommitted, lootPublished, complete,
+                petsPaid);
 
             if (moved.IsOk)
             {
@@ -830,6 +958,142 @@ namespace ChibiFantasy.Server
                 : MonsterRewardResult.Granted(true, MonsterRewardRejection.None,
                     held.Monster, held.Killer, 0, 0, 0, 0, LootIdOf(held),
                     LootCountOf(held));
+        }
+
+        /// <summary>
+        /// Gives each frozen pet the experience this defeat decided it had earned.
+        /// </summary>
+        /// <remarks>
+        /// <b>The order is the safety argument, and it is the opposite of stamping first.</b>
+        /// Experience is applied to the pet, the owning character is saved -- which is what
+        /// makes the pet's progression durable -- and only then is the reward stamped. A
+        /// crash between the save and the stamp leaves durable experience with a reward that
+        /// still says it is owed, which is the safe direction: the marker on the pet says
+        /// which reward those numbers already include, so recovery stamps instead of paying
+        /// again. Stamping first would leave the opposite, and the opposite loses experience.
+        ///
+        /// <b>Applied is not the same as durable.</b> A save that fails leaves the pet
+        /// changed in memory with the marker set, and this world remembers that it has not
+        /// landed. It retries the save rather than the grant, so the experience is applied
+        /// once however many times the backend refuses.
+        ///
+        /// <b>A pet that is gone is a blocked reward, not a redirected one.</b> Paying the
+        /// owner instead, or the pet they have out now, or quietly completing, would each
+        /// hand somebody something the defeat never decided.
+        ///
+        /// <b>Nothing here needs a follower.</b> The pet is state on the character; whether
+        /// it is summoned, dismissed, or has no visual anywhere is irrelevant to being paid.
+        /// </remarks>
+        private void PayPets(HeldDefeat held)
+        {
+            if (held.PetGrants.Count == 0 || _characters == null || _pets == null) return;
+
+            var paid = new List<InstanceId>();
+
+            for (var i = 0; i < held.PetGrants.Count; i++)
+            {
+                MonsterRewardPetGrant grant = held.PetGrants[i];
+
+                if (grant.IsDelivered) continue;
+
+                if (!_characters.TryGetByCharacter(grant.Owner, out LivingCharacter owner))
+                {
+                    // Offline. The decision stays owed, which is what lets somebody log in
+                    // tomorrow and find their pet was paid.
+                    continue;
+                }
+
+                if (!owner.TryGetPet(grant.Pet, out PetInstance pet) || pet == null)
+                {
+                    UnityEngine.Debug.LogWarning("[reward] " + grant.Owner
+                        + " no longer owns pet " + grant.Pet + "; the reward for "
+                        + held.Monster
+                        + " stays owed rather than being given to another pet");
+
+                    continue;
+                }
+
+                if (pet.AppliedRewardId != held.RewardId)
+                {
+                    // Another reward is applied to this pet and has not been stamped yet.
+                    // That one reconciles first: overwriting the marker now would leave it
+                    // with no evidence that it was ever paid.
+                    if (!string.IsNullOrEmpty(pet.AppliedRewardId)
+                        && IsAppliedButUnstamped(pet.AppliedRewardId, grant.Pet))
+                    {
+                        continue;
+                    }
+
+                    // Phase 12 decides what the experience buys: multiple levels in one
+                    // grant, the remainder kept, and the authored cap respected. There is
+                    // no second progression formula here.
+                    PetResult granted = PetService.TryGrantExperience(pet, grant.Experience,
+                        new PetService.Context(_pets, _items, null, owner.Status,
+                            owner.Owner));
+
+                    if (!granted.IsAccepted)
+                    {
+                        UnityEngine.Debug.LogWarning("[reward] pet " + grant.Pet
+                            + " refused its experience: " + granted.Reason);
+
+                        continue;
+                    }
+
+                    // Set with the experience it describes, so the save below carries both
+                    // or neither.
+                    pet.SetAppliedReward(held.RewardId);
+
+                    held.PetApplied.Add(grant.Pet.Value);
+                }
+
+                if (held.PetApplied.Contains(grant.Pet.Value))
+                {
+                    owner.MarkDirty();
+
+                    if (!_characters.Save(owner).IsOk)
+                    {
+                        // Applied but not durable. Left owed, and the marker stops the next
+                        // attempt granting it a second time.
+                        continue;
+                    }
+
+                    held.PetApplied.Remove(grant.Pet.Value);
+                }
+
+                // Durable: either this world just saved it, or it was already stored and
+                // only the stamp was missing.
+                held.PetGrants[i] = new MonsterRewardPetGrant(grant.Owner, grant.Pet,
+                    grant.Experience, true);
+
+                paid.Add(grant.Pet);
+            }
+
+            if (paid.Count > 0) Progress(held, petsPaid: paid);
+        }
+
+        /// <summary>
+        /// Whether some other reward has been applied to this pet without being stamped.
+        /// </summary>
+        /// <remarks>What keeps one marker sufficient. While a reward is applied but not
+        /// stamped, no second reward may touch that pet -- so the pet only ever needs to
+        /// remember the last one.</remarks>
+        private bool IsAppliedButUnstamped(string rewardId, InstanceId pet)
+        {
+            foreach (KeyValuePair<string, HeldDefeat> entry in _held)
+            {
+                HeldDefeat other = entry.Value;
+
+                if (other == null || other.RewardId != rewardId) continue;
+
+                for (var i = 0; i < other.PetGrants.Count; i++)
+                {
+                    MonsterRewardPetGrant grant = other.PetGrants[i];
+
+                    if (grant.Pet == pet && !grant.IsDelivered) return true;
+                }
+            }
+
+            return false;
         }
 
         private static InstanceId LootIdOf(HeldDefeat held)
@@ -945,6 +1209,13 @@ namespace ChibiFantasy.Server
             for (var i = 0; i < reward.Experience.Count; i++)
             {
                 held.Grants.Add(reward.Experience[i]);
+            }
+
+            // Read back exactly as stored: which pet, and how much. Never recomputed from
+            // whoever has a pet out now.
+            for (var i = 0; i < reward.PetExperience.Count; i++)
+            {
+                held.PetGrants.Add(reward.PetExperience[i]);
             }
 
             var outstanding = new List<LootResult>();

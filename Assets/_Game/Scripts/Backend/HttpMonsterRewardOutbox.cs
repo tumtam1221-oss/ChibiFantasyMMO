@@ -81,6 +81,19 @@ namespace ChibiFantasy.Backend
                     .Append("\",\"experience\":").Append(grant.Experience).Append('}');
             }
 
+            body.Append("],\"pet_experience\":[");
+
+            for (var i = 0; i < reward.PetExperience.Count; i++)
+            {
+                if (i > 0) body.Append(',');
+
+                MonsterRewardPetGrant grant = reward.PetExperience[i];
+
+                body.Append("{\"character_id\":\"").Append(Escaped(grant.Owner.Value))
+                    .Append("\",\"pet_instance_id\":\"").Append(Escaped(grant.Pet.Value))
+                    .Append("\",\"experience\":").Append(grant.Experience).Append('}');
+            }
+
             body.Append("],\"loot\":[");
 
             for (var i = 0; i < reward.Entries.Count; i++)
@@ -141,7 +154,8 @@ namespace ChibiFantasy.Backend
         public MonsterRewardOutboxResult Progress(SessionId session, string rewardId,
             int revision, IReadOnlyList<CharacterId> experienceDelivered,
             IReadOnlyList<MonsterRewardLootEntry> lootClaimed,
-            bool? cursorCommitted, bool? lootPublished, bool complete)
+            bool? cursorCommitted, bool? lootPublished, bool complete,
+            IReadOnlyList<InstanceId> petExperienceDelivered = null)
         {
             if (!TryToken(session, out string token))
             {
@@ -181,6 +195,16 @@ namespace ChibiFantasy.Backend
                 if (i > 0) body.Append(',');
 
                 body.Append('"').Append(Escaped(experienceDelivered[i].Value)).Append('"');
+            }
+
+            body.Append("],\"pet_experience_delivered\":[");
+
+            for (var i = 0;
+                petExperienceDelivered != null && i < petExperienceDelivered.Count; i++)
+            {
+                if (i > 0) body.Append(',');
+
+                body.Append('"').Append(Escaped(petExperienceDelivered[i].Value)).Append('"');
             }
 
             body.Append("],\"loot_claimed\":[");
@@ -226,6 +250,17 @@ namespace ChibiFantasy.Backend
                     grant.Bool("delivered")));
             }
 
+            var pets = new List<MonsterRewardPetGrant>();
+
+            foreach (JsonReader grant in row.Array("pet_experience"))
+            {
+                pets.Add(new MonsterRewardPetGrant(
+                    new CharacterId(grant.String("character_id")),
+                    new InstanceId(grant.String("pet_instance_id")),
+                    grant.Int("experience"),
+                    grant.Bool("delivered")));
+            }
+
             var entries = new List<MonsterRewardLootEntry>();
 
             foreach (JsonReader entry in row.Array("loot"))
@@ -267,7 +302,7 @@ namespace ChibiFantasy.Backend
                 row.Int("party_cursor"), hasCursor,
                 experience, entries,
                 row.Bool("cursor_committed"), row.Bool("loot_published"),
-                row.Int("state") == 1, row.Int("revision"));
+                row.Int("state") == 1, row.Int("revision"), pets);
         }
 
         /// <summary>

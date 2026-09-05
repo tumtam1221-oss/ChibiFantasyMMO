@@ -339,7 +339,7 @@ namespace ChibiFantasy.Server
                 _content.BuildDropTables(), _rolls ?? new SystemRandomSource(),
                 _quantities as IRandomRangeSource ?? new SystemRandomSource(),
                 _lootLifetimeSeconds, _lootPersonalWindowSeconds,
-                Parties, _rewardRangeMetres, rewardOutbox);
+                Parties, _rewardRangeMetres, rewardOutbox, pets, _petExperienceShare);
 
             RewardOutbox = rewardOutbox;
 
@@ -477,6 +477,23 @@ namespace ChibiFantasy.Server
 
         [Tooltip("How long the killer alone may take their drops. Zero disables the window.")]
         [SerializeField] private float _lootPersonalWindowSeconds = 30f;
+
+        /// <summary>
+        /// The share of a character's own monster experience their active pet earns.
+        /// </summary>
+        /// <remarks>
+        /// <b>One number for the world, and no pet knows about it.</b> Every pet earns the
+        /// same fraction of what its owner was awarded, so a new pet needs no configuration
+        /// and no code -- and a party's split reaches its pets already split, rather than
+        /// each pet earning a share of the undivided total.
+        ///
+        /// Provisional: no earlier phase authored a pet experience rule, so this is the
+        /// smallest generic policy rather than a design somebody signed off. Twenty-five per
+        /// cent, floored to whole experience.
+        /// </remarks>
+        [Tooltip("Fraction of a character's monster experience their active pet earns.")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _petExperienceShare = 0.25f;
 
         /// <summary>What spawns and publishes character objects, or null when unready.</summary>
         public CharacterReplicationService Replication { get; private set; }

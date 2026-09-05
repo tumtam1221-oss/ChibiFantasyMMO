@@ -280,7 +280,8 @@ namespace ChibiFantasy.Tests.EditMode
             public MonsterRewardOutboxResult Progress(SessionId session, string rewardId,
                 int revision, IReadOnlyList<CharacterId> experienceDelivered,
                 IReadOnlyList<MonsterRewardLootEntry> lootClaimed,
-                bool? cursorCommitted, bool? lootPublished, bool complete)
+                bool? cursorCommitted, bool? lootPublished, bool complete,
+                IReadOnlyList<InstanceId> petExperienceDelivered = null)
             {
                 Progresses++;
 
@@ -313,6 +314,25 @@ namespace ChibiFantasy.Tests.EditMode
                             grant.Experience, paid));
                     }
 
+                    // Stamped by the exact pet instance, as the real table's key is: a
+                    // character with two pets has two rows and only one was earned.
+                    var pets = new List<MonsterRewardPetGrant>();
+
+                    foreach (MonsterRewardPetGrant grant in stored.PetExperience)
+                    {
+                        bool paid = grant.IsDelivered;
+
+                        for (var i = 0;
+                            !paid && petExperienceDelivered != null
+                                && i < petExperienceDelivered.Count; i++)
+                        {
+                            paid = petExperienceDelivered[i] == grant.Pet;
+                        }
+
+                        pets.Add(new MonsterRewardPetGrant(grant.Owner, grant.Pet,
+                            grant.Experience, paid));
+                    }
+
                     var entries = new List<MonsterRewardLootEntry>();
 
                     foreach (MonsterRewardLootEntry entry in stored.Entries)
@@ -341,7 +361,7 @@ namespace ChibiFantasy.Tests.EditMode
                         stored.HasCursor, grants, entries,
                         cursorCommitted ?? stored.IsCursorCommitted,
                         lootPublished ?? stored.IsLootPublished,
-                        complete || stored.IsComplete, revision + 1);
+                        complete || stored.IsComplete, revision + 1, pets);
 
                     return MonsterRewardOutboxResult.Recorded(rewardId, revision + 1, false);
                 }
@@ -365,7 +385,8 @@ namespace ChibiFantasy.Tests.EditMode
                     reward.Cursor, reward.HasCursor,
                     new List<MonsterRewardGrant>(reward.Experience),
                     new List<MonsterRewardLootEntry>(reward.Entries),
-                    reward.IsCursorCommitted, reward.IsLootPublished, false, revision);
+                    reward.IsCursorCommitted, reward.IsLootPublished, false, revision,
+                    new List<MonsterRewardPetGrant>(reward.PetExperience));
             }
         }
 

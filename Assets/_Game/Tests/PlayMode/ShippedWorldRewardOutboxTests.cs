@@ -108,7 +108,8 @@ namespace ChibiFantasy.Tests.PlayMode
             public MonsterRewardOutboxResult Progress(SessionId session, string rewardId,
                 int revision, IReadOnlyList<CharacterId> experienceDelivered,
                 IReadOnlyList<MonsterRewardLootEntry> lootClaimed,
-                bool? cursorCommitted, bool? lootPublished, bool complete)
+                bool? cursorCommitted, bool? lootPublished, bool complete,
+                IReadOnlyList<InstanceId> petExperienceDelivered = null)
             {
                 if (Broken || RefuseProgress)
                 {

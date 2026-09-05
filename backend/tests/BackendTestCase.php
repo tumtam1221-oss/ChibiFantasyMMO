@@ -54,6 +54,7 @@ abstract class BackendTestCase extends TestCase
         'player_shop',
         'monster_reward_loot',
         'monster_reward_experience',
+        'monster_reward_pet_experience',
         'monster_reward',
         'party_invite',
         'party_member',

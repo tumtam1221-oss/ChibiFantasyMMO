@@ -52,7 +52,8 @@ final class MonsterRewardRepository
      *                    item_instance_id:string}> $loot
      * @return array{ok:bool,reason?:string,reward_id?:string,existing?:bool,revision?:int}
      */
-    public function record(array $envelope, array $experience, array $loot): array
+    public function record(array $envelope, array $experience, array $loot,
+        array $petExperience = []): array
     {
         foreach (['reward_id', 'defeat_id', 'server_id', 'channel_id',
                   'monster_definition_id', 'map_definition_id',
@@ -104,6 +105,28 @@ final class MonsterRewardRepository
             if ((int) ($grant['experience'] ?? 0) < 0) {
                 return ['ok' => false, 'reason' => 'invalid_experience_grant'];
             }
+        }
+
+        $pets = [];
+
+        foreach ($petExperience as $grant) {
+            $petId = trim((string) ($grant['pet_instance_id'] ?? ''));
+
+            if ($petId === '' || trim((string) ($grant['character_id'] ?? '')) === '') {
+                return ['ok' => false, 'reason' => 'invalid_pet_experience_grant'];
+            }
+
+            if ((int) ($grant['experience'] ?? 0) < 0) {
+                return ['ok' => false, 'reason' => 'invalid_pet_experience_grant'];
+            }
+
+            // Two rows for one pet in one defeat is a decision that contradicts itself:
+            // the primary key would refuse it anyway, and refusing here says why.
+            if (isset($pets[$petId])) {
+                return ['ok' => false, 'reason' => 'duplicate_pet_experience_grant'];
+            }
+
+            $pets[$petId] = true;
         }
 
         // A pile the world says it produced but listed nothing for is a decision that
@@ -167,6 +190,21 @@ final class MonsterRewardRepository
                 $grant->execute([
                     ':reward' => (string) $envelope['reward_id'],
                     ':cid'    => (string) $row['character_id'],
+                    ':xp'     => (int) $row['experience'],
+                ]);
+            }
+
+            $pet = $this->pdo->prepare(
+                'INSERT INTO monster_reward_pet_experience
+                    (reward_id, character_id, pet_instance_id, experience)
+                 VALUES (:reward, :cid, :pid, :xp)'
+            );
+
+            foreach ($petExperience as $row) {
+                $pet->execute([
+                    ':reward' => (string) $envelope['reward_id'],
+                    ':cid'    => (string) $row['character_id'],
+                    ':pid'    => (string) $row['pet_instance_id'],
                     ':xp'     => (int) $row['experience'],
                 ]);
             }
@@ -284,7 +322,7 @@ final class MonsterRewardRepository
     public function progress(string $rewardId, int $expectedRevision,
         array $experienceDelivered = [], array $lootClaimed = [],
         ?bool $cursorCommitted = null, ?bool $lootPublished = null,
-        bool $complete = false): array
+        bool $complete = false, array $petExperienceDelivered = []): array
     {
         if ($rewardId === '') {
             return ['ok' => false, 'reason' => 'invalid_reward'];
@@ -324,6 +362,22 @@ final class MonsterRewardRepository
 
             foreach ($experienceDelivered as $characterId) {
                 $paid->execute([':reward' => $rewardId, ':cid' => (string) $characterId]);
+            }
+
+            // Same rule for a pet: stamped, never cleared, and keyed by the exact pet
+            // instance the defeat named rather than by its owner -- a character with two
+            // pets has two rows and only one of them was earned.
+            $petPaid = $this->pdo->prepare(
+                'UPDATE monster_reward_pet_experience SET delivered_at = NOW(3)
+                 WHERE reward_id = :reward AND pet_instance_id = :pid
+                   AND delivered_at IS NULL'
+            );
+
+            foreach ($petExperienceDelivered as $petInstanceId) {
+                $petPaid->execute([
+                    ':reward' => $rewardId,
+                    ':pid'    => (string) $petInstanceId,
+                ]);
             }
 
             $taken = $this->pdo->prepare(
@@ -427,6 +481,7 @@ final class MonsterRewardRepository
             'state'                 => (int) $row['state'],
             'revision'              => (int) $row['revision'],
             'experience'            => $this->experienceOf($rewardId),
+            'pet_experience'        => $this->petExperienceOf($rewardId),
             'loot'                  => $this->lootOf($rewardId),
         ];
     }
@@ -449,6 +504,36 @@ final class MonsterRewardRepository
                 'character_id' => (string) $row['character_id'],
                 'experience'   => (int) $row['experience'],
                 'delivered'    => $row['delivered_at'] !== null,
+            ];
+        }
+
+        return $grants;
+    }
+
+    /**
+     * What this defeat owes each pet, and whether that pet has had it.
+     *
+     * @return list<array{character_id:string,pet_instance_id:string,experience:int,
+     *                    delivered:bool}>
+     */
+    private function petExperienceOf(string $rewardId): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT character_id, pet_instance_id, experience, delivered_at
+             FROM monster_reward_pet_experience WHERE reward_id = :id
+             ORDER BY pet_instance_id ASC'
+        );
+
+        $statement->execute([':id' => $rewardId]);
+
+        $grants = [];
+
+        foreach ($statement as $row) {
+            $grants[] = [
+                'character_id'    => (string) $row['character_id'],
+                'pet_instance_id' => (string) $row['pet_instance_id'],
+                'experience'      => (int) $row['experience'],
+                'delivered'       => $row['delivered_at'] !== null,
             ];
         }
 
