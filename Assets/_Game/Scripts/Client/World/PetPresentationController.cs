@@ -75,6 +75,21 @@ namespace ChibiFantasy.Client.World
         /// <summary>The authored height the current pet floats at.</summary>
         public float VerticalOffset { get; private set; }
 
+        /// <summary>
+        /// Whether the pet that is out is an aura rather than a follower.
+        /// </summary>
+        /// <remarks>
+        /// <b>Authored, never inferred.</b> Read off the definition the pet currently is --
+        /// which, after an evolution, is the evolved form. Nothing here decides that a pet
+        /// is far enough along to be an aura; the server says which form is out and the
+        /// content says what that form looks like.
+        ///
+        /// <b>Exactly one mode.</b> A follower and an aura are never both shown: this is the
+        /// switch <see cref="Apply"/> makes, and a viewer that drew both would be drawing a
+        /// creature the world does not contain.
+        /// </remarks>
+        public bool IsAuraForm { get; private set; }
+
         /// <summary>Points the presenter at the state it draws.</summary>
         public void Bind(PetCompanionState companion, IDefinitionRegistry<PetDefinition> pets,
             Transform ownerRoot = null)
@@ -126,6 +141,7 @@ namespace ChibiFantasy.Client.World
         {
             Behavior = PetFollowBehavior.Follow;
             VerticalOffset = 0f;
+            IsAuraForm = false;
 
             if (_pets == null) return;
 
@@ -145,6 +161,13 @@ namespace ChibiFantasy.Client.World
 
             Behavior = definition.FollowBehavior;
             VerticalOffset = definition.VerticalOffset;
+
+            // The form decides the mode. An owner's own companion state says the same
+            // thing, and is preferred when this client has it, because it is the state the
+            // server actually mutated rather than a lookup of what it named.
+            IsAuraForm = _companion != null && _companion.IsSummoned
+                ? _companion.IsAuraForm
+                : definition.IsAuraForm;
         }
 
         /// <summary>
@@ -155,7 +178,7 @@ namespace ChibiFantasy.Client.World
         public void Apply()
         {
             bool out_ = IsOut;
-            bool aura = _companion != null && _companion.IsSummoned && _companion.IsAuraForm;
+            bool aura = out_ && IsAuraForm;
 
             if (follower != null) follower.gameObject.SetActive(out_ && !aura);
             if (auraVisual != null) auraVisual.SetActive(aura);
@@ -182,7 +205,9 @@ namespace ChibiFantasy.Client.World
         {
             if (!IsOut) return;
             if (follower == null || owner == null) return;
-            if (_companion != null && _companion.IsSummoned && _companion.IsAuraForm) return;
+
+            // An aura is on the owner, not beside them: there is no follower to move.
+            if (IsAuraForm) return;
 
             Move(Time.deltaTime);
         }

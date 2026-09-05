@@ -450,6 +450,20 @@ namespace ChibiFantasy.Server
                     return false;
                 }
 
+                // A pet that has evolved must be a form something evolves into. A stage
+                // above zero on a form no authored chain leads to is a row that disagrees
+                // with content -- refused rather than clamped to zero, because quietly
+                // demoting somebody's evolved pet is worse than telling an operator.
+                if (stored.EvolutionStage > 0 && pets != null
+                    && !IsEvolvedForm(stored.Pet, pets))
+                {
+                    fault = "pet " + stored.Instance + " claims evolution stage "
+                        + stored.EvolutionStage + " but '" + stored.Pet
+                        + "' is not a form anything evolves into";
+
+                    return false;
+                }
+
                 var pet = new PetInstance(stored.Instance, stored.Pet, owner, stored.Level,
                     stored.Experience, stored.EvolutionStage);
 
@@ -462,6 +476,34 @@ namespace ChibiFantasy.Server
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Whether any authored pet evolves into this form.
+        /// </summary>
+        /// <remarks>The reverse of the authored chain, asked rather than stored: content is
+        /// small, this runs once per pet at load, and a second index would be a second
+        /// source of truth about what evolves into what.</remarks>
+        private static bool IsEvolvedForm(DefinitionId form,
+            IDefinitionRegistry<PetDefinition> pets)
+        {
+            IReadOnlyList<PetDefinition> all = pets.All;
+
+            for (var i = 0; i < all.Count; i++)
+            {
+                PetDefinition candidate = all[i];
+
+                if (candidate == null) continue;
+
+                PetEvolutionStage[] stages = candidate.EvolutionStages;
+
+                for (var s = 0; s < stages.Length; s++)
+                {
+                    if (stages[s].EvolvedForm == form) return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>The pets a character owns, as rows.</summary>

@@ -596,6 +596,25 @@ namespace ChibiFantasy.Network
             _pets.Activate(connectionId, new InstanceId(petInstanceId ?? string.Empty));
         }
 
+        /// <summary>
+        /// Asks the server to evolve one of this character's own pets.
+        /// </summary>
+        /// <remarks>The pet is named by its instance id and nothing else. What it may
+        /// become, what that costs and whether it has earned it are authored content the
+        /// server reads; a client that could name a form would be choosing its own
+        /// reward.</remarks>
+        [ServerRpc]
+        public void RequestEvolvePet(string petInstanceId)
+        {
+            if (_pets == null) return;
+
+            int connectionId = Owner == null ? -1 : Owner.ClientId;
+
+            if (connectionId < 0) return;
+
+            _pets.Evolve(connectionId, new InstanceId(petInstanceId ?? string.Empty));
+        }
+
         /// <summary>Asks the server to put away whatever is out.</summary>
         [ServerRpc]
         public void RequestDeactivatePet()

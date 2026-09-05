@@ -24,7 +24,23 @@ MonoBehaviour:
     _address: 
   _category: 0
   _followBehavior: 0
-  _evolutionStages: []
+  _evolutionStages:
+  - _nameKey:
+      _key: pet.lumi_slime.stage.aura
+    _requiredLevel: 3
+    _requiredExperience: 250
+    _model:
+      _address:
+    _auraEffect:
+      _address:
+    _grantedBuff:
+      _value:
+    _passiveAbilities: []
+    _evolvedForm:
+      _value: pet.lumi_slime_evolved
+    _requiredItem:
+      _value:
+    _requiredItemQuantity: 0
   _experienceThresholds: 0000000064000000fa000000f401000084030000
   _maxLevel: 5
   _baseBuff:

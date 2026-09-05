@@ -203,6 +203,19 @@ namespace ChibiFantasy.Network
 
         /// <param name="connectionId">Whose object it arrived through. Not client-supplied.</param>
         void Deactivate(int connectionId);
+
+        /// <summary>
+        /// Asks the server to evolve one of this character's own pets.
+        /// </summary>
+        /// <remarks>
+        /// <b>Which pet, and nothing else.</b> Not which form, not which stage, not which
+        /// buff and not whether the requirement is met -- every one of those is authored
+        /// content the server reads, and a request that could carry one would be a request
+        /// to choose an outcome.
+        /// </remarks>
+        /// <param name="connectionId">Whose object it arrived through. Not client-supplied.</param>
+        /// <param name="pet">Which owned pet to evolve.</param>
+        void Evolve(int connectionId, InstanceId pet);
     }
 
     public interface ICharacterInventoryRequestSink

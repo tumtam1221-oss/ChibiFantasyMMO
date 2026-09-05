@@ -176,6 +176,85 @@ namespace ChibiFantasy.Server
         }
 
         /// <summary>
+        /// Evolves one of this character's own pets into its next authored form.
+        /// </summary>
+        /// <remarks>
+        /// <b>Phase 12 decides all of it.</b> Whether the pet has earned the stage, what it
+        /// becomes, what that costs and which buff the new form grants are
+        /// <see cref="PetService.TryEvolve"/>'s, read from the authored chain. Nothing here
+        /// names a form, a level or a buff, and no pet id appears in this file.
+        ///
+        /// <b>The pet is the same pet.</b> Phase 12 repoints the instance at its new form
+        /// rather than minting a second one, so the identity, the owner and the experience
+        /// all survive -- which is what lets a reward decided before the evolution still be
+        /// paid to the right creature afterwards.
+        ///
+        /// <b>An evolved pet that was out comes back out as what it now is.</b> Summoning
+        /// again through Phase 12 is what moves the companion to the new form -- an aura
+        /// rather than a follower, when the authored form says so. The buff is already the
+        /// new form's, and the status runtime keeps one of it.
+        ///
+        /// <b>Durable before it is announced.</b> The character is saved after the
+        /// mutation, and a save that fails leaves the pet dirty for the existing retry
+        /// lifecycle to write, reported as not persisted rather than as success.
+        /// </remarks>
+        public CharacterPetResult Evolve(int connectionId, InstanceId pet)
+        {
+            if (_characters == null || _pets == null)
+            {
+                return Remember(CharacterPetResult.Refused(
+                    PetRequestRejection.MissingContext));
+            }
+
+            if (!_characters.TryGet(connectionId, out LivingCharacter living))
+            {
+                return Remember(CharacterPetResult.Refused(
+                    PetRequestRejection.NoCharacter));
+            }
+
+            // Only among the pets this character owns. Somebody else's pet is not here.
+            if (!living.TryGetPet(pet, out PetInstance owned))
+            {
+                return Remember(CharacterPetResult.Refused(PetRequestRejection.Refused));
+            }
+
+            bool wasOut = living.Companion != null && living.Companion.IsSummoned
+                && living.Companion.Summoned == owned;
+
+            PetService.Context context = ContextFor(living);
+
+            // The bag is where an authored material cost is taken from. Phase 12 spends it
+            // inside its own mutation boundary, after every check has passed.
+            CharacterPetResult result = CharacterPetResult.From(
+                PetService.TryEvolve(owned, living.Inventory, context));
+
+            if (!result.IsAccepted) return Remember(result);
+
+            if (wasOut)
+            {
+                // What is out has changed shape. Asking Phase 12 to summon it again is what
+                // moves the companion to the new form; the buff it already applied stays
+                // one, because the status runtime keeps one entry per effect.
+                PetService.TrySummon(living.Companion, owned, context);
+            }
+            else if (living.Status != null)
+            {
+                // Evolving a pet that is not out must not buff anybody: what a character
+                // has out is the only thing that grants a pet buff, and Phase 12 applies
+                // the new form's buff as part of the transition whether or not it is
+                // summoned. Taking it back by grantor leaves everything else alone, and
+                // keeps "buffed if and only if that pet is out" true.
+                living.Status.RemoveFrom(owned.DefinitionId);
+            }
+
+            Settle(living);
+
+            _characters.Save(living);
+
+            return Remember(result);
+        }
+
+        /// <summary>
         /// Gives a character a pet, through Phase 12's own acquisition.
         /// </summary>
         /// <remarks>
@@ -280,6 +359,12 @@ namespace ChibiFantasy.Server
         void ChibiFantasy.Network.ICharacterPetRequestSink.Deactivate(int connectionId)
         {
             Deactivate(connectionId);
+        }
+
+        void ChibiFantasy.Network.ICharacterPetRequestSink.Evolve(int connectionId,
+            InstanceId pet)
+        {
+            Evolve(connectionId, pet);
         }
 
         /// <summary>The registries and owner a pet decision is made against.</summary>

@@ -147,15 +147,17 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void Owned_pets_are_restored_from_storage()
         {
+            // An evolved pet, because a stage above zero belongs to a form something
+            // actually evolves into -- the fixture chain is PetC -> PetCEvolved.
             LivingCharacter living = AddPlayer(pets: new[]
             {
-                Row("pet-1", PetA, 3, 260, 1), Row("pet-2", PetB)
+                Row("pet-1", PetCEvolved, 3, 260, 1), Row("pet-2", PetB)
             });
 
             Assert.That(living.Pets.Count, Is.EqualTo(2));
             Assert.That(living.TryGetPet(new InstanceId("pet-1"), out PetInstance first),
                 Is.True);
-            Assert.That(first.DefinitionId, Is.EqualTo(new DefinitionId(PetA)));
+            Assert.That(first.DefinitionId, Is.EqualTo(new DefinitionId(PetCEvolved)));
             Assert.That(first.Level, Is.EqualTo(3));
             Assert.That(first.Experience, Is.EqualTo(260));
             Assert.That(first.EvolutionStage, Is.EqualTo(1));

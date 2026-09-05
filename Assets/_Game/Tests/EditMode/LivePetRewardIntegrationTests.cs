@@ -38,6 +38,12 @@ namespace ChibiFantasy.Tests.EditMode
         private const string BaseAddress = "http://127.0.0.1:8099";
 
         private const string PetA = "pet.itest-reward-pet";
+        private const string PetAEvolved = "pet.itest-reward-pet.aura";
+        private const string AuraBuff = "status.itest-reward-aura";
+
+        /// <summary>What the fixture chain asks of a pet before it may evolve.</summary>
+        private const int EvolveLevel = 3;
+        private const int EvolveExperience = 40;
         private const string Monster = "monster.itest-pet-reward";
         private const string MaxHp = "stat.maxhp";
         private const int MonsterExperience = 200;
@@ -393,6 +399,105 @@ namespace ChibiFantasy.Tests.EditMode
                 "R1 never reconciled");
         }
 
+        [Test]
+        public void APetEarnsItsEvolutionFromRealRewardsAndTheEvolvedFormSurvivesInMySql()
+        {
+            // 1. A character with one base pet, out.
+            WorldCharacterRegistry world = NewRegistry();
+            LivingCharacter hero = Enter(world);
+
+            var pets = new CharacterPetAuthority(world, PetRegistry(), ItemRegistry(),
+                EffectRegistry());
+
+            Assert.That(pets.Grant(1, new DefinitionId(PetA)).IsAccepted, Is.True);
+
+            InstanceId instance = hero.Pets[0].InstanceId;
+
+            Assert.That(pets.Activate(1, instance).IsAccepted, Is.True);
+            Assert.That(hero.Companion.IsAuraForm, Is.False, "the base form is not an aura");
+            Assert.That(world.Save(hero, force: true).IsOk, Is.True);
+
+            // 2. Real defeats, real rewards, real pet experience -- nothing is injected.
+            MonsterRewardAuthority rewards = NewAuthority(world,
+                out MonsterWorldRuntime runtime);
+
+            for (var i = 0; i < 12 && !IsEligible(hero, instance); i++)
+            {
+                LivingMonster corpse = Corpse(runtime);
+
+                rewards.Grant(corpse.Instance, hero.Combatant.CombatantId);
+            }
+
+            Assert.That(IsEligible(hero, instance), Is.True,
+                "the pet never reached its authored requirement through real rewards");
+
+            int experience = Pet(hero, instance).Experience;
+            int level = Pet(hero, instance).Level;
+
+            // 3. The evolution itself, through the authoritative request, saved to MySQL.
+            Assert.That(pets.Evolve(1, instance).IsAccepted, Is.True);
+
+            Assert.That(Pet(hero, instance).DefinitionId,
+                Is.EqualTo(new DefinitionId(PetAEvolved)));
+            Assert.That(hero.Companion.IsAuraForm, Is.True,
+                "the evolved pet is still a follower");
+            Assert.That(hero.Status.Has(new DefinitionId(AuraBuff)), Is.True,
+                "the evolved form's buff was not applied");
+
+            // 4. What the database holds, read by a world that shares nothing with this one.
+            WorldCharacterRegistry restarted = NewRegistry();
+            LivingCharacter returned = Enter(restarted, connectionId: 2);
+
+            PetInstance restored = Pet(returned, instance);
+
+            Assert.That(returned.Pets.Count, Is.EqualTo(1),
+                "evolving produced a second pet row in MySQL");
+            Assert.That(restored.InstanceId, Is.EqualTo(instance),
+                "the evolved pet is not the pet that evolved");
+            Assert.That(restored.DefinitionId, Is.EqualTo(new DefinitionId(PetAEvolved)),
+                "the evolved form did not survive the round trip");
+            Assert.That(restored.EvolutionStage, Is.EqualTo(1));
+            Assert.That(restored.Experience, Is.EqualTo(experience),
+                "the pet lost what it had earned");
+            Assert.That(restored.Level, Is.EqualTo(level));
+
+            // 5. And it comes back out as an aura, buffed once.
+            Assert.That(returned.Companion.IsSummoned, Is.True,
+                "the active selection did not survive");
+            Assert.That(returned.Companion.IsAuraForm, Is.True,
+                "the evolved pet came back as a follower");
+            Assert.That(Count(returned, AuraBuff), Is.EqualTo(1),
+                "the aura's buff was restored more than once, or not at all");
+        }
+
+        /// <summary>Whether Phase 12 says this pet has earned its next form.</summary>
+        private bool IsEligible(LivingCharacter owner, InstanceId instance)
+        {
+            PetInstance pet = Pet(owner, instance);
+
+            DefinitionRegistry<PetDefinition> pets = PetRegistry();
+
+            pets.TryGet(pet.DefinitionId, out PetDefinition definition);
+
+            return PetService.TryGetNextStage(definition, out PetEvolutionStage stage)
+                && pet.Level >= stage.RequiredLevel
+                && pet.Experience >= stage.RequiredExperience;
+        }
+
+        private static int Count(LivingCharacter character, string effect)
+        {
+            var counted = 0;
+
+            IReadOnlyList<ActiveStatusEffect> active = character.Status.Active;
+
+            for (var i = 0; i < active.Count; i++)
+            {
+                if (active[i].Effect == new DefinitionId(effect)) counted++;
+            }
+
+            return counted;
+        }
+
         // ---- the world this test builds around the real backend --------------------------------------
 
         private string PetCharacter => _fixture.RewardCharacterId;
@@ -431,7 +536,7 @@ namespace ChibiFantasy.Tests.EditMode
             spawns.Register(Spawn());
 
             return new WorldCharacterRegistry(_store, spawns, ItemRegistry(), 12, null,
-                PetRegistry());
+                PetRegistry(), EffectRegistry());
         }
 
         private LivingCharacter Enter(WorldCharacterRegistry registry, int connectionId = 1)
@@ -609,12 +714,36 @@ namespace ChibiFantasy.Tests.EditMode
         {
             var pets = new DefinitionRegistry<PetDefinition>();
 
+            // The base form, and the aura it evolves into. A chain, so the live slice
+            // exercises the authored model rather than a single definition.
+            PetDefinition baseForm = Pet(PetA, aura: false, buff: null);
+
+            typeof(PetDefinition)
+                .GetField("_evolutionStages", System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.NonPublic)
+                .SetValue(baseForm, new[]
+                {
+                    new PetEvolutionStage(new DefinitionId(PetAEvolved), EvolveLevel,
+                        EvolveExperience),
+                });
+
+            pets.Register(baseForm);
+            pets.Register(Pet(PetAEvolved, aura: true, buff: AuraBuff));
+
+            return pets;
+        }
+
+        /// <summary>Ten experience a level, to twenty. Fixture content, like every number here.</summary>
+        private PetDefinition Pet(string id, bool aura, string buff)
+        {
             var definition = ScriptableObject.CreateInstance<PetDefinition>();
 
             JsonUtility.FromJsonOverwrite(
-                "{\"_id\":{\"_value\":\"" + PetA + "\"},\"_nameKey\":{\"_key\":\"" + PetA
+                "{\"_id\":{\"_value\":\"" + id + "\"},\"_nameKey\":{\"_key\":\"" + id
                 + ".name\"},\"_followBehavior\":0,\"_verticalOffset\":0,\"_maxLevel\":20,"
-                + "\"_auraForm\":false,\"_disabled\":false}", definition);
+                + "\"_baseBuff\":{\"_value\":\"" + (buff ?? string.Empty) + "\"},"
+                + "\"_auraForm\":" + (aura ? "true" : "false")
+                + ",\"_disabled\":false}", definition);
 
             var thresholds = new int[19];
 
@@ -627,9 +756,28 @@ namespace ChibiFantasy.Tests.EditMode
 
             _created.Add(definition);
 
-            pets.Register(definition);
+            return definition;
+        }
 
-            return pets;
+        /// <summary>The aura's buff: one stat modifier, authored like any other effect.</summary>
+        private DefinitionRegistry<StatusEffectDefinition> EffectRegistry()
+        {
+            var effects = new DefinitionRegistry<StatusEffectDefinition>();
+
+            var definition = ScriptableObject.CreateInstance<StatusEffectDefinition>();
+
+            JsonUtility.FromJsonOverwrite(
+                "{\"_id\":{\"_value\":\"" + AuraBuff + "\"},\"_nameKey\":{\"_key\":\""
+                + AuraBuff + ".name\"},\"_category\":1,\"_controlEffect\":0,"
+                + "\"_durationSeconds\":0,\"_stackBehavior\":2,\"_maxStacks\":1,"
+                + "\"_statModifiers\":[{\"_stat\":{\"_value\":\"stat.max_hp\"},"
+                + "\"_kind\":1,\"_value\":0.03}]}", definition);
+
+            _created.Add(definition);
+
+            effects.Register(definition);
+
+            return effects;
         }
 
         private DefinitionRegistry<ItemDefinition> ItemRegistry()

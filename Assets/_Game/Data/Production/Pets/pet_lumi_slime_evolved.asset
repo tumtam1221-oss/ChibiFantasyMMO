@@ -1,0 +1,36 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 450d889eda932034494f59a92c977ef8, type: 3}
+  m_Name: pet_lumi_slime_evolved
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.PetDefinition
+  _id:
+    _value: pet.lumi_slime_evolved
+  _nameKey:
+    _key: pet.lumi_slime_evolved.name
+  _descriptionKey:
+    _key: pet.lumi_slime_evolved.desc
+  _icon:
+    _address:
+  _model:
+    _address:
+  _category: 0
+  _followBehavior: 0
+  _evolutionStages: []
+  _experienceThresholds: 0000000064000000fa000000f401000084030000203a0000
+  _maxLevel: 7
+  _baseBuff:
+    _value: status.lumi_aura
+  _soundEffect:
+    _address:
+  _verticalOffset: 0
+  _auraForm: 1
+  _disabled: 0
