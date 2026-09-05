@@ -644,8 +644,23 @@ namespace ChibiFantasy.Tests.PlayMode
             Assert.That(target.CurrentHealth, Is.Zero, "the boss would not die");
         }
 
-        /// <summary>The one pile currently on the ground.</summary>
+        /// <summary>
+        /// The pile a defeat just left, and only that one.
+        /// </summary>
+        /// <remarks>A boss drops a card as well as a fruit, so a pile no longer empties on
+        /// one pickup and an earlier one can still be lying about. The newest is the one a
+        /// test that just killed something means.</remarks>
         private LootObjectState Pile()
+        {
+            IReadOnlyList<LootObjectState> piles = _bootstrap.Loot.All();
+
+            Assert.That(piles.Count, Is.GreaterThan(0), "no pile on the ground");
+
+            return piles[piles.Count - 1];
+        }
+
+        /// <summary>The one pile currently on the ground, when there must be exactly one.</summary>
+        private LootObjectState OnlyPile()
         {
             IReadOnlyList<LootObjectState> piles = _bootstrap.Loot.All();
 

@@ -1,0 +1,46 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 13959da28f477c34ea8d0b3294ba15c3, type: 3}
+  m_Name: item_card_ancient_slime_king
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.ItemDefinition
+  _id:
+    _value: card.ancient_slime_king
+  _nameKey:
+    _key: card.ancient_slime_king.name
+  _descriptionKey:
+    _key: card.ancient_slime_king.desc
+  _icon:
+    _address: 
+  _category: 5
+  _rarity:
+    _value: rarity.legendary
+  _stackable: 0
+  _maxStackSize: 1
+  _buyPrice: 0
+  _sellPrice: 0
+  _tradable: 1
+  _droppable: 1
+  _usable: 0
+  _useType: 0
+  _useTarget: 0
+  _useEffects: []
+  _stoneConfig:
+    _statModifiers: []
+    _successChance: 0
+    _failureBehavior: 0
+    _allowedCategory: 0
+    _allowedSubtypes: 
+    _allowedSlots: 
+    _allowedRarities: []
+    _minimumItemLevel: 0
+    _maxPerEquipment: 0
+    _fusable: 0

@@ -248,6 +248,7 @@ namespace ChibiFantasy.Server
             Parties = null;
             PartyStore = null;
             RewardOutbox = null;
+            Cards = null;
 
             // A session-only process: it admits, places and releases, and simulates nothing.
             // Legitimate, and not a fault.
@@ -351,8 +352,15 @@ namespace ChibiFantasy.Server
 
             replication.UseStatus(status);
 
+            // Cards join the same resolver every other equipment modifier goes through,
+            // and the same inventory authority every other item action goes through.
+            // Without the registry a socketed piece would silently grant nothing.
+            DefinitionRegistry<CardDefinition> cards = _content.BuildCards();
+
+            Cards = cards;
+
             replication.UseInventory(new CharacterInventoryAuthority(players, _ => true,
-                items, replication, fruits, effects, skills, maps, _spawnPoints));
+                items, replication, fruits, effects, skills, maps, _spawnPoints, cards));
 
             // How a player asks for what a boss left behind. The registry above already
             // decides every rule; this is the identity a client can name and the distance
@@ -363,7 +371,7 @@ namespace ChibiFantasy.Server
             replication.UseLoot(LootAuthority);
 
             var stat = new CharacterStatAuthority(players, _content.Formulas, stats, effects,
-                new EquipmentModifierResolver.Context(items),
+                new EquipmentModifierResolver.Context(items, cards: cards),
                 _content.MaxHealthStat, _content.MaxManaStat, fruits, skills);
 
             Simulation = new WorldSimulation(players, replication, status, stat, movement,
@@ -414,6 +422,9 @@ namespace ChibiFantasy.Server
 
         /// <summary>Where this world writes a defeat down before it pays it.</summary>
         public IMonsterRewardOutbox RewardOutbox { get; private set; }
+
+        /// <summary>The cards this world can resolve when a socketed piece is worn.</summary>
+        public DefinitionRegistry<CardDefinition> Cards { get; private set; }
 
         [Tooltip("How near a party member must be to share a kill, in metres. "
             + "Zero shares with the whole map.")]

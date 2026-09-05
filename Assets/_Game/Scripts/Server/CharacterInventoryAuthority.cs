@@ -40,13 +40,15 @@ namespace ChibiFantasy.Server
     public readonly struct CharacterInventoryResult
     {
         private CharacterInventoryResult(bool accepted, InventoryRequestRejection rejection,
-            ItemContainerResult container, EquipResult equip, ItemUseResult use = default)
+            ItemContainerResult container, EquipResult equip, ItemUseResult use = default,
+            CardSocketResult card = default)
         {
             IsAccepted = accepted;
             Rejection = rejection;
             Container = container;
             Equip = equip;
             Use = use;
+            Card = card;
         }
 
         public bool IsAccepted { get; }
@@ -61,6 +63,9 @@ namespace ChibiFantasy.Server
 
         /// <summary>What using an item did, when the action was a use.</summary>
         public ItemUseResult Use { get; }
+
+        /// <summary>What a socket request did, when that is what was asked.</summary>
+        public CardSocketResult Card { get; }
 
         public static CharacterInventoryResult Refused(InventoryRequestRejection rejection)
         {
@@ -96,6 +101,18 @@ namespace ChibiFantasy.Server
                     ? InventoryRequestRejection.None
                     : InventoryRequestRejection.Refused,
                 default, default, result);
+        }
+
+        /// <summary>The outcome of a card going into, or coming out of, a piece.</summary>
+        /// <remarks>Shaped exactly like the others: the service already decided, and this
+        /// only reports it, so no rule about cards is restated here.</remarks>
+        public static CharacterInventoryResult FromCard(in CardSocketResult result)
+        {
+            return new CharacterInventoryResult(result.IsAccepted,
+                result.IsAccepted
+                    ? InventoryRequestRejection.None
+                    : InventoryRequestRejection.Refused,
+                default, default, default, result);
         }
 
         public override string ToString()
@@ -135,6 +152,7 @@ namespace ChibiFantasy.Server
         private readonly WorldCharacterRegistry _characters;
         private readonly CombatCommandAuthority.WorldConnectionRegistryAdapter _connections;
         private readonly IDefinitionRegistry<ItemDefinition> _items;
+        private readonly IDefinitionRegistry<CardDefinition> _cards;
         private readonly CharacterReplicationService _replication;
 
         // Content the authored effects of a used item may reach: a fruit to activate, an
@@ -171,11 +189,13 @@ namespace ChibiFantasy.Server
             IDefinitionRegistry<StatusEffectDefinition> statusEffects = null,
             IDefinitionRegistry<SkillDefinition> skills = null,
             IDefinitionRegistry<MapDefinition> maps = null,
-            IDefinitionRegistry<SpawnPointDefinition> spawnPoints = null)
+            IDefinitionRegistry<SpawnPointDefinition> spawnPoints = null,
+            IDefinitionRegistry<CardDefinition> cards = null)
         {
             _characters = characters;
             _connections = canAct;
             _items = items;
+            _cards = cards;
             _replication = replication;
             _devilFruits = devilFruits;
             _statusEffects = statusEffects;
@@ -396,6 +416,12 @@ namespace ChibiFantasy.Server
                             character.Inventory, character.Equipment,
                             (Data.EquipmentSlot)from, EquipContext(character)));
 
+                case InventoryAction.SocketCard:
+                    return SocketCard(character, from, to);
+
+                case InventoryAction.UnsocketCard:
+                    return UnsocketCard(character, from, to);
+
                 case InventoryAction.Use:
                     return Use(character, from);
 
@@ -403,6 +429,99 @@ namespace ChibiFantasy.Server
                     return CharacterInventoryResult.Refused(
                         InventoryRequestRejection.UnsupportedAction);
             }
+        }
+
+        /// <summary>
+        /// Puts one of this character's cards into one of this character's pieces.
+        /// </summary>
+        /// <remarks>
+        /// <b>Two slots, and everything else is read.</b> The card, what it grants, which
+        /// pieces it fits, how many sockets there are and who owns both objects all come
+        /// from state the server already holds. A request that could name any of those
+        /// would be a request that could invent a modifier.
+        ///
+        /// <b>Phase 12 decides; this asks.</b> Every rule -- is it a card, is it enabled,
+        /// does it fit this piece, is the socket free, is one already in there -- lives in
+        /// <see cref="CardSocketService"/>, and the consumption of the card and the writing
+        /// of the socket happen together inside it, after everything that can refuse has.
+        ///
+        /// <b>The piece is named by its inventory slot, so it is one exact instance.</b> Two
+        /// swords of the same definition are two objects, and only the one pointed at gets
+        /// the card.
+        /// </remarks>
+        private CharacterInventoryResult SocketCard(LivingCharacter character, int cardSlot,
+            int equipmentSlot)
+        {
+            if (_cards == null || character.Inventory == null)
+            {
+                return CharacterInventoryResult.Refused(
+                    InventoryRequestRejection.MissingContext);
+            }
+
+            if (!TryPiece(character, equipmentSlot, out EquipmentInstance piece))
+            {
+                return CharacterInventoryResult.Refused(
+                    InventoryRequestRejection.Refused);
+            }
+
+            CardSocketResult socketed = CardSocketService.TryInsert(character.Inventory,
+                cardSlot, piece, CardContext(character));
+
+            // The bag and the piece both changed, and the piece may be worn -- so what the
+            // character is worth has to be worked out again by the authority that owns that.
+            if (socketed.IsAccepted) character.MarkDirty();
+
+            return CharacterInventoryResult.FromCard(socketed);
+        }
+
+        /// <summary>Takes a card back out, if Phase 12's rules allow it.</summary>
+        private CharacterInventoryResult UnsocketCard(LivingCharacter character,
+            int equipmentSlot, int socketIndex)
+        {
+            if (_cards == null || character.Inventory == null)
+            {
+                return CharacterInventoryResult.Refused(
+                    InventoryRequestRejection.MissingContext);
+            }
+
+            if (!TryPiece(character, equipmentSlot, out EquipmentInstance piece))
+            {
+                return CharacterInventoryResult.Refused(
+                    InventoryRequestRejection.Refused);
+            }
+
+            CardSocketResult removed = CardSocketService.TryRemove(piece, socketIndex,
+                character.Inventory, CardContext(character));
+
+            if (removed.IsAccepted) character.MarkDirty();
+
+            return CharacterInventoryResult.FromCard(removed);
+        }
+
+        /// <summary>
+        /// The registries a socket request is judged against, scoped to this character.
+        /// </summary>
+        /// <remarks>The owner comes from the character the connection resolved to, never
+        /// from the request, which is what stops a player socketing somebody else's card
+        /// into somebody else's sword.</remarks>
+        /// <summary>The one exact piece of equipment sitting in that inventory slot.</summary>
+        /// <remarks>By slot, so it is an instance and not a definition: two swords of the
+        /// same kind are two objects, and only the one pointed at is touched.</remarks>
+        private static bool TryPiece(LivingCharacter character, int slot,
+            out EquipmentInstance piece)
+        {
+            piece = null;
+
+            if (!character.Inventory.IsValidIndex(slot)) return false;
+
+            piece = character.Inventory.GetSlot(slot).Content as EquipmentInstance;
+
+            return piece != null;
+        }
+
+        private CardSocketService.Context CardContext(LivingCharacter character)
+        {
+            return new CardSocketService.Context(_items, _cards, null, character.Owner);
         }
 
         /// <summary>

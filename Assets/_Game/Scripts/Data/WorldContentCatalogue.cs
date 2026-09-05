@@ -69,6 +69,13 @@ namespace ChibiFantasy.Data
             new DevilFruitDefinition[0];
 
         [Tooltip("What monsters leave behind. Rank gating lives on the table's entries.")]
+        /// <summary>Cards a piece of equipment can be socketed with.</summary>
+        /// <remarks>Shipped alongside the items rather than inside them: a card is authored
+        /// content in its own right -- what it fits, what it grants -- and the item that
+        /// carries it around an inventory is a separate definition, exactly as a Devil Fruit
+        /// and its item are.</remarks>
+        [SerializeField] private CardDefinition[] _cards = new CardDefinition[0];
+
         [SerializeField] private DropTableDefinition[] _dropTables =
             new DropTableDefinition[0];
 
@@ -145,6 +152,8 @@ namespace ChibiFantasy.Data
 
         public DefinitionRegistry<DevilFruitDefinition> BuildDevilFruits() =>
             Build(_devilFruits);
+
+        public DefinitionRegistry<CardDefinition> BuildCards() => Build(_cards);
 
         public DefinitionRegistry<DropTableDefinition> BuildDropTables() =>
             Build(_dropTables);

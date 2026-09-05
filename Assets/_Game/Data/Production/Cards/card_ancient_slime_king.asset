@@ -1,0 +1,40 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 04f219ee953c6734684b51526dcd8457, type: 3}
+  m_Name: card_ancient_slime_king
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.CardDefinition
+  _id:
+    _value: card.ancient_slime_king
+  _nameKey:
+    _key: card.ancient_slime_king.name
+  _descriptionKey:
+    _key: card.ancient_slime_king.desc
+  _icon:
+    _address: 
+  _rarity:
+    _value: rarity.legendary
+  _sourceMonster:
+    _value: monster.ancient_slime_king
+  _dropTable:
+    _value: drop.ancient_slime_king
+  _statModifiers:
+  - _stat:
+      _value: stat.max_hp
+    _kind: 1
+    _value: 0.05
+  _grantedEffects: []
+  _allowedSlot: 6
+  _allowedCategory: 0
+  _allowedSubtypes: 
+  _effects: []
+  _maxPerEquipment: 1
+  _disabled: 0

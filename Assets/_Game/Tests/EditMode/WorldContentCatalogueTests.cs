@@ -232,13 +232,56 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void EveryProductionDefinitionIdIsUniqueAcrossTheWholeSet()
         {
-            var seen = new HashSet<string>();
+            // Unique within a kind, always: two stats or two monsters claiming one id is a
+            // content mistake that nothing downstream could resolve.
+            var byKind = new Dictionary<System.Type, HashSet<string>>();
+
+            // And unique across kinds too, with exactly one deliberate exception. A card
+            // item and the card it becomes share an id on purpose: CardSocketService looks
+            // the CardDefinition up by the item's own DefinitionId, so an item that did not
+            // match its card could never be socketed at all. Anything else that repeats an
+            // id across kinds is still a collision.
+            var everything = new Dictionary<string, GameDefinition>();
 
             foreach (GameDefinition definition in AllProductionDefinitions())
             {
+                System.Type kind = definition is CardDefinition
+                    ? typeof(CardDefinition)
+                    : definition is ItemDefinition ? typeof(ItemDefinition)
+                    : definition.GetType();
+
+                if (!byKind.TryGetValue(kind, out HashSet<string> seen))
+                {
+                    seen = new HashSet<string>();
+                    byKind[kind] = seen;
+                }
+
                 Assert.That(seen.Add(definition.Id.Value), Is.True,
-                    "duplicate production id " + definition.Id);
+                    "duplicate production " + kind.Name + " id " + definition.Id);
+
+                if (!everything.TryGetValue(definition.Id.Value, out GameDefinition other))
+                {
+                    everything[definition.Id.Value] = definition;
+
+                    continue;
+                }
+
+                Assert.That(IsCardPairing(definition, other), Is.True,
+                    "duplicate production id " + definition.Id + " shared by "
+                    + definition.GetType().Name + " and " + other.GetType().Name);
             }
+        }
+
+        /// <summary>Whether two definitions sharing an id are a card and the item form of it.</summary>
+        /// <remarks>The only pairing allowed to share an id, and only when the item is
+        /// actually authored as a card -- an ordinary item colliding with a card is still a
+        /// mistake.</remarks>
+        private static bool IsCardPairing(GameDefinition one, GameDefinition other)
+        {
+            return (one is CardDefinition && other is ItemDefinition item
+                    && item.Category == ItemCategory.Card)
+                || (other is CardDefinition && one is ItemDefinition mirrored
+                    && mirrored.Category == ItemCategory.Card);
         }
 
         // ---- validation refuses rather than limps -------------------------------------------------

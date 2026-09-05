@@ -506,6 +506,8 @@ namespace ChibiFantasy.Tests.PlayMode
             Assert.That(Pickup(hero, pile).IsAccepted, Is.True);
             Assert.That(Held(hero, DarknessItem), Is.EqualTo(1));
 
+            Drain(hero, pile);
+
             // Taken, and storage was told -- which is the whole point of the observer.
             Assert.That(_outbox.All()[0].Entries[0].IsClaimed, Is.True,
                 "the pickup was never written down");
@@ -664,6 +666,8 @@ namespace ChibiFantasy.Tests.PlayMode
             Assert.That(Pickup(returned, pile).IsAccepted, Is.True);
             Assert.That(Held(returned, DarknessItem), Is.EqualTo(1));
 
+            Drain(returned, pile);
+
             // Eaten, through the existing inventory action and nothing new.
             Assert.That(Consume(returned, DarknessItem), Is.True,
                 "the recovered fruit could not be eaten");
@@ -755,6 +759,8 @@ namespace ChibiFantasy.Tests.PlayMode
                 "the pickup itself was refused");
 
             Assert.That(Held(hero, DarknessItem), Is.EqualTo(1));
+
+            Drain(hero, pile);
 
             // Durable ownership, no delivery stamp: the crash window.
             Assert.That(_outbox.All()[0].Entries[0].IsClaimed, Is.False,
@@ -888,6 +894,8 @@ namespace ChibiFantasy.Tests.PlayMode
 
             Assert.That(Pickup(ann, pile).IsAccepted, Is.True);
 
+            Drain(ann, pile);
+
             Assert.That(_bootstrap.Simulation.Release(ann.ConnectionId).IsOk, Is.True);
 
             _outbox.RefuseProgress = false;
@@ -934,6 +942,8 @@ namespace ChibiFantasy.Tests.PlayMode
 
             Assert.That(Pickup(hero, pile).IsAccepted, Is.True);
             Assert.That(Held(hero, DarknessItem), Is.EqualTo(1));
+
+            Drain(hero, pile);
 
             Assert.That(_bootstrap.Simulation.Release(hero.ConnectionId).IsOk, Is.True);
 
@@ -1150,6 +1160,22 @@ namespace ChibiFantasy.Tests.PlayMode
             }
 
             Assert.That(target.CurrentHealth, Is.Zero, "the boss would not die");
+        }
+
+        /// <summary>
+        /// Takes everything left in a pile.
+        /// </summary>
+        /// <remarks>A boss defeat leaves more than one thing now, and a pile that still
+        /// holds something is still owed -- which is exactly what recovery republishes.
+        /// Tests about an item not coming back have to take all of it first, the same way
+        /// a player standing over it would.</remarks>
+        private void Drain(LivingCharacter taker, LootObjectState pile)
+        {
+            for (var index = 0; index < 8; index++)
+            {
+                _bootstrap.LootAuthority.Apply(taker.ConnectionId, pile.LootId.Value,
+                    index, ++_sequence);
+            }
         }
 
         private LootPickupOutcome Pickup(LivingCharacter taker, LootObjectState pile)

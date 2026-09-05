@@ -50,8 +50,12 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 3e847b96d23b649448e440a17a7366cf, type: 2}
   _items:
   - {fileID: 11400000, guid: 516310861e8090f4bb9c61dd30185bd2, type: 2}
+  - {fileID: 11400000, guid: 354b0e9efb8c22c41936eb54e301d86a, type: 2}
+  - {fileID: 11400000, guid: 35a64e804dacd4849831eaea65823019, type: 2}
   _devilFruits:
   - {fileID: 11400000, guid: 75728ea0d9df78547b3f5847722619e5, type: 2}
+  _cards:
+  - {fileID: 11400000, guid: 52e26aac59e3096459a39f71baf1077c, type: 2}
   _dropTables:
   - {fileID: 11400000, guid: 189db9046827b1547b8a1a61d28c4a47, type: 2}
   _maxHealthStat:

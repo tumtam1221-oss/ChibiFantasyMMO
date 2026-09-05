@@ -242,6 +242,10 @@ namespace ChibiFantasy.Tests.PlayMode
             Assert.That(Held(hero, DarknessItem), Is.EqualTo(1),
                 "the fruit did not reach the bag");
 
+            // The boss drops a card as well as a fruit, so one pickup no longer empties
+            // the pile. Taking the rest is what proves the pile goes when it is empty.
+            Drain(hero, pile);
+
             Assert.That(_bootstrap.Loot.Count, Is.Zero, "the pile survived being emptied");
 
             // The same request again, and a fresh one for a pile that is gone.
@@ -374,10 +378,15 @@ namespace ChibiFantasy.Tests.PlayMode
             Assert.That(Submit(hero.ConnectionId, InventoryAction.Use,
                 Slot(hero, DarknessItem), ++_sequence).IsAccepted, Is.True);
 
+            // Emptied, so the first boss's pile is gone before the second one drops. A
+            // boss leaves a card as well as a fruit, and a pile still holding something
+            // would still be lying there when the next one appears.
+            Drain(hero, first);
+
             // A second boss, a second fruit: they may take it, and may not eat it.
             Kill(hero, Spawn(Boss));
 
-            LootObjectState second = _bootstrap.Loot.All()[0];
+            LootObjectState second = _bootstrap.Loot.All()[_bootstrap.Loot.All().Count - 1];
             StandOn(hero, second);
 
             Assert.That(Pickup(hero, second, ++_sequence).IsAccepted, Is.True,
@@ -637,6 +646,18 @@ namespace ChibiFantasy.Tests.PlayMode
         {
             return _bootstrap.LootAuthority.Apply(taker.ConnectionId, pile.LootId.Value, 0,
                 sequence);
+        }
+
+        /// <summary>Takes everything left in a pile, so it empties and is swept.</summary>
+        /// <remarks>A boss drops more than one thing now. Tests that care about the pile
+        /// disappearing have to take all of it, exactly as a player would.</remarks>
+        private void Drain(LivingCharacter taker, LootObjectState pile)
+        {
+            for (var index = 0; index < 8; index++)
+            {
+                _bootstrap.LootAuthority.Apply(taker.ConnectionId, pile.LootId.Value,
+                    index, ++_sequence);
+            }
         }
 
         private CharacterInventoryResult Submit(int connection, InventoryAction action,

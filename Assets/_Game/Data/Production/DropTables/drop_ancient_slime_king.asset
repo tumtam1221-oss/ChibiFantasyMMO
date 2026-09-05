@@ -28,4 +28,15 @@ MonoBehaviour:
     _minKillerLevel: 0
     _maxKillerLevel: 0
     _minMonsterRank: 4
+  - _item:
+      _value: card.ancient_slime_king
+    _minQuantity: 1
+    _maxQuantity: 1
+    _chance: 0.000001
+    _disabled: 0
+    _rarityOverride:
+      _value: 
+    _minKillerLevel: 0
+    _maxKillerLevel: 0
+    _minMonsterRank: 4
   _maxEntries: 0

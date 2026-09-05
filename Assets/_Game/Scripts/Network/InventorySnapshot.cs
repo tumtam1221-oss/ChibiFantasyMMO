@@ -147,6 +147,20 @@ namespace ChibiFantasy.Network
         Unequip = 5,
 
         /// <summary>
+        /// Puts a card the player owns into a piece of equipment the player owns.
+        /// </summary>
+        /// <remarks><c>from</c> is the inventory slot holding the card and <c>to</c> is the
+        /// inventory slot holding the equipment. Two slots and nothing else: the card, the
+        /// modifier it grants, the socket capacity and the owner are all read from state the
+        /// server already holds, so a client can name none of them.</remarks>
+        SocketCard = 7,
+
+        /// <summary>Takes a card back out of a piece the player owns.</summary>
+        /// <remarks><c>from</c> is the equipment's inventory slot and <c>to</c> is the socket
+        /// index. Phase 12 already decided what removal means; this only asks for it.</remarks>
+        UnsocketCard = 8,
+
+        /// <summary>
         /// Use the item in a slot: a potion, a scroll, a Devil Fruit.
         /// </summary>
         /// <remarks>
