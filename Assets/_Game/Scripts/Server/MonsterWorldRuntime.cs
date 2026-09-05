@@ -229,12 +229,37 @@ namespace ChibiFantasy.Server
         /// <summary>Every monster currently in the world.</summary>
         public IReadOnlyList<LivingMonster> All()
         {
-            var all = new List<LivingMonster>(_byInstance.Count);
+            // The same reason the character registry caches its own: replication walks
+            // every monster every tick, and five hundred of them is a four-kilobyte list
+            // rebuilt for no reason when nothing spawned or died. Rebuilt on change, and as
+            // a new list, so anything still reading the previous snapshot keeps it.
+            if (_snapshotVersion != _version)
+            {
+                var rebuilt = new List<LivingMonster>(_byInstance.Count);
 
-            foreach (KeyValuePair<string, LivingMonster> pair in _byInstance) all.Add(pair.Value);
+                foreach (KeyValuePair<string, LivingMonster> pair in _byInstance)
+                {
+                    rebuilt.Add(pair.Value);
+                }
 
-            return all;
+                _snapshot = rebuilt;
+                _snapshotVersion = _version;
+            }
+
+            return _snapshot;
         }
+
+        /// <summary>Which map the candidate list currently holds, within this tick.</summary>
+        private DefinitionId _candidatesMap;
+
+        private bool _candidatesGathered;
+
+        /// <summary>Bumped whenever a monster is added to or removed from this world.</summary>
+        private int _version;
+
+        private List<LivingMonster> _snapshot = new List<LivingMonster>();
+
+        private int _snapshotVersion = -1;
 
         /// <summary>
         /// Registers an authored spawn point.
@@ -271,6 +296,10 @@ namespace ChibiFantasy.Server
             if (deltaSeconds < 0f) deltaSeconds = 0f;
 
             _attacking.Clear();
+
+            // The candidate memo belongs to one tick and no more.
+            _candidatesGathered = false;
+            _candidatesMap = default;
 
             int retired = Retire();
             int spawned = Respawn(deltaSeconds);
@@ -343,6 +372,8 @@ namespace ChibiFantasy.Server
 
                 for (int n = 0; n < _retiring.Count; n++) _byInstance.Remove(_retiring[n]);
 
+                if (_retiring.Count > 0) _version++;
+
                 retired += count;
             }
 
@@ -381,6 +412,8 @@ namespace ChibiFantasy.Server
                 new MonsterCombatant(state), spawner.Point.Map);
 
             _byInstance[state.InstanceId.Value] = living;
+
+            _version++;
 
             return true;
         }
@@ -477,6 +510,21 @@ namespace ChibiFantasy.Server
         /// </remarks>
         private void GatherCandidatesOn(DefinitionId map)
         {
+            // Measured: with fifty spawn points on one map this rebuilt the same list of
+            // candidates fifty times a tick, because the gather is per spawner and the
+            // spawners share a map. Remembering which map the list is already for turns
+            // that into one gather per map per tick.
+            //
+            // Safe within a tick by construction: nothing inside the behaviour pass adds a
+            // character, removes one, kills one or moves one -- an attack is recorded and
+            // executed later by the combat pipeline -- so a list gathered for this map at
+            // the start of the pass is still the right list at the end of it. The memo is
+            // cleared at the top of every Tick, so nothing survives into the next one.
+            if (_candidatesMap == map && _candidatesGathered) return;
+
+            _candidatesMap = map;
+            _candidatesGathered = true;
+
             _candidates.Clear();
 
             if (_players == null || !map.IsValid) return;
@@ -773,6 +821,8 @@ namespace ChibiFantasy.Server
             for (int i = 0; i < _spawners.Count; i++) _spawners[i].Clear();
 
             _byInstance.Clear();
+
+            _version++;
 
             return cleared;
         }
