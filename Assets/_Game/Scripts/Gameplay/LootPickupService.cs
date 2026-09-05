@@ -96,6 +96,15 @@ namespace ChibiFantasy.Gameplay
                 return LootPickupResult.Rejected(LootPickupRejection.AlreadyTaken, loot.LootId);
             }
 
+            // Already carried. The same reward entry, delivered before and not recorded as
+            // delivered -- a crash between the inventory being written and the delivery
+            // being stamped. Recognised by the identity the reward decided, so the retry
+            // reconciles instead of minting a second copy of the same item.
+            if (entry.Instance.IsValid && inventory.IndexOf(entry.Instance) >= 0)
+            {
+                return LootPickupResult.Accepted(loot.LootId, entry.Item, entry.Quantity, 0);
+            }
+
             GameInstance instance = Create(entry, definition, context.Owner);
             ItemContainerResult added = inventory.Add(instance, context.Items);
 
@@ -154,16 +163,21 @@ namespace ChibiFantasy.Gameplay
         private static GameInstance Create(LootResult entry, ItemDefinition definition,
             OwnerId owner)
         {
+            // The identity the reward already decided, when there is one. Not a second
+            // kind of id: the same InstanceId this method would otherwise mint, chosen
+            // earlier so that a delivery repeated after a crash produces the same item.
+            InstanceId identity = entry.Instance.IsValid ? entry.Instance : InstanceId.New();
+
             if (definition is EquipmentDefinition)
             {
-                var equipment = new EquipmentInstance(InstanceId.New(), entry.Item, owner);
+                var equipment = new EquipmentInstance(identity, entry.Item, owner);
 
                 if (entry.RarityOverride.IsValid) equipment.SetRarity(entry.RarityOverride);
 
                 return equipment;
             }
 
-            return new ItemInstance(InstanceId.New(), entry.Item, owner, entry.Quantity);
+            return new ItemInstance(identity, entry.Item, owner, entry.Quantity);
         }
 
         /// <summary>
@@ -176,7 +190,7 @@ namespace ChibiFantasy.Gameplay
         {
             LootResult entry = loot.Contents[index];
             loot.Replace(index, new LootResult(entry.Source, entry.Item, remainder,
-                entry.RarityOverride));
+                entry.RarityOverride, entry.Instance));
         }
     }
 }

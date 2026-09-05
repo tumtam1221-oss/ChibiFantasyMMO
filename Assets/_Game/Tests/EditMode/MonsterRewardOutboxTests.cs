@@ -824,24 +824,354 @@ namespace ChibiFantasy.Tests.EditMode
         /// <summary>A decision as a world that stopped would have left it in storage.</summary>
         private PersistedMonsterReward Decided(string defeat, CharacterId killer,
             string Loot = "", bool paid = false, bool claimed = false,
-            CharacterId claimant = default)
+            CharacterId claimant = default, InstanceId instance = default)
         {
             var entries = new List<MonsterRewardLootEntry>();
 
             if (!string.IsNullOrEmpty(Loot))
             {
                 entries.Add(new MonsterRewardLootEntry(0, new DefinitionId(Coin), 2,
-                    default, claimed, claimed ? killer : default));
+                    default, claimed, claimed ? killer : default,
+                    instance.IsValid ? instance : new InstanceId("item-" + defeat)));
             }
 
             return new PersistedMonsterReward("reward-" + defeat,
                 new InstanceId(defeat), new DefinitionId(Worth50),
                 new DefinitionId(HomeMap), killer,
                 string.IsNullOrEmpty(Loot) ? default : new InstanceId(Loot),
-                0, claimant.IsValid ? claimant : killer,
+                (int)LootPolicy.OwnerOnly, claimant.IsValid ? claimant : killer,
                 1f, 2f, 3f, default, 0, false,
                 new[] { new MonsterRewardGrant(killer, 50, paid) },
                 entries, false, false, false, 1);
+        }
+    
+
+        // ---- 18.15A: one entry, one item, however often it is delivered ------------------
+
+        [Test]
+        public void ADecidedDropIsGivenTheIdentityItWillHaveBeforeAnybodyPicksItUp()
+        {
+            LivingCharacter hero = AddPlayer("char-a");
+            MonsterRewardAuthority rewards = Authority(_outbox);
+
+            LivingMonster corpse = Corpse(Hoard);
+
+            rewards.Grant(corpse.Instance, Of(hero));
+
+            PersistedMonsterReward stored = _outbox.Of(corpse.Instance);
+
+            Assert.That(stored.Entries.Count, Is.EqualTo(1));
+            Assert.That(stored.Entries[0].Instance.IsValid, Is.True,
+                "the drop was written down with no identity to deliver it by");
+
+            // And the pile in the world carries the same one, so the pickup uses it.
+            Assert.That(_loot.All()[0].Contents[0].Instance,
+                Is.EqualTo(stored.Entries[0].Instance),
+                "the pile and the record disagree about what the item will be");
+        }
+
+        [Test]
+        public void ThePickedUpItemHasExactlyTheIdentityTheRewardDecided()
+        {
+            LivingCharacter hero = AddPlayer("char-a");
+            MonsterRewardAuthority rewards = Authority(_outbox);
+
+            LivingMonster corpse = Corpse(Hoard);
+
+            rewards.Grant(corpse.Instance, Of(hero));
+
+            InstanceId decided = _outbox.Of(corpse.Instance).Entries[0].Instance;
+
+            LootObjectState pile = _loot.All()[0];
+
+            StandOn(hero, pile);
+
+            Assert.That(_loot.Pickup(pile.LootId, 0, hero.Character).IsAccepted, Is.True);
+
+            Assert.That(hero.Inventory.IndexOf(decided), Is.GreaterThanOrEqualTo(0),
+                "the item that arrived is not the one the reward decided on");
+        }
+
+        [Test]
+        public void TheIdentityDoesNotChangeHoweverOftenTheWorldRestartsBeforePickup()
+        {
+            LivingCharacter hero = AddPlayer("char-a");
+
+            var seeded = Decided("defeat-1", hero.Character, Loot: "loot-1");
+
+            _outbox.Seed(seeded);
+
+            InstanceId first = seeded.Entries[0].Instance;
+
+            // Four restarts, none of which delivers anything.
+            for (var restart = 0; restart < 4; restart++)
+            {
+                MonsterRewardAuthority rewards = Authority(_outbox);
+
+                rewards.RecoverPending();
+                rewards.RetryHeld();
+
+                Assert.That(_loot.All().Count, Is.EqualTo(1),
+                    "restart " + restart + " lost the pile");
+
+                Assert.That(_loot.All()[0].Contents[0].Instance, Is.EqualTo(first),
+                    "the item identity changed on restart " + restart);
+
+                _loot.Remove(_loot.All()[0].LootId);
+            }
+        }
+
+        [Test]
+        public void AnItemAlreadyCarriedIsReconciledRatherThanPutBackOnTheGround()
+        {
+            // The crash window this gate closes: the bag was written, the delivery stamp
+            // was not, and the world stopped in between.
+            LivingCharacter hero = AddPlayer("char-a");
+
+            var decided = Decided("defeat-1", hero.Character, Loot: "loot-1");
+
+            _outbox.Seed(decided);
+
+            // Durable ownership, with no delivery stamp anywhere.
+            hero.Inventory.Add(new ItemInstance(decided.Entries[0].Instance,
+                new DefinitionId(Coin), hero.Owner, 2), Items);
+
+            MonsterRewardAuthority rewards = Authority(_outbox);
+
+            rewards.RecoverPending();
+            rewards.RetryHeld();
+
+            Assert.That(_loot.All().Count, Is.Zero,
+                "an item already in the bag was put back on the floor");
+
+            Assert.That(Carried(hero, Coin), Is.EqualTo(2),
+                "the reconciliation duplicated or removed the item");
+
+            Assert.That(_outbox.Of(new InstanceId("defeat-1")).Entries[0].IsClaimed,
+                Is.True, "the delivery was never reconciled in storage");
+        }
+
+        [Test]
+        public void AnItemHeldByTheWrongCharacterIsAConflictAndNotADelivery()
+        {
+            // Moving it would move an item nobody asked to move; republishing it would
+            // make a second one. Neither is acceptable, so it is reported and left.
+            LivingCharacter owner = AddPlayer("char-a");
+            LivingCharacter stranger = AddPlayer("char-b");
+
+            var decided = Decided("defeat-1", owner.Character, Loot: "loot-1");
+
+            _outbox.Seed(decided);
+
+            stranger.Inventory.Add(new ItemInstance(decided.Entries[0].Instance,
+                new DefinitionId(Coin), stranger.Owner, 2), Items);
+
+            MonsterRewardAuthority rewards = Authority(_outbox);
+
+            LogAssert.Expect(LogType.Warning,
+                new System.Text.RegularExpressions.Regex("is held by"));
+
+            rewards.RecoverPending();
+
+            Assert.That(_outbox.Of(new InstanceId("defeat-1")).Entries[0].IsClaimed,
+                Is.False, "somebody else's copy was accepted as delivery");
+
+            Assert.That(Carried(stranger, Coin), Is.EqualTo(2),
+                "the conflicting item was moved");
+
+            Assert.That(Carried(owner, Coin), Is.Zero,
+                "the item was silently transferred to the decided claimant");
+        }
+
+        [Test]
+        public void PickingUpTheSameEntryTwiceCannotProduceTwoItems()
+        {
+            // Replay, a new sequence, or a recovered pile a second time: all the same
+            // question, and the decided identity is what answers it.
+            LivingCharacter hero = AddPlayer("char-a");
+
+            var decided = Decided("defeat-1", hero.Character, Loot: "loot-1");
+
+            _outbox.Seed(decided);
+
+            MonsterRewardAuthority rewards = Authority(_outbox);
+
+            rewards.RecoverPending();
+            rewards.RetryHeld();
+
+            LootObjectState pile = _loot.All()[0];
+
+            StandOn(hero, pile);
+
+            Assert.That(_loot.Pickup(pile.LootId, 0, hero.Character).IsAccepted, Is.True);
+            Assert.That(Carried(hero, Coin), Is.EqualTo(2));
+
+            // The pile is put back by a world that never saw the delivery land.
+            var second = new MonsterRewardAuthority(_runtime, _players, _curve, _loot,
+                Items, DropTables, Rolls, Rolls, 300f, 0f, null, 0f, _outbox);
+
+            _loot.Observe(second);
+
+            // Storage still says unclaimed only if the stamp never landed; force that
+            // reading by rebuilding from a record whose entry is unclaimed.
+            _outbox.Seed(Decided("defeat-1", hero.Character, Loot: "loot-1"));
+
+            second.RecoverPending();
+            second.RetryHeld();
+
+            Assert.That(Carried(hero, Coin), Is.EqualTo(2),
+                "a second delivery of one entry produced a second item");
+
+            Assert.That(_loot.All().Count, Is.Zero,
+                "the already-carried entry was published again");
+        }
+
+        [Test]
+        public void AFullBagLeavesTheEntryUndeliveredAndKeepsItsIdentity()
+        {
+            LivingCharacter hero = AddPlayer("char-a");
+
+            var decided = Decided("defeat-1", hero.Character, Loot: "loot-1");
+
+            _outbox.Seed(decided);
+
+            MonsterRewardAuthority rewards = Authority(_outbox);
+
+            rewards.RecoverPending();
+            rewards.RetryHeld();
+
+            LootObjectState pile = _loot.All()[0];
+
+            StandOn(hero, pile);
+
+            // Fill every slot with something that will not stack with a coin.
+            for (var i = 0; i < hero.Inventory.Capacity; i++)
+            {
+                hero.Inventory.Add(new ItemInstance(InstanceId.New(),
+                    new DefinitionId(Relic), hero.Owner, 1), Items);
+            }
+
+            Assert.That(hero.Inventory.IsFull, Is.True, "the bag fixture is not full");
+
+            Assert.That(_loot.Pickup(pile.LootId, 0, hero.Character).IsAccepted, Is.False,
+                "a full bag accepted the item anyway");
+
+            Assert.That(_outbox.Of(new InstanceId("defeat-1")).Entries[0].IsClaimed,
+                Is.False, "a refused delivery was marked as delivered");
+
+            // Still the same identity waiting, not a new one.
+            Assert.That(_loot.All()[0].Contents[0].Instance,
+                Is.EqualTo(decided.Entries[0].Instance),
+                "a refused delivery changed the item's identity");
+        }
+
+        [Test]
+        public void TwoCharactersRacingForOneEntryProduceOneItem()
+        {
+            LivingCharacter winner = AddPlayer("char-a");
+            LivingCharacter loser = AddPlayer("char-b");
+
+            var decided = Decided("defeat-1", winner.Character, Loot: "loot-1");
+
+            _outbox.Seed(decided);
+
+            MonsterRewardAuthority rewards = Authority(_outbox);
+
+            rewards.RecoverPending();
+            rewards.RetryHeld();
+
+            LootObjectState pile = _loot.All()[0];
+
+            StandOn(winner, pile);
+            StandOn(loser, pile);
+
+            Assert.That(_loot.Pickup(pile.LootId, 0, loser.Character).IsAccepted, Is.False,
+                "a character the drop was not decided for took it");
+
+            Assert.That(_loot.Pickup(pile.LootId, 0, winner.Character).IsAccepted, Is.True);
+
+            Assert.That(Carried(winner, Coin), Is.EqualTo(2));
+            Assert.That(Carried(loser, Coin), Is.Zero,
+                "the loser of the race got a copy");
+        }
+
+        [Test]
+        public void ARewardWhoseDropHasNoDecidedIdentityIsRefusedRatherThanGivenOne()
+        {
+            LivingCharacter hero = AddPlayer("char-a");
+
+            // A record written before identities were decided, or a corrupt one.
+            _outbox.Seed(new PersistedMonsterReward("reward-x",
+                new InstanceId("defeat-x"), new DefinitionId(Worth50),
+                new DefinitionId(HomeMap), hero.Character, new InstanceId("loot-x"), 0,
+                hero.Character, 0f, 0f, 0f, default, 0, false,
+                new[] { new MonsterRewardGrant(hero.Character, 10) },
+                new[] { new MonsterRewardLootEntry(0, new DefinitionId(Coin), 1) }));
+
+            MonsterRewardAuthority rewards = Authority(_outbox);
+
+            LogAssert.Expect(LogType.Warning,
+                new System.Text.RegularExpressions.Regex("cannot recover"));
+
+            Assert.That(rewards.RecoverPending(), Is.Zero,
+                "a drop with no identity was recovered and would have been minted one");
+
+            Assert.That(_loot.All().Count, Is.Zero);
+        }
+
+        [Test]
+        public void TheDecidedIdentityIsAnOrdinaryInstanceIdAndNotASecondKindOfKey()
+        {
+            // Reusing InstanceId is the point: no parallel id type, no client-supplied id,
+            // and nothing in the network layer that could name one.
+            Assert.That(typeof(MonsterRewardLootEntry).GetProperty("Instance").PropertyType,
+                Is.EqualTo(typeof(InstanceId)));
+
+            Assert.That(typeof(LootResult).GetProperty("Instance").PropertyType,
+                Is.EqualTo(typeof(InstanceId)));
+
+            string[] network = System.IO.Directory.GetFiles(
+                System.IO.Path.Combine(Application.dataPath, "_Game/Scripts/Network"),
+                "*.cs", System.IO.SearchOption.AllDirectories);
+
+            foreach (string file in network)
+            {
+                string code = System.IO.File.ReadAllText(file);
+
+                foreach (string forbidden in new[]
+                {
+                    "item_instance_id", "ItemInstanceId", "RewardItemId",
+                })
+                {
+                    Assert.That(code, Does.Not.Contain(forbidden),
+                        System.IO.Path.GetFileName(file) + " lets a client name '"
+                        + forbidden + "'");
+                }
+            }
+        }
+
+        /// <summary>How much of an item this character is actually carrying.</summary>
+        private static int Carried(LivingCharacter character, string item)
+        {
+            var total = 0;
+
+            for (var i = 0; i < character.Inventory.Capacity; i++)
+            {
+                var instance = character.Inventory.GetSlot(i).Content as ItemInstance;
+
+                if (instance != null && instance.DefinitionId.Value == item)
+                {
+                    total += instance.Quantity;
+                }
+            }
+
+            return total;
+        }
+
+        private static void StandOn(LivingCharacter character, LootObjectState pile)
+        {
+            character.Combatant.Position = new CombatPosition(pile.Position.X,
+                pile.Position.Y, pile.Position.Z);
         }
     }
 }

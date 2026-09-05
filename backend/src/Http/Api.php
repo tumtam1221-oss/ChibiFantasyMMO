@@ -702,6 +702,7 @@ final class Api
                 'item_definition_id'   => trim((string) ($entry['item_definition_id'] ?? '')),
                 'quantity'             => (int) ($entry['quantity'] ?? 0),
                 'rarity_definition_id' => trim((string) ($entry['rarity_definition_id'] ?? '')),
+                'item_instance_id'     => trim((string) ($entry['item_instance_id'] ?? '')),
             ];
         }
 

@@ -31,17 +31,21 @@ namespace ChibiFantasy.Contracts
     /// One thing a defeat's drop tables produced.
     /// </summary>
     /// <remarks>
-    /// <b>No item instance id.</b> Instances are minted when an item enters an inventory,
-    /// not when it lands on the ground, so at this point there is nothing allocated to
-    /// record. What identifies this drop through a restart is the reward's loot id together
-    /// with <see cref="Index"/>, and <see cref="IsClaimed"/> is the evidence that stops a
-    /// recovered world putting an item somebody already took back on the floor.
+    /// <b>The identity is decided here, not at pickup.</b> Instances used to be minted when
+    /// an item entered an inventory, which left one window nothing could close: the bag was
+    /// written, the delivery stamp was not, and the world stopped in between -- so recovery
+    /// put the pile back and a second pickup minted a second item.
+    ///
+    /// Choosing the identity with the reward turns it into an idempotency key. The same
+    /// entry delivered twice produces the same <see cref="Instance"/>, so the second attempt
+    /// recognises what it is holding and reconciles instead of duplicating. It is not a
+    /// second kind of id: it is the <see cref="InstanceId"/> the pickup would have minted.
     /// </remarks>
     public readonly struct MonsterRewardLootEntry
     {
         public MonsterRewardLootEntry(int index, DefinitionId item, int quantity,
             DefinitionId rarity = default, bool claimed = false,
-            CharacterId claimedBy = default)
+            CharacterId claimedBy = default, InstanceId instance = default)
         {
             Index = index;
             Item = item;
@@ -49,6 +53,7 @@ namespace ChibiFantasy.Contracts
             Rarity = rarity;
             IsClaimed = claimed;
             ClaimedBy = claimedBy;
+            Instance = instance;
         }
 
         /// <summary>Its place in the pile. A pickup names a slot, so the order is load-bearing.</summary>
@@ -65,7 +70,10 @@ namespace ChibiFantasy.Contracts
 
         public CharacterId ClaimedBy { get; }
 
-        public bool IsValid => Item.IsValid && Quantity > 0;
+        /// <summary>The identity this drop becomes once it is carried.</summary>
+        public InstanceId Instance { get; }
+
+        public bool IsValid => Item.IsValid && Quantity > 0 && Instance.IsValid;
 
         public override string ToString()
         {

@@ -51,6 +51,10 @@ namespace ChibiFantasy.Tests.PlayMode
 
             public bool Broken { get; set; }
 
+            /// <summary>Refuse only the delivery stamp, as a crash between the two writes
+            /// would. Recording still works, so the decision stays durable.</summary>
+            public bool RefuseProgress { get; set; }
+
             public int Records { get; private set; }
 
             public IReadOnlyList<PersistedMonsterReward> All() => _byDefeat.Values.ToList();
@@ -106,7 +110,7 @@ namespace ChibiFantasy.Tests.PlayMode
                 IReadOnlyList<MonsterRewardLootEntry> lootClaimed,
                 bool? cursorCommitted, bool? lootPublished, bool complete)
             {
-                if (Broken)
+                if (Broken || RefuseProgress)
                 {
                     return MonsterRewardOutboxResult.Failed(
                         MonsterRewardOutboxFailure.Unreachable, "backend down");
@@ -694,6 +698,292 @@ namespace ChibiFantasy.Tests.PlayMode
             Assert.That(_bootstrap.Loot.All().Count, Is.Zero,
                 "an item that was eaten was put back on the floor");
 
+            Assert.That(_rolls.RareRolls, Is.Zero);
+        }
+
+        // ---- 18.15A: the window between a durable bag and a durable stamp ----------------
+
+        [UnityTest]
+        public IEnumerator ADroppedItemIsGivenItsIdentityBeforeAnybodyPicksItUp()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter hero = Admit("char-ann", 1);
+
+            Kill(hero, Spawn());
+
+            PersistedMonsterReward stored = _outbox.All()[0];
+
+            Assert.That(stored.Entries[0].Instance.IsValid, Is.True,
+                "the drop was written down with no identity to deliver it by");
+
+            LootObjectState pile = _bootstrap.Loot.All()[0];
+
+            Assert.That(pile.Contents[0].Instance, Is.EqualTo(stored.Entries[0].Instance),
+                "the pile and the record disagree about what the item will be");
+
+            StandOn(hero, pile);
+
+            Assert.That(Pickup(hero, pile).IsAccepted, Is.True);
+
+            Assert.That(hero.Inventory.IndexOf(stored.Entries[0].Instance),
+                Is.GreaterThanOrEqualTo(0),
+                "the item that arrived is not the one the reward decided on");
+        }
+
+        [UnityTest]
+        public IEnumerator AnItemCarriedButNotStampedIsNotPutBackByTheNextWorld()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter hero = Admit("char-ann", 1);
+
+            Kill(hero, Spawn());
+
+            InstanceId item = _outbox.All()[0].Entries[0].Instance;
+            LootObjectState pile = _bootstrap.Loot.All()[0];
+
+            StandOn(hero, pile);
+
+            // The stamp fails, exactly as a crash between the two writes would leave it.
+            _outbox.RefuseProgress = true;
+
+            LogAssert.Expect(LogType.Warning,
+                new System.Text.RegularExpressions.Regex("could not record progress"));
+
+            Assert.That(Pickup(hero, pile).IsAccepted, Is.True,
+                "the pickup itself was refused");
+
+            Assert.That(Held(hero, DarknessItem), Is.EqualTo(1));
+
+            // Durable ownership, no delivery stamp: the crash window.
+            Assert.That(_outbox.All()[0].Entries[0].IsClaimed, Is.False,
+                "the fixture did not actually produce the crash window");
+
+            // The character is written back, then everything else is thrown away.
+            Assert.That(_bootstrap.Simulation.Release(hero.ConnectionId).IsOk, Is.True);
+
+            _outbox.RefuseProgress = false;
+
+            yield return TearDownWorld();
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter returned = Admit("char-ann", 1);
+
+            yield return Tick();
+
+            for (var i = 0; i < 4; i++) _bootstrap.Simulation.Tick(0.1f);
+
+            Assert.That(_bootstrap.Loot.All().Count, Is.Zero,
+                "an item already in the bag was put back on the floor");
+
+            Assert.That(Held(returned, DarknessItem), Is.EqualTo(1),
+                "the fruit was duplicated or lost across the restart");
+
+            Assert.That(returned.Inventory.IndexOf(item), Is.GreaterThanOrEqualTo(0),
+                "the recovered item is not the one that was decided");
+
+            // And the world worked out for itself that it had been delivered.
+            Assert.That(_outbox.All()[0].Entries[0].IsClaimed, Is.True,
+                "the delivery was never reconciled");
+
+            Assert.That(_rolls.RareRolls, Is.Zero,
+                "the restarted world rolled the rare chance again");
+        }
+
+        [UnityTest]
+        public IEnumerator APickupRepeatedAfterTheStampFailedDoesNotProduceASecondItem()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter hero = Admit("char-ann", 1);
+
+            Kill(hero, Spawn());
+
+            LootObjectState pile = _bootstrap.Loot.All()[0];
+
+            StandOn(hero, pile);
+
+            _outbox.RefuseProgress = true;
+
+            LogAssert.Expect(LogType.Warning,
+                new System.Text.RegularExpressions.Regex("could not record progress"));
+
+            Assert.That(Pickup(hero, pile).IsAccepted, Is.True);
+
+            _outbox.RefuseProgress = false;
+
+            // The same request again, and again with a fresh sequence. Neither may hand
+            // over a second fruit.
+            Pickup(hero, pile);
+            Pickup(hero, pile);
+
+            Assert.That(Held(hero, DarknessItem), Is.EqualTo(1),
+                "a replayed pickup produced a second fruit");
+        }
+
+        [UnityTest]
+        public IEnumerator TheIdentityIsUnchangedByAnyNumberOfRestartsBeforePickup()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter hero = Admit("char-ann", 1);
+
+            Kill(hero, Spawn());
+
+            InstanceId decided = _outbox.All()[0].Entries[0].Instance;
+
+            for (var restart = 0; restart < 3; restart++)
+            {
+                yield return TearDownWorld();
+                yield return LoadWorld(roll: 0f);
+
+                Admit("char-ann", 1);
+
+                yield return Tick();
+
+                Assert.That(_bootstrap.Loot.All().Count, Is.EqualTo(1),
+                    "restart " + restart + " lost the pile");
+
+                Assert.That(_bootstrap.Loot.All()[0].Contents[0].Instance,
+                    Is.EqualTo(decided),
+                    "the item identity changed on restart " + restart);
+            }
+
+            Assert.That(_outbox.All().Count, Is.EqualTo(1));
+            Assert.That(_rolls.RareRolls, Is.Zero);
+        }
+
+        [UnityTest]
+        public IEnumerator ARoundRobinDropKeepsItsClaimantAndItsIdentityAcrossTheCrashWindow()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter ann = Admit("char-ann", 1);
+            LivingCharacter ben = Admit("char-ben", 2);
+
+            PartyState party = Party(PartyLootPolicy.RoundRobin, ann, ben);
+            _bootstrap.Parties.Persist(Session("char-ann"), party, _parties);
+
+            Kill(ann, Spawn());
+
+            PartyId partyId = party.Id;
+            InstanceId decided = _outbox.All()[0].Entries[0].Instance;
+
+            Assert.That(_bootstrap.Parties.RotationOf(partyId), Is.EqualTo(1));
+
+            LootObjectState pile = _bootstrap.Loot.All()[0];
+
+            StandOn(ben, pile);
+
+            Assert.That(Pickup(ben, pile).IsAccepted, Is.False,
+                "the member the drop was not decided for took it");
+
+            StandOn(ann, pile);
+
+            _outbox.RefuseProgress = true;
+
+            LogAssert.Expect(LogType.Warning,
+                new System.Text.RegularExpressions.Regex("could not record progress"));
+
+            Assert.That(Pickup(ann, pile).IsAccepted, Is.True);
+
+            Assert.That(_bootstrap.Simulation.Release(ann.ConnectionId).IsOk, Is.True);
+
+            _outbox.RefuseProgress = false;
+
+            yield return TearDownWorld();
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter back = Admit("char-ann", 1);
+
+            yield return Tick();
+
+            for (var i = 0; i < 4; i++) _bootstrap.Simulation.Tick(0.1f);
+
+            Assert.That(_bootstrap.Parties.RotationOf(partyId), Is.EqualTo(1),
+                "the recovered reward spent the round-robin turn a second time");
+
+            Assert.That(_bootstrap.Loot.All().Count, Is.Zero,
+                "an item already carried was published again");
+
+            Assert.That(Held(back, DarknessItem), Is.EqualTo(1));
+            Assert.That(back.Inventory.IndexOf(decided), Is.GreaterThanOrEqualTo(0));
+        }
+
+        [UnityTest]
+        public IEnumerator TheWholeDarknessSliceSurvivesTheStampCrashWindow()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter hero = Admit("char-ann", 1);
+
+            Kill(hero, Spawn());
+
+            Assert.That(_rolls.RareRolls, Is.EqualTo(1));
+
+            InstanceId decided = _outbox.All()[0].Entries[0].Instance;
+            LootObjectState pile = _bootstrap.Loot.All()[0];
+
+            StandOn(hero, pile);
+
+            _outbox.RefuseProgress = true;
+
+            LogAssert.Expect(LogType.Warning,
+                new System.Text.RegularExpressions.Regex("could not record progress"));
+
+            Assert.That(Pickup(hero, pile).IsAccepted, Is.True);
+            Assert.That(Held(hero, DarknessItem), Is.EqualTo(1));
+
+            Assert.That(_bootstrap.Simulation.Release(hero.ConnectionId).IsOk, Is.True);
+
+            _outbox.RefuseProgress = false;
+
+            yield return TearDownWorld();
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter returned = Admit("char-ann", 1);
+
+            yield return Tick();
+
+            for (var i = 0; i < 4; i++) _bootstrap.Simulation.Tick(0.1f);
+
+            Assert.That(_bootstrap.Loot.All().Count, Is.Zero,
+                "the fruit was put back on the floor after being carried");
+
+            Assert.That(Held(returned, DarknessItem), Is.EqualTo(1),
+                "there is not exactly one fruit");
+
+            Assert.That(returned.Inventory.IndexOf(decided), Is.GreaterThanOrEqualTo(0));
+
+            // Eaten through the ordinary request, and nothing new.
+            Assert.That(Consume(returned, DarknessItem), Is.True,
+                "the recovered fruit could not be eaten");
+
+            Assert.That(returned.DevilFruit.HasActiveFruit, Is.True);
+
+            Assert.That(_bootstrap.Simulation.Release(returned.ConnectionId).IsOk, Is.True);
+
+            yield return Tick();
+            yield return TearDownWorld();
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter again = Admit("char-ann", 1);
+
+            yield return Tick();
+
+            for (var i = 0; i < 4; i++) _bootstrap.Simulation.Tick(0.1f);
+
+            Assert.That(again.DevilFruit.HasActiveFruit, Is.True,
+                "the eaten fruit did not survive the reconnect");
+
+            Assert.That(Held(again, DarknessItem), Is.Zero,
+                "a second fruit appeared after the reconnect");
+
+            Assert.That(again.Inventory.IndexOf(decided), Is.LessThan(0),
+                "the consumed item came back");
+
+            Assert.That(_bootstrap.Loot.All().Count, Is.Zero);
             Assert.That(_rolls.RareRolls, Is.Zero);
         }
 

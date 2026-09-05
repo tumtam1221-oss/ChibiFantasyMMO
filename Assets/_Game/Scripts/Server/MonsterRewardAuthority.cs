@@ -501,6 +501,21 @@ namespace ChibiFantasy.Server
             // Built, not yet published: it is in no map until the turn behind it is safe.
             CharacterId claimant = ClaimantFor(context);
 
+            // Each drop is given the identity it will have once somebody is carrying it,
+            // chosen here rather than at pickup. That makes it an idempotency key: a
+            // delivery repeated after a crash produces the same item instead of a second
+            // one. The same InstanceId a pickup would have minted, only decided earlier.
+            if (rolled != null)
+            {
+                for (var i = 0; i < rolled.Count; i++)
+                {
+                    LootResult roll = rolled[i];
+
+                    rolled[i] = new LootResult(roll.Source, roll.Item, roll.Quantity,
+                        roll.RarityOverride, InstanceId.New());
+                }
+            }
+
             var held = new HeldDefeat
             {
                 Monster = monster,
@@ -537,7 +552,8 @@ namespace ChibiFantasy.Server
                 for (var i = 0; i < rolled.Count; i++)
                 {
                     held.Entries.Add(new MonsterRewardLootEntry(i, rolled[i].Item,
-                        rolled[i].Quantity, rolled[i].RarityOverride));
+                        rolled[i].Quantity, rolled[i].RarityOverride, false, default,
+                        rolled[i].Instance));
                 }
             }
 
@@ -943,9 +959,21 @@ namespace ChibiFantasy.Server
 
                 if (_items != null && !_items.Contains(entry.Item)) return null;
 
+                // A stored drop with no decided identity cannot be delivered idempotently:
+                // a retry would mint one and nothing could tell the two apart. Refused
+                // rather than given one now, because the identity belongs to the decision
+                // and this is not where decisions are made.
+                if (!entry.Instance.IsValid) return null;
+
                 outstanding.Add(new LootResult(reward.Defeat, entry.Item, entry.Quantity,
-                    entry.Rarity));
+                    entry.Rarity, entry.Instance));
             }
+
+            // Anything already in the claimant's bag is delivered, whatever the delivery
+            // stamp says. This is the crash window this gate closes: the inventory
+            // committed, the stamp did not, and without this the pile would go back on the
+            // ground for a second pickup.
+            Reconcile(held, outstanding);
 
             if (outstanding.Count > 0 && reward.Loot.IsValid)
             {
@@ -958,6 +986,79 @@ namespace ChibiFantasy.Server
             }
 
             return held;
+        }
+
+        /// <summary>
+        /// Marks as delivered anything the claimant is demonstrably already carrying.
+        /// </summary>
+        /// <remarks>
+        /// <b>Durable ownership outranks the delivery stamp.</b> The item and the stamp
+        /// travel through different aggregates and cannot be written in one transaction, so
+        /// the ordering is chosen to fail safely: the bag is written first and the stamp
+        /// second. A crash in between therefore looks like "owned but unclaimed", and the
+        /// only correct reading of that is delivered.
+        ///
+        /// <b>Somebody else's copy is a conflict, not a delivery.</b> An identity found in
+        /// the wrong inventory is reported and left alone: transferring it would move an
+        /// item nobody asked to move, and re-publishing it would create a second one.
+        ///
+        /// Only characters this world can see are checked. One that is offline is not
+        /// evidence of anything, and the pickup itself refuses a duplicate identity anyway.
+        /// </remarks>
+        private void Reconcile(HeldDefeat held, List<LootResult> outstanding)
+        {
+            if (_characters == null || outstanding.Count == 0) return;
+
+            for (var i = held.Entries.Count - 1; i >= 0; i--)
+            {
+                MonsterRewardLootEntry entry = held.Entries[i];
+
+                if (entry.IsClaimed || !entry.Instance.IsValid) continue;
+
+                if (!TryFindOwner(entry.Instance, out CharacterId owner)) continue;
+
+                if (owner != held.Claimant)
+                {
+                    UnityEngine.Debug.LogWarning("[reward] " + entry.Item
+                        + " from " + held.Monster + " is held by " + owner
+                        + " and not by the character it was decided for; leaving it alone");
+
+                    continue;
+                }
+
+                held.Entries[i] = new MonsterRewardLootEntry(entry.Index, entry.Item,
+                    entry.Quantity, entry.Rarity, true, owner, entry.Instance);
+
+                for (var r = outstanding.Count - 1; r >= 0; r--)
+                {
+                    if (outstanding[r].Instance == entry.Instance) outstanding.RemoveAt(r);
+                }
+
+                Progress(held, claimed: new[] { held.Entries[i] });
+            }
+        }
+
+        /// <summary>Who, of the characters in this world, is carrying that exact item.</summary>
+        private bool TryFindOwner(InstanceId instance, out CharacterId owner)
+        {
+            owner = default;
+
+            IReadOnlyList<LivingCharacter> here = _characters.All();
+
+            for (var i = 0; i < here.Count; i++)
+            {
+                LivingCharacter living = here[i];
+
+                if (living == null || living.Inventory == null) continue;
+
+                if (living.Inventory.IndexOf(instance) < 0) continue;
+
+                owner = living.Character;
+
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>

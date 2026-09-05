@@ -16,12 +16,13 @@ namespace ChibiFantasy.Gameplay
     public readonly struct LootResult
     {
         public LootResult(InstanceId source, DefinitionId item, int quantity,
-            DefinitionId rarityOverride = default)
+            DefinitionId rarityOverride = default, InstanceId instance = default)
         {
             Source = source;
             Item = item;
             Quantity = quantity;
             RarityOverride = rarityOverride;
+            Instance = instance;
         }
 
         /// <summary>What it came off. Kept so loot can be attributed and expired.</summary>
@@ -33,6 +34,21 @@ namespace ChibiFantasy.Gameplay
 
         /// <summary>Tier to stamp on dropped equipment. Invalid leaves the authored one.</summary>
         public DefinitionId RarityOverride { get; }
+
+        /// <summary>
+        /// The identity this drop will have once somebody is carrying it, when that was
+        /// decided in advance.
+        /// </summary>
+        /// <remarks>
+        /// <b>Usually invalid, and that is the ordinary case.</b> An item minted on pickup
+        /// gets its identity then, which is all an ephemeral drop needs.
+        ///
+        /// A drop whose reward is written down before it is delivered is different: the
+        /// same entry may be handed over after a crash, and without a decided identity the
+        /// second attempt would mint a second item. So the identity is chosen with the
+        /// reward and carried here, where the pickup can use it instead of a fresh one.
+        /// </remarks>
+        public InstanceId Instance { get; }
 
         public bool IsValid => Item.IsValid && Quantity > 0;
 

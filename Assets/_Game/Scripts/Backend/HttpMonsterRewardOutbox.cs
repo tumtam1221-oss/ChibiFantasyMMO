@@ -93,6 +93,8 @@ namespace ChibiFantasy.Backend
                     .Append("\",\"quantity\":").Append(entry.Quantity)
                     .Append(",\"rarity_definition_id\":\"")
                     .Append(Escaped(entry.Rarity.IsValid ? entry.Rarity.Value : string.Empty))
+                    .Append("\",\"item_instance_id\":\"")
+                    .Append(Escaped(entry.Instance.Value ?? string.Empty))
                     .Append("\"}");
             }
 
@@ -230,13 +232,16 @@ namespace ChibiFantasy.Backend
             {
                 string rarity = entry.String("rarity_definition_id");
 
+                string identity = entry.String("item_instance_id");
+
                 entries.Add(new MonsterRewardLootEntry(
                     entry.Int("entry_index"),
                     new DefinitionId(entry.String("item_definition_id")),
                     entry.Int("quantity"),
                     string.IsNullOrEmpty(rarity) ? default : new DefinitionId(rarity),
                     entry.Bool("claimed"),
-                    new CharacterId(entry.String("claimed_by"))));
+                    new CharacterId(entry.String("claimed_by")),
+                    string.IsNullOrEmpty(identity) ? default : new InstanceId(identity)));
             }
 
             string loot = row.String("loot_id");

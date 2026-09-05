@@ -48,7 +48,8 @@ final class MonsterRewardRepository
      * envelope would never be found.
      *
      * @param list<array{character_id:string,experience:int}> $experience
-     * @param list<array{item_definition_id:string,quantity:int,rarity_definition_id?:string}> $loot
+     * @param list<array{item_definition_id:string,quantity:int,rarity_definition_id?:string,
+     *                    item_instance_id:string}> $loot
      * @return array{ok:bool,reason?:string,reward_id?:string,existing?:bool,revision?:int}
      */
     public function record(array $envelope, array $experience, array $loot): array
@@ -67,6 +68,8 @@ final class MonsterRewardRepository
             return ['ok' => false, 'reason' => 'invalid_party_cursor'];
         }
 
+        $identities = [];
+
         foreach ($loot as $entry) {
             if (trim((string) ($entry['item_definition_id'] ?? '')) === '') {
                 return ['ok' => false, 'reason' => 'invalid_loot_entry'];
@@ -75,6 +78,22 @@ final class MonsterRewardRepository
             if ((int) ($entry['quantity'] ?? 0) <= 0) {
                 return ['ok' => false, 'reason' => 'invalid_loot_quantity'];
             }
+
+            $identity = trim((string) ($entry['item_instance_id'] ?? ''));
+
+            // A drop with no decided identity cannot be delivered idempotently: a retry
+            // after a crash would mint a second item and nothing could tell them apart.
+            // Refused rather than given one here, because the identity belongs to the
+            // decision and this is not where decisions are made.
+            if ($identity === '') {
+                return ['ok' => false, 'reason' => 'missing_item_instance_id'];
+            }
+
+            if (isset($identities[$identity])) {
+                return ['ok' => false, 'reason' => 'duplicate_item_instance_id'];
+            }
+
+            $identities[$identity] = true;
         }
 
         foreach ($experience as $grant) {
@@ -155,8 +174,8 @@ final class MonsterRewardRepository
             $item = $this->pdo->prepare(
                 'INSERT INTO monster_reward_loot
                     (reward_id, entry_index, item_definition_id, quantity,
-                     rarity_definition_id)
-                 VALUES (:reward, :idx, :item, :qty, :rarity)'
+                     rarity_definition_id, item_instance_id)
+                 VALUES (:reward, :idx, :item, :qty, :rarity, :instance)'
             );
 
             foreach (array_values($loot) as $index => $row) {
@@ -166,6 +185,7 @@ final class MonsterRewardRepository
                     ':item'   => (string) $row['item_definition_id'],
                     ':qty'    => (int) $row['quantity'],
                     ':rarity' => (string) ($row['rarity_definition_id'] ?? ''),
+                    ':instance' => (string) $row['item_instance_id'],
                 ]);
             }
 
@@ -189,7 +209,9 @@ final class MonsterRewardRepository
                         'revision'  => (int) $winner['revision']];
                 }
 
-                return ['ok' => false, 'reason' => 'duplicate_reward'];
+                // Not the defeat, then: something else unique was repeated, and the
+                // only other one is the item identity.
+                return ['ok' => false, 'reason' => 'duplicate_item_instance_id'];
             }
 
             throw $e;
@@ -435,13 +457,14 @@ final class MonsterRewardRepository
 
     /**
      * @return list<array{entry_index:int,item_definition_id:string,quantity:int,
-     *                    rarity_definition_id:string,claimed:bool,claimed_by:string}>
+     *                    rarity_definition_id:string,item_instance_id:string,
+     *                    claimed:bool,claimed_by:string}>
      */
     private function lootOf(string $rewardId): array
     {
         $statement = $this->pdo->prepare(
             'SELECT entry_index, item_definition_id, quantity, rarity_definition_id,
-                    claimed_at, claimed_by_character_id
+                    item_instance_id, claimed_at, claimed_by_character_id
              FROM monster_reward_loot WHERE reward_id = :id
              ORDER BY entry_index ASC'
         );
@@ -456,6 +479,8 @@ final class MonsterRewardRepository
                 'item_definition_id'   => (string) $row['item_definition_id'],
                 'quantity'             => (int) $row['quantity'],
                 'rarity_definition_id' => (string) $row['rarity_definition_id'],
+                'item_instance_id'     => $row['item_instance_id'] === null
+                    ? '' : (string) $row['item_instance_id'],
                 'claimed'              => $row['claimed_at'] !== null,
                 'claimed_by'           => (string) $row['claimed_by_character_id'],
             ];

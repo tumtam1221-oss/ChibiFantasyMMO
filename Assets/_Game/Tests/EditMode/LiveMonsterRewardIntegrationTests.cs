@@ -637,7 +637,8 @@ namespace ChibiFantasy.Tests.EditMode
                 new[]
                 {
                     new MonsterRewardLootEntry(0,
-                        new DefinitionId("item.devil_fruit.darkness"), 1),
+                        new DefinitionId("item.devil_fruit.darkness"), 1, default, false,
+                        default, new InstanceId("item-" + rewardId)),
                 });
 
             // A: the decision reaches MySQL.
@@ -733,6 +734,105 @@ namespace ChibiFantasy.Tests.EditMode
             }
 
             return default;
+        }
+
+        /// <summary>
+        /// An item already carried, reconciled against MySQL rather than handed out twice.
+        /// </summary>
+        /// <remarks>
+        /// The crash window this gate closes, proved against the real database: the bag is
+        /// durable, the delivery stamp is not, and a fresh world has to work out that the
+        /// entry is already delivered rather than putting it back on the ground.
+        /// </remarks>
+        [Test]
+        public void AnItemAlreadyOwnedIsReconciledInMySqlRatherThanDeliveredTwice()
+        {
+            var outbox = new HttpMonsterRewardOutbox(_transport, new ApiToken(_api));
+
+            var me = new CharacterId(_fixture.RewardCharacterId);
+            string tag = RequestId.New().Value;
+
+            var defeat = new InstanceId("defeat-18-15a-" + tag);
+            var loot = new InstanceId("loot-18-15a-" + tag);
+            var item = new InstanceId("item-18-15a-" + tag);
+            string rewardId = "reward-18-15a-" + tag;
+
+            var decided = new PersistedMonsterReward(rewardId, defeat,
+                new DefinitionId("monster.ancient_slime_king"),
+                new DefinitionId("map.harbor_town"), me,
+                loot, 3, me, 0f, 0f, 0f, default, 0, false,
+                new[] { new MonsterRewardGrant(me, 450) },
+                new[]
+                {
+                    new MonsterRewardLootEntry(0,
+                        new DefinitionId("item.devil_fruit.darkness"), 1, default, false,
+                        default, item),
+                });
+
+            Assert.That(outbox.Record(_api.Session, decided).IsOk, Is.True,
+                "the decision did not reach MySQL");
+
+            // A: the identity is in the database, and nothing has been delivered.
+            PersistedMonsterReward stored = Pending(
+                new HttpMonsterRewardOutbox(_transport, new ApiToken(_api)), defeat);
+
+            Assert.That(stored.Exists, Is.True);
+            Assert.That(stored.Entries[0].Instance, Is.EqualTo(item),
+                "the decided item identity did not survive PHP and MySQL");
+            Assert.That(stored.Entries[0].IsClaimed, Is.False,
+                "an undelivered entry came back stamped");
+
+            // A second recording of the same defeat -- the retry a world makes when it
+            // never heard the first answer -- must not mint a second identity.
+            MonsterRewardOutboxResult again = outbox.Record(_api.Session, decided);
+
+            Assert.That(again.IsOk, Is.True, again.Detail);
+            Assert.That(again.WasAlreadyRecorded, Is.True);
+
+            Assert.That(Pending(new HttpMonsterRewardOutbox(_transport, new ApiToken(_api)),
+                    defeat).Entries[0].Instance, Is.EqualTo(item),
+                "the retry changed the identity the item will be delivered as");
+
+            // B and C: the world reconciles -- the bag already holds it -- and stamps the
+            // delivery through a store that has never seen this reward before.
+            var reader = new HttpMonsterRewardOutbox(_transport, new ApiToken(_api));
+
+            MonsterRewardOutboxResult reconciled = reader.Progress(_api.Session,
+                stored.RewardId, stored.Revision, null,
+                new[]
+                {
+                    new MonsterRewardLootEntry(0, stored.Entries[0].Item, 1, default, true,
+                        me, item),
+                }, null, true, false);
+
+            Assert.That(reconciled.IsOk, Is.True, reconciled.Detail);
+
+            PersistedMonsterReward after = Pending(
+                new HttpMonsterRewardOutbox(_transport, new ApiToken(_api)), defeat);
+
+            Assert.That(after.Entries[0].IsClaimed, Is.True,
+                "the reconciliation did not reach MySQL");
+            Assert.That(after.Entries[0].ClaimedBy, Is.EqualTo(me));
+            Assert.That(after.Entries[0].Instance, Is.EqualTo(item),
+                "stamping the delivery changed the item's identity");
+
+            // And nothing anywhere claims a second item with that identity.
+            var conflicting = new PersistedMonsterReward("reward-18-15a-clash-" + tag,
+                new InstanceId("defeat-18-15a-clash-" + tag), decided.Monster, decided.Map,
+                me, new InstanceId("loot-clash-" + tag), 3, me, 0f, 0f, 0f, default, 0,
+                false, new[] { new MonsterRewardGrant(me, 1) },
+                new[]
+                {
+                    new MonsterRewardLootEntry(0, decided.Entries[0].Item, 1, default,
+                        false, default, item),
+                });
+
+            Assert.That(outbox.Record(_api.Session, conflicting).IsOk, Is.False,
+                "MySQL let two rewards become the same item");
+
+            // Finished, so the fixture leaves nothing owed behind.
+            Assert.That(reader.Progress(_api.Session, after.RewardId, after.Revision,
+                new[] { me }, null, null, null, true).IsOk, Is.True);
         }
 
         // ---- devil fruit reaches MySQL ------------------------------------------------------------

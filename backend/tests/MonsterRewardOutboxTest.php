@@ -65,10 +65,14 @@ final class MonsterRewardOutboxTest extends BackendTestCase
         ];
     }
 
-    /** @return list<array{item_definition_id:string,quantity:int}> */
-    private function darkness(): array
+    /** @return list<array{item_definition_id:string,quantity:int,item_instance_id:string}> */
+    private function darkness(string $instance = 'item-instance-1'): array
     {
-        return [['item_definition_id' => 'item.devil_fruit.darkness', 'quantity' => 1]];
+        return [[
+            'item_definition_id' => 'item.devil_fruit.darkness',
+            'quantity'           => 1,
+            'item_instance_id'   => $instance,
+        ]];
     }
 
     // ---- recording a decision ----------------------------------------------------------
@@ -143,7 +147,7 @@ final class MonsterRewardOutboxTest extends BackendTestCase
             $this->split(), $this->darkness());
 
         $second = $this->rewards->record($this->envelope('defeat-2', 'reward-2', 'loot-2'),
-            $this->split(), $this->darkness());
+            $this->split(), $this->darkness('item-instance-2'));
 
         self::assertTrue($second['ok']);
         self::assertFalse($second['existing']);
@@ -174,7 +178,7 @@ final class MonsterRewardOutboxTest extends BackendTestCase
             $this->split(), $this->darkness());
 
         $this->rewards->record($this->envelope('defeat-2', 'reward-2', 'loot-2', null),
-            $this->split(), $this->darkness());
+            $this->split(), $this->darkness('item-instance-2'));
 
         self::assertSame(0, $this->rewards->find('reward-1')['party_cursor'],
             'the first member\'s turn was read as no turn');
@@ -198,7 +202,8 @@ final class MonsterRewardOutboxTest extends BackendTestCase
     public function testALootEntryWithNoItemIsRefusedRatherThanSubstituted(): void
     {
         $result = $this->rewards->record($this->envelope(), $this->split(),
-            [['item_definition_id' => '', 'quantity' => 1]]);
+            [['item_definition_id' => '', 'quantity' => 1,
+              'item_instance_id' => 'item-instance-1']]);
 
         self::assertFalse($result['ok']);
         self::assertSame('invalid_loot_entry', $result['reason']);
@@ -208,7 +213,8 @@ final class MonsterRewardOutboxTest extends BackendTestCase
     public function testALootEntryWithNoQuantityIsRefused(): void
     {
         $result = $this->rewards->record($this->envelope(), $this->split(),
-            [['item_definition_id' => 'item.devil_fruit.darkness', 'quantity' => 0]]);
+            [['item_definition_id' => 'item.devil_fruit.darkness', 'quantity' => 0,
+              'item_instance_id' => 'item-instance-1']]);
 
         self::assertFalse($result['ok']);
         self::assertSame('invalid_loot_quantity', $result['reason']);
@@ -397,8 +403,10 @@ final class MonsterRewardOutboxTest extends BackendTestCase
     public function testARefusedRecordLeavesNoChildRowsBehind(): void
     {
         $this->rewards->record($this->envelope(), $this->split(),
-            [['item_definition_id' => 'item.devil_fruit.darkness', 'quantity' => 1],
-             ['item_definition_id' => '', 'quantity' => 1]]);
+            [['item_definition_id' => 'item.devil_fruit.darkness', 'quantity' => 1,
+              'item_instance_id' => 'item-instance-1'],
+             ['item_definition_id' => '', 'quantity' => 1,
+              'item_instance_id' => 'item-instance-2']]);
 
         self::assertSame(0, (int) $this->pdo
             ->query('SELECT COUNT(*) FROM monster_reward_loot')->fetchColumn());
@@ -417,5 +425,126 @@ final class MonsterRewardOutboxTest extends BackendTestCase
         self::assertEqualsWithDelta(2.5, $loaded['position_y'], 0.001);
         self::assertEqualsWithDelta(-3.5, $loaded['position_z'], 0.001,
             'a fractional coordinate was rounded on the way to MySQL');
+    }
+
+    // ---- the identity a drop will have ------------------------------------------------
+
+    public function testTheDecidedItemIdentityRoundTrips(): void
+    {
+        $this->rewards->record($this->envelope(), $this->split(),
+            $this->darkness('item-instance-x'));
+
+        self::assertSame('item-instance-x',
+            $this->rewards->find('reward-1')['loot'][0]['item_instance_id'],
+            'the identity the drop will be delivered as did not survive');
+    }
+
+    public function testADropWithNoDecidedIdentityIsRefusedRatherThanGivenOne(): void
+    {
+        // Minting one here would let a retry after a crash produce a second item that
+        // nothing could tell apart from the first.
+        $result = $this->rewards->record($this->envelope(), $this->split(),
+            [['item_definition_id' => 'item.devil_fruit.darkness', 'quantity' => 1]]);
+
+        self::assertFalse($result['ok']);
+        self::assertSame('missing_item_instance_id', $result['reason']);
+        self::assertNull($this->rewards->find('reward-1'));
+    }
+
+    public function testOneRewardCannotClaimTheSameIdentityTwice(): void
+    {
+        $result = $this->rewards->record($this->envelope(), $this->split(), [
+            ['item_definition_id' => 'item.coin', 'quantity' => 1,
+             'item_instance_id' => 'item-instance-same'],
+            ['item_definition_id' => 'item.coin', 'quantity' => 1,
+             'item_instance_id' => 'item-instance-same'],
+        ]);
+
+        self::assertFalse($result['ok']);
+        self::assertSame('duplicate_item_instance_id', $result['reason']);
+    }
+
+    public function testTwoRewardsCannotClaimTheSameIdentityAndTheDatabaseIsWhatSaysSo(): void
+    {
+        // Not a check somebody could forget to write: the UNIQUE index refuses it however
+        // the two writes race.
+        self::assertTrue($this->rewards->record($this->envelope('defeat-1', 'reward-1'),
+            $this->split(), $this->darkness('item-instance-shared'))['ok']);
+
+        $second = $this->rewards->record(
+            $this->envelope('defeat-2', 'reward-2', 'loot-2'),
+            $this->split(), $this->darkness('item-instance-shared'));
+
+        self::assertFalse($second['ok'], 'two rewards became the same item');
+        self::assertSame('duplicate_item_instance_id', $second['reason']);
+
+        self::assertNull($this->rewards->find('reward-2'),
+            'the refused reward was written anyway');
+    }
+
+    public function testARefusedIdentityLeavesNoPartialRowsBehind(): void
+    {
+        $this->rewards->record($this->envelope('defeat-1', 'reward-1'), $this->split(),
+            $this->darkness('item-instance-shared'));
+
+        $this->rewards->record($this->envelope('defeat-2', 'reward-2', 'loot-2'),
+            $this->split(), $this->darkness('item-instance-shared'));
+
+        self::assertSame(1, (int) $this->pdo
+            ->query('SELECT COUNT(*) FROM monster_reward')->fetchColumn());
+
+        self::assertSame(1, (int) $this->pdo
+            ->query('SELECT COUNT(*) FROM monster_reward_loot')->fetchColumn());
+
+        self::assertSame(2, (int) $this->pdo
+            ->query('SELECT COUNT(*) FROM monster_reward_experience')->fetchColumn());
+    }
+
+    public function testRecordingTheSameDefeatTwiceDoesNotCollideOnItsOwnIdentity(): void
+    {
+        // The retry carries the same loot, identity included. It must be recognised as the
+        // same defeat rather than refused as a duplicate item.
+        $first = $this->rewards->record($this->envelope(), $this->split(),
+            $this->darkness('item-instance-x'));
+
+        $again = $this->rewards->record($this->envelope(), $this->split(),
+            $this->darkness('item-instance-x'));
+
+        self::assertTrue($again['ok'], 'a retried save was refused: '
+            . ($again['reason'] ?? ''));
+        self::assertTrue($again['existing']);
+        self::assertSame($first['reward_id'], $again['reward_id']);
+    }
+
+    public function testAnIdentityIsRememberedAlongsideItsDeliveryStamp(): void
+    {
+        // The reconciliation case: a world needs both "which item is this" and "has it
+        // been handed over" from the same row.
+        $this->rewards->record($this->envelope(), $this->split(),
+            $this->darkness('item-instance-x'));
+
+        $before = $this->rewards->find('reward-1')['loot'][0];
+
+        self::assertSame('item-instance-x', $before['item_instance_id']);
+        self::assertFalse($before['claimed']);
+
+        $this->rewards->progress('reward-1', 1, [],
+            [['entry_index' => 0, 'character_id' => 'char-ann']]);
+
+        $after = $this->rewards->find('reward-1')['loot'][0];
+
+        self::assertSame('item-instance-x', $after['item_instance_id'],
+            'the identity changed when the delivery was stamped');
+        self::assertTrue($after['claimed']);
+        self::assertSame('char-ann', $after['claimed_by']);
+    }
+
+    public function testADefeatThatDroppedNothingAllocatesNoIdentity(): void
+    {
+        $this->rewards->record($this->envelope('defeat-empty', 'reward-empty', ''),
+            $this->split(), []);
+
+        self::assertSame([], $this->rewards->find('reward-empty')['loot'],
+            'a drop that never happened was given an item identity');
     }
 }
