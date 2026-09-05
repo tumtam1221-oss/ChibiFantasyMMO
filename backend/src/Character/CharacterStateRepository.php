@@ -90,8 +90,94 @@ final class CharacterStateRepository
                 $this->loadEquipment($accountId, $characterId)
             ),
             'inventory_capacity' => $this->loadInventoryCapacity($characterId),
+            'devil_fruit'   => $this->loadDevilFruit($characterId)['fruit'],
+            'devil_fruit_source' => $this->loadDevilFruit($characterId)['source'],
             'revisions'     => $this->loadRevisions($characterId),
         ];
+    }
+
+    /**
+     * The Devil Fruit this character owns, or empty strings for none.
+     *
+     * Keyed by a character-scoped owner id, the same shape equipment already uses. A
+     * fruit belongs to the character who ate it and not to the account: keying this by
+     * account would give every character on it the same power, and the primary key would
+     * silently stop a second character from ever eating one.
+     *
+     * Only the stable definition id and the spent instance come back. The modifiers, the
+     * ability and the immunities live in authored content, so a balance change reaches
+     * every existing owner instead of leaving copies behind in rows nobody rewrites.
+     *
+     * @return array{fruit:string,source:string}
+     */
+    private function loadDevilFruit(string $characterId): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT fruit_definition_id, source_instance_id
+             FROM character_devil_fruit
+             WHERE owner_id = :oid'
+        );
+
+        $statement->execute([':oid' => $this->devilFruitOwnerId($characterId)]);
+
+        $row = $statement->fetch();
+
+        if ($row === false) {
+            return ['fruit' => '', 'source' => ''];
+        }
+
+        return [
+            'fruit'  => (string) $row['fruit_definition_id'],
+            'source' => (string) $row['source_instance_id'],
+        ];
+    }
+
+    /**
+     * Writes the character's fruit, or removes it when they own none.
+     *
+     * Inside the caller's transaction, like every other write in a save: a character
+     * whose stats were stored but whose fruit was not would be a character who paid for
+     * something they no longer have.
+     */
+    private function writeDevilFruit(string $characterId, array $state): void
+    {
+        $fruit = trim((string) ($state['devil_fruit'] ?? ''));
+        $owner = $this->devilFruitOwnerId($characterId);
+
+        if ($fruit === '') {
+            $delete = $this->pdo->prepare(
+                'DELETE FROM character_devil_fruit WHERE owner_id = :oid'
+            );
+
+            $delete->execute([':oid' => $owner]);
+
+            return;
+        }
+
+        // Upsert rather than delete-then-insert: the row's revision and activated_at are
+        // a record of when a permanent thing happened, and re-inserting would reset both
+        // every time the character was saved for any reason at all.
+        $statement = $this->pdo->prepare(
+            'INSERT INTO character_devil_fruit
+                (owner_id, fruit_definition_id, source_instance_id, revision, activated_at)
+             VALUES (:oid, :fid, :sid, 1, NOW(3))
+             ON DUPLICATE KEY UPDATE
+                fruit_definition_id = VALUES(fruit_definition_id),
+                source_instance_id = VALUES(source_instance_id),
+                revision = revision + 1'
+        );
+
+        $statement->execute([
+            ':oid' => $owner,
+            ':fid' => $fruit,
+            ':sid' => (string) ($state['devil_fruit_source'] ?? ''),
+        ]);
+    }
+
+    /** Character-scoped, exactly as equipment ownership already is. */
+    private function devilFruitOwnerId(string $characterId): string
+    {
+        return 'df:' . $characterId;
     }
 
     /** @return list<array{stat_id:string,value:int}> */
@@ -455,6 +541,7 @@ final class CharacterStateRepository
                 $state['items'] ?? [],
                 (int) ($state['inventory_capacity'] ?? 0)
             );
+            $this->writeDevilFruit($characterId, $state);
             $this->writeRevisions($characterId, $state['revisions'] ?? [], $next);
 
             $this->pdo->commit();

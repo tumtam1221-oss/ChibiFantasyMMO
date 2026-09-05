@@ -201,8 +201,11 @@ namespace ChibiFantasy.Contracts
             DefinitionId spawn, IReadOnlyList<PersistedStat> stats,
             IReadOnlyList<PersistedAppearance> appearance, IReadOnlyList<PersistedSkill> skills,
             int saveRevision, IReadOnlyList<PersistedItem> items = null,
-            int inventoryCapacity = 0)
+            int inventoryCapacity = 0, DefinitionId devilFruit = default,
+            string devilFruitSource = null)
         {
+            DevilFruit = devilFruit;
+            DevilFruitSource = devilFruitSource ?? string.Empty;
             Items = items ?? System.Array.Empty<PersistedItem>();
             InventoryCapacity = inventoryCapacity;
             Character = character;
@@ -223,6 +226,26 @@ namespace ChibiFantasy.Contracts
             Skills = skills ?? System.Array.Empty<PersistedSkill>();
             SaveRevision = saveRevision;
         }
+
+        /// <summary>
+        /// The Devil Fruit this character permanently owns, if any.
+        /// </summary>
+        /// <remarks>
+        /// <b>A stable definition id, and nothing else.</b> Not a GUID, not an index, not a
+        /// name: those are all things that change when content is re-authored or re-ordered,
+        /// and a character would silently wake up with a different power. The modifiers, the
+        /// abilities and the immunities are read from the definition this names, never
+        /// copied into storage where they would go stale the moment balance changed.
+        ///
+        /// <b>Invalid means no fruit.</b> Distinct from "a fruit that could not be found",
+        /// which is a fault the server reports rather than a state a character can be in.
+        /// </remarks>
+        public DefinitionId DevilFruit { get; }
+
+        /// <summary>The item instance that was spent, for audit. Empty when none.</summary>
+        /// <remarks>Kept because the copy is gone from every container by the time this is
+        /// written, so this string is the only remaining record that it existed.</remarks>
+        public string DevilFruitSource { get; }
 
         public CharacterId Character { get; }
 

@@ -152,7 +152,9 @@ namespace ChibiFantasy.Backend
                 skills,
                 SaveRevisionOf(json),
                 items,
-                json.Int("inventory_capacity"));
+                json.Int("inventory_capacity"),
+                new DefinitionId(json.String("devil_fruit")),
+                json.String("devil_fruit_source"));
 
             return CharacterPersistenceResult.Loaded(persisted);
         }
@@ -218,7 +220,11 @@ namespace ChibiFantasy.Backend
                 // Zero means "this server carries no inventory", which the API reads as
                 // "leave the bag alone" rather than as "the bag is now empty". A world
                 // composed without an item registry must not delete anybody's belongings.
-                .Add("inventory_capacity", character.InventoryCapacity);
+                .Add("inventory_capacity", character.InventoryCapacity)
+                // The stable fruit id, and nothing about what it does. An empty string is
+                // "this character owns none", which is what the API deletes the row for.
+                .Add("devil_fruit", character.DevilFruit.Value ?? string.Empty)
+                .Add("devil_fruit_source", character.DevilFruitSource ?? string.Empty);
 
             var body = new System.Text.StringBuilder();
 

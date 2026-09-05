@@ -152,6 +152,9 @@ namespace ChibiFantasy.Server
         private readonly IDefinitionRegistry<SkillDefinition> _skills;
         private readonly SkillExecutionRules _skillRules;
 
+        /// <summary>Authored fruits, for the ability an owner is granted. Null when none.</summary>
+        private readonly IDefinitionRegistry<DevilFruitDefinition> _devilFruits;
+
         /// <summary>Authored status effects, or null on a world with no status content.</summary>
         /// <remarks>Passed through to the skill context, where it answers two questions the
         /// pipeline itself never asks: whether the caster is silenced, and what an effect a
@@ -185,8 +188,10 @@ namespace ChibiFantasy.Server
             in BasicAttackRules basicAttack, AttackTiming timing = default,
             IDefinitionRegistry<SkillDefinition> skills = null,
             SkillExecutionRules skillRules = default,
-            IDefinitionRegistry<StatusEffectDefinition> statusEffects = null)
+            IDefinitionRegistry<StatusEffectDefinition> statusEffects = null,
+            IDefinitionRegistry<DevilFruitDefinition> devilFruits = null)
         {
+            _devilFruits = devilFruits;
             _commands = commands;
             _monsters = monsters;
             _rewards = rewards;
@@ -305,9 +310,19 @@ namespace ChibiFantasy.Server
             // The caster's own status list and the authored effects, so the validator can
             // ask whether they are silenced and the executor can resolve what a skill
             // applies. Neither rule is restated here -- both live where they already lived.
+            // The ability their Devil Fruit grants, if they own one. Resolved from the
+            // fruit they actually have rather than from anything the request said, so a
+            // client naming a fruit skill it does not own is refused as NotLearned like any
+            // other skill nobody taught them.
+            DefinitionId granted = _devilFruits == null
+                ? DefinitionId.None
+                : DevilFruitService.ActiveAbilityOf(resolution.Attacker.DevilFruit,
+                    new DevilFruitService.Context(_devilFruits, resolution.Attacker.Status,
+                        _statusEffects, _skills, resolution.Attacker.Owner));
+
             var context = new SkillUseContext(_skills, resolution.Attacker.Skills,
                 resolution.Attacker.Domain.Progression.Level, cooldowns, _statusEffects,
-                resolution.Attacker.Status);
+                resolution.Attacker.Status, granted);
 
             SkillUseRequest request = CombatCommandAuthority.ToSkillRequest(resolution,
                 command);

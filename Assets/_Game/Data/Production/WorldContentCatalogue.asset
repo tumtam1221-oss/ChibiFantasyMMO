@@ -44,8 +44,13 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 10930e6afcf62524da5ecbecfc81bc89, type: 2}
   _skills:
   - {fileID: 11400000, guid: 00d6db5004cf501458f5a0a5e57b388f, type: 2}
-  _statusEffects: []
-  _items: []
+  - {fileID: 11400000, guid: d43a9974c613e6d4baa8b86259d99987, type: 2}
+  _statusEffects:
+  - {fileID: 11400000, guid: 3e847b96d23b649448e440a17a7366cf, type: 2}
+  _items:
+  - {fileID: 11400000, guid: 516310861e8090f4bb9c61dd30185bd2, type: 2}
+  _devilFruits:
+  - {fileID: 11400000, guid: 75728ea0d9df78547b3f5847722619e5, type: 2}
   _maxHealthStat:
     _value: stat.max_hp
   _maxManaStat:

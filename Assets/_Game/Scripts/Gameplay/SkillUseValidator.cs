@@ -26,7 +26,8 @@ namespace ChibiFantasy.Gameplay
             CharacterSkillsState learnedSkills, int casterLevel,
             SkillCooldownState cooldowns = null,
             IDefinitionRegistry<StatusEffectDefinition> statusEffects = null,
-            StatusEffectRuntimeState casterStatus = null)
+            StatusEffectRuntimeState casterStatus = null,
+            DefinitionId grantedSkill = default)
         {
             Skills = skills;
             LearnedSkills = learnedSkills;
@@ -34,6 +35,31 @@ namespace ChibiFantasy.Gameplay
             Cooldowns = cooldowns;
             StatusEffects = statusEffects;
             CasterStatus = casterStatus;
+            GrantedSkill = grantedSkill;
+        }
+
+        /// <summary>
+        /// One skill the caster may use without having learned it.
+        /// </summary>
+        /// <remarks>
+        /// <b>Granted by something they own, not taught.</b> A Devil Fruit's ability is the
+        /// case this exists for: it is theirs while they own the fruit and it is not part of
+        /// their class progression. Writing it into learned skills instead would make it
+        /// survive losing the fruit, appear in a skill tree it does not belong to, and be
+        /// saved as though it had been trained.
+        ///
+        /// <b>One, and at rank one.</b> Not a list and not a rank table, because nothing
+        /// authored today grants more than one and a wider mechanism would be inventing
+        /// rules. The skill still passes every other check below -- level, cooldown, mana,
+        /// range, silence -- so this exempts a caster from having learned it and from
+        /// nothing else.
+        /// </remarks>
+        public DefinitionId GrantedSkill { get; }
+
+        /// <summary>Whether a skill is the one this caster was granted.</summary>
+        public bool IsGranted(DefinitionId skill)
+        {
+            return GrantedSkill.IsValid && skill == GrantedSkill;
         }
 
         /// <summary>Where skill definitions are resolved from.</summary>
@@ -126,8 +152,17 @@ namespace ChibiFantasy.Gameplay
             }
 
             // --- learned state: Phase 06 owns this, we only read it ---------------
-            if (context.LearnedSkills == null
-                || !context.LearnedSkills.TryGetRank(request.Skill, out int learnedRank))
+            //
+            // A granted skill is available at rank one without being learned. Checked here
+            // rather than by pretending it was trained, so it can never be saved, ranked up
+            // or kept after whatever granted it is gone.
+            bool granted = context.IsGranted(request.Skill);
+
+            int learnedRank = granted ? 1 : 0;
+
+            if (!granted
+                && (context.LearnedSkills == null
+                    || !context.LearnedSkills.TryGetRank(request.Skill, out learnedRank)))
             {
                 return SkillUseEligibility.Rejected(SkillUseRejection.NotLearned, definition);
             }

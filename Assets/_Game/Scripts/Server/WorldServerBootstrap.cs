@@ -270,7 +270,10 @@ namespace ChibiFantasy.Server
 
             _spawnPoints = _content.BuildSpawnPoints();
 
-            var players = new WorldCharacterRegistry(characters, _spawnPoints, items);
+            DefinitionRegistry<DevilFruitDefinition> fruits = _content.BuildDevilFruits();
+
+            var players = new WorldCharacterRegistry(characters, _spawnPoints, items,
+                devilFruits: fruits);
 
             var monsters = new MonsterWorldRuntime(players, _content.BuildMonsters(),
                 _content.MaxHealthStat, new CombatTeam(_monsterTeam));
@@ -290,7 +293,7 @@ namespace ChibiFantasy.Server
             var combat = new ServerCombatPipeline(commands, monsters, null,
                 BasicAttackRules.Melee(_content.AttackStat, _content.DefenceStat,
                     MinimumDamage, _meleeReachMetres),
-                default, skills, skillRules, effects);
+                default, skills, skillRules, effects, fruits);
 
             // A command handled between ticks settles the world immediately, so a second
             // command in the same frame is never resolved against state the first one
@@ -306,11 +309,11 @@ namespace ChibiFantasy.Server
             replication.UseStatus(status);
 
             replication.UseInventory(new CharacterInventoryAuthority(players, _ => true,
-                items, replication));
+                items, replication, fruits, effects, skills, maps, _spawnPoints));
 
             var stat = new CharacterStatAuthority(players, _content.Formulas, stats, effects,
                 new EquipmentModifierResolver.Context(items),
-                _content.MaxHealthStat, _content.MaxManaStat);
+                _content.MaxHealthStat, _content.MaxManaStat, fruits, skills);
 
             Simulation = new WorldSimulation(players, replication, status, stat, movement,
                 combat, monsters);

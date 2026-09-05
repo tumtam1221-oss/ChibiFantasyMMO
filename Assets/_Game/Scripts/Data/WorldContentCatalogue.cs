@@ -64,6 +64,10 @@ namespace ChibiFantasy.Data
         [Tooltip("Items and equipment together: equipment is an item.")]
         [SerializeField] private ItemDefinition[] _items = new ItemDefinition[0];
 
+        [Tooltip("Devil Fruits. Ultra-rare, permanent, one per character.")]
+        [SerializeField] private DevilFruitDefinition[] _devilFruits =
+            new DevilFruitDefinition[0];
+
         [Header("Stat roles")]
         [Tooltip("Which derived stat is the health ceiling.")]
         [SerializeField] private DefinitionId _maxHealthStat;
@@ -135,6 +139,9 @@ namespace ChibiFantasy.Data
 
         public DefinitionRegistry<ItemDefinition> BuildItems() => Build(_items);
 
+        public DefinitionRegistry<DevilFruitDefinition> BuildDevilFruits() =>
+            Build(_devilFruits);
+
         /// <summary>
         /// Whether this catalogue describes a world that can actually run.
         /// </summary>
@@ -163,6 +170,7 @@ namespace ChibiFantasy.Data
             Check(_skills, "skill", faults);
             Check(_statusEffects, "status effect", faults);
             Check(_items, "item", faults);
+            Check(_devilFruits, "devil fruit", faults);
 
             // --- the four roles a world cannot run without --------------------------------
             DefinitionRegistry<StatDefinition> stats = Build(_stats);
@@ -255,7 +263,91 @@ namespace ChibiFantasy.Data
                 }
             }
 
+            // --- a fruit naming content this world does not have grants nothing ----------
+            DefinitionRegistry<SkillDefinition> skills = Build(_skills);
+            DefinitionRegistry<StatusEffectDefinition> effects = Build(_statusEffects);
+            DefinitionRegistry<StatDefinition> statsForFruit = stats;
+
+            for (var i = 0; i < _devilFruits.Length; i++)
+            {
+                DevilFruitDefinition fruit = _devilFruits[i];
+
+                if (fruit == null) continue;
+
+                RequireSkill(fruit.ActiveAbility, fruit.Id, "active ability", skills, faults);
+                RequireSkill(fruit.PassiveAbility, fruit.Id, "passive ability", skills, faults);
+
+                DefinitionId[] granted = fruit.GrantedEffects;
+
+                for (var g = 0; g < granted.Length; g++)
+                {
+                    if (!granted[g].IsValid) continue;
+
+                    if (!effects.TryGet(granted[g], out StatusEffectDefinition _))
+                    {
+                        faults.Add("devil fruit '" + fruit.Id + "' grants unknown effect '"
+                            + granted[g] + "'");
+                    }
+                }
+
+                StatModifier[] modifiers = fruit.StatModifiers;
+
+                for (var m = 0; m < modifiers.Length; m++)
+                {
+                    if (!modifiers[m].Stat.IsValid) continue;
+
+                    if (!statsForFruit.TryGet(modifiers[m].Stat, out StatDefinition _))
+                    {
+                        faults.Add("devil fruit '" + fruit.Id + "' modifies unknown stat '"
+                            + modifiers[m].Stat + "'");
+                    }
+                }
+            }
+
+            // --- an item that grants a fruit this world does not have is a dead item -------
+            DefinitionRegistry<DevilFruitDefinition> fruits = Build(_devilFruits);
+
+            for (var i = 0; i < _items.Length; i++)
+            {
+                ItemDefinition item = _items[i];
+
+                if (item == null) continue;
+
+                ItemUseEffect[] uses = item.UseEffects;
+
+                for (var u = 0; u < uses.Length; u++)
+                {
+                    if (uses[u].Kind != ItemEffectKind.ConsumeDevilFruit) continue;
+
+                    if (!uses[u].DevilFruit.IsValid)
+                    {
+                        faults.Add("item '" + item.Id + "' grants no devil fruit");
+
+                        continue;
+                    }
+
+                    if (!fruits.TryGet(uses[u].DevilFruit, out DevilFruitDefinition _))
+                    {
+                        faults.Add("item '" + item.Id + "' grants unknown devil fruit '"
+                            + uses[u].DevilFruit + "'");
+                    }
+                }
+            }
+
             return faults.Count == 0;
+        }
+
+        /// <summary>A fruit ability nobody authored would be an ability that does nothing.</summary>
+        private static void RequireSkill(DefinitionId skill, DefinitionId fruit, string role,
+            DefinitionRegistry<SkillDefinition> skills, List<string> faults)
+        {
+            if (!skill.IsValid) return;
+
+            if (!skills.TryGet(skill, out SkillDefinition _))
+            {
+                faults.Add("devil fruit '" + fruit + "' names unknown " + role + " '"
+                    + skill + "'");
+            }
         }
 
         /// <summary>

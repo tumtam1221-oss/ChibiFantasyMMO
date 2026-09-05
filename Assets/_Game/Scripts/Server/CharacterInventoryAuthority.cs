@@ -40,12 +40,13 @@ namespace ChibiFantasy.Server
     public readonly struct CharacterInventoryResult
     {
         private CharacterInventoryResult(bool accepted, InventoryRequestRejection rejection,
-            ItemContainerResult container, EquipResult equip)
+            ItemContainerResult container, EquipResult equip, ItemUseResult use = default)
         {
             IsAccepted = accepted;
             Rejection = rejection;
             Container = container;
             Equip = equip;
+            Use = use;
         }
 
         public bool IsAccepted { get; }
@@ -57,6 +58,9 @@ namespace ChibiFantasy.Server
 
         /// <summary>The equipment service's own answer, for equip and unequip.</summary>
         public EquipResult Equip { get; }
+
+        /// <summary>What using an item did, when the action was a use.</summary>
+        public ItemUseResult Use { get; }
 
         public static CharacterInventoryResult Refused(InventoryRequestRejection rejection)
         {
@@ -81,12 +85,25 @@ namespace ChibiFantasy.Server
                 default, result);
         }
 
+        /// <summary>Carries the item-use outcome, refusal reason and all.</summary>
+        /// <remarks>The reason is kept rather than flattened to "refused": a player who
+        /// already owns a fruit and one whose bag slot was empty need different words, and
+        /// the server is the only thing that knows which happened.</remarks>
+        public static CharacterInventoryResult FromUse(in ItemUseResult result)
+        {
+            return new CharacterInventoryResult(result.IsAccepted,
+                result.IsAccepted
+                    ? InventoryRequestRejection.None
+                    : InventoryRequestRejection.Refused,
+                default, default, result);
+        }
+
         public override string ToString()
         {
             if (IsAccepted) return "accepted";
 
             return Rejection == InventoryRequestRejection.Refused
-                ? "refused: " + Container + " " + Equip
+                ? "refused: " + Container + " " + Equip + " " + Use
                 : "refused: " + Rejection;
         }
     }
@@ -120,6 +137,15 @@ namespace ChibiFantasy.Server
         private readonly IDefinitionRegistry<ItemDefinition> _items;
         private readonly CharacterReplicationService _replication;
 
+        // Content the authored effects of a used item may reach: a fruit to activate, an
+        // effect to apply, an ability to check, a map to warp to. All read-only registries;
+        // what any of them does is authored on the item, never decided here.
+        private readonly IDefinitionRegistry<DevilFruitDefinition> _devilFruits;
+        private readonly IDefinitionRegistry<StatusEffectDefinition> _statusEffects;
+        private readonly IDefinitionRegistry<SkillDefinition> _skills;
+        private readonly IDefinitionRegistry<MapDefinition> _maps;
+        private readonly IDefinitionRegistry<SpawnPointDefinition> _spawnPoints;
+
         /// <summary>The last request sequence accepted per character, so a replay is refused.</summary>
         /// <remarks>Its own stream, like combat's and movement's and for the same reason: a
         /// player rearranging their bag must not advance the counter their next attack is
@@ -140,12 +166,22 @@ namespace ChibiFantasy.Server
         public CharacterInventoryAuthority(WorldCharacterRegistry characters,
             CombatCommandAuthority.WorldConnectionRegistryAdapter canAct,
             IDefinitionRegistry<ItemDefinition> items,
-            CharacterReplicationService replication = null)
+            CharacterReplicationService replication = null,
+            IDefinitionRegistry<DevilFruitDefinition> devilFruits = null,
+            IDefinitionRegistry<StatusEffectDefinition> statusEffects = null,
+            IDefinitionRegistry<SkillDefinition> skills = null,
+            IDefinitionRegistry<MapDefinition> maps = null,
+            IDefinitionRegistry<SpawnPointDefinition> spawnPoints = null)
         {
             _characters = characters;
             _connections = canAct;
             _items = items;
             _replication = replication;
+            _devilFruits = devilFruits;
+            _statusEffects = statusEffects;
+            _skills = skills;
+            _maps = maps;
+            _spawnPoints = spawnPoints;
         }
 
         /// <summary>How many requests have been handled, accepted or not.</summary>
@@ -205,6 +241,12 @@ namespace ChibiFantasy.Server
             if (entity == null) return false;
 
             entity.ServerPublishInventory(SnapshotOf(character));
+
+            // What they own now travels with what is in their bag, because using a fruit
+            // changes both at once and two messages could arrive in either order.
+            entity.ServerPublishDevilFruit(character.DevilFruit == null
+                ? string.Empty
+                : character.DevilFruit.ActiveFruit.Value ?? string.Empty);
 
             return true;
         }
@@ -354,6 +396,9 @@ namespace ChibiFantasy.Server
                             character.Inventory, character.Equipment,
                             (Data.EquipmentSlot)from, EquipContext(character)));
 
+                case InventoryAction.Use:
+                    return Use(character, from);
+
                 default:
                     return CharacterInventoryResult.Refused(
                         InventoryRequestRejection.UnsupportedAction);
@@ -366,6 +411,47 @@ namespace ChibiFantasy.Server
         /// <remarks>Level, class and job come from the authoritative character, never from
         /// the request -- which is what stops a level-one client wearing a level-sixty
         /// sword by saying it is level sixty.</remarks>
+        /// <summary>
+        /// Uses whatever is in a slot, and lets the item decide what that means.
+        /// </summary>
+        /// <remarks>
+        /// <b>No branch on what the item is.</b> There is no "if this is a Devil Fruit"
+        /// here: <see cref="ItemUseService"/> reads the authored effects and this hands it
+        /// the state those effects are allowed to touch. A potion, a warp scroll and an
+        /// ultra-rare fruit take exactly the same path, which is why adding the eleventh
+        /// fruit is content and not code.
+        ///
+        /// <b>The item is spent by the service, not here.</b> That service validates every
+        /// effect before applying any of them, so a fruit a character cannot eat is refused
+        /// with the fruit still in the bag -- rather than consumed to discover the refusal.
+        /// Splitting the decision across two places is what would make that possible.
+        /// </remarks>
+        private CharacterInventoryResult Use(LivingCharacter character, int slot)
+        {
+            if (character.Inventory == null)
+            {
+                return CharacterInventoryResult.Refused(
+                    InventoryRequestRejection.MissingContext);
+            }
+
+            var context = new ItemUseService.Context(_items,
+                character.Domain.Resources,
+                character.Combatant.Limits,
+                _statusEffects,
+                _maps,
+                _spawnPoints,
+                character.Owner,
+                null,
+                _devilFruits,
+                character.DevilFruit,
+                null,
+                _skills,
+                character.Status);
+
+            return CharacterInventoryResult.FromUse(
+                ItemUseService.Use(character.Inventory, slot, context));
+        }
+
         private EquipmentService.Context EquipContext(LivingCharacter character)
         {
             return new EquipmentService.Context(_items,

@@ -1,0 +1,60 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0c8a460d67bf6aa49ab75a939baa879e, type: 3}
+  m_Name: skill_dark_shroud
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.SkillDefinition
+  _id:
+    _value: skill.dark_shroud
+  _nameKey:
+    _key: skill.dark_shroud.name
+  _descriptionKey:
+    _key: skill.dark_shroud.desc
+  _icon:
+    _address: 
+  _category: 1
+  _targetType: 3
+  _maxLevel: 1
+  _resourceType: 1
+  _baseResourceCost: 10
+  _cooldownSeconds: 20
+  _castTimeSeconds: 0
+  _range: 7
+  _requiredClass:
+    _value: 
+  _requiredJob:
+    _value: 
+  _prerequisites: []
+  _levels:
+  - _level: 1
+    _requiredCharacterLevel: 1
+    _resourceCost: 10
+    _cooldownSeconds: 20
+    _effects:
+    - _kind: 3
+      _reference:
+        _value: status.darkness_silence
+      _element: 6
+      _damageType: 0
+      _resource: 0
+      _flatAmount: 0
+      _scaling: []
+      _statModifier:
+        _stat:
+          _value: 
+        _kind: 0
+        _value: 0
+  _animation:
+    _address: 
+  _visualEffect:
+    _address: 
+  _soundEffect:
+    _address: 

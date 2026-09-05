@@ -183,6 +183,14 @@ namespace ChibiFantasy.Server
             entity.ServerUseInventorySink(_inventory);
             entity.ServerUseStatusSource(_status);
 
+            // The owner's fruit at spawn, read from the live state rather than captured, so
+            // a reconnecting player is told what they own before anything else happens.
+            entity.ServerUseDevilFruitSource(connectionId =>
+                _characters.TryGet(connectionId, out LivingCharacter living)
+                    && living.DevilFruit != null
+                        ? living.DevilFruit.ActiveFruit.Value ?? string.Empty
+                        : string.Empty);
+
             // Identity, including the two visual facts a client needs to draw somebody:
             // which of the two approved models they are, and what to write above them. Both
             // are already public -- the character list shows them before the world loads.

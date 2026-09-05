@@ -224,7 +224,8 @@ namespace ChibiFantasy.Server
         public static PersistedCharacter ToPersisted(Character character,
             CharacterSkillsState skills, CharacterLocationState location, ServerId server,
             AccountId account, int saveRevision, ItemContainerState inventory = null,
-            CharacterEquipmentState equipment = null)
+            CharacterEquipmentState equipment = null,
+            CharacterDevilFruitState devilFruit = null)
         {
             if (character == null) return null;
 
@@ -281,7 +282,9 @@ namespace ChibiFantasy.Server
                 learned,
                 saveRevision,
                 ItemsOf(inventory, equipment),
-                inventory == null ? 0 : inventory.Capacity);
+                inventory == null ? 0 : inventory.Capacity,
+                devilFruit == null ? default : devilFruit.ActiveFruit,
+                devilFruit == null ? null : devilFruit.SourceInstance.Value);
         }
 
         /// <summary>

@@ -316,6 +316,22 @@ namespace ChibiFantasy.Network
             {
                 TargetPublishStatus(connection, statuses);
             }
+
+            // The fruit, for the same reason: a player who reconnects owning one would
+            // otherwise be told about it only if they happened to eat another.
+            if (_devilFruit != null)
+            {
+                TargetPublishDevilFruit(connection, _devilFruit(connection.ClientId));
+            }
+        }
+
+        /// <summary>Where the owner's active fruit id is read from at spawn.</summary>
+        private System.Func<int, string> _devilFruit;
+
+        [Server]
+        public void ServerUseDevilFruitSource(System.Func<int, string> source)
+        {
+            _devilFruit = source;
         }
 
         /// <summary>Sends the owning connection a fresh snapshot.</summary>
@@ -327,6 +343,41 @@ namespace ChibiFantasy.Network
             if (Owner == null || !Owner.IsActive) return;
 
             TargetPublishInventory(Owner, snapshot);
+        }
+
+        /// <summary>
+        /// The Devil Fruit this character owns, as far as this client knows.
+        /// </summary>
+        /// <remarks>
+        /// <b>A stable id, to the owner only.</b> Not the definition, not its modifiers,
+        /// not its abilities and not the item it came from: the client is being told what
+        /// it owns so it can draw a name, and every number that follows from owning it is
+        /// computed on the server. Empty means none.
+        ///
+        /// <b>Owner-only, like the bag.</b> Whether other players can see what somebody
+        /// ate is a design decision nobody has made, and a public field would make it
+        /// silently. When that decision is taken it becomes a second, deliberately public
+        /// value rather than a change of visibility here.
+        /// </remarks>
+        public string DevilFruit { get; private set; } = string.Empty;
+
+        /// <summary>Raised on the owning client when their fruit changes.</summary>
+        public event System.Action<string> DevilFruitChanged;
+
+        [TargetRpc]
+        private void TargetPublishDevilFruit(NetworkConnection connection, string fruit)
+        {
+            DevilFruit = fruit ?? string.Empty;
+
+            DevilFruitChanged?.Invoke(DevilFruit);
+        }
+
+        [Server]
+        public void ServerPublishDevilFruit(string fruit)
+        {
+            if (Owner == null || !Owner.IsActive) return;
+
+            TargetPublishDevilFruit(Owner, fruit ?? string.Empty);
         }
 
         /// <summary>

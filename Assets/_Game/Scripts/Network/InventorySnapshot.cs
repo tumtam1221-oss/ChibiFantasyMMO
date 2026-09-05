@@ -144,7 +144,18 @@ namespace ChibiFantasy.Network
         Equip = 4,
 
         /// <summary>Take off what is worn in an equipment slot.</summary>
-        Unequip = 5
+        Unequip = 5,
+
+        /// <summary>
+        /// Use the item in a slot: a potion, a scroll, a Devil Fruit.
+        /// </summary>
+        /// <remarks>
+        /// <b>The client names a slot, never an effect.</b> What using an item does is
+        /// authored on the item, so this carries no effect, no definition id and no
+        /// outcome -- exactly like every other action here. A request that could name what
+        /// it wanted to happen would be a request to make it happen.
+        /// </remarks>
+        Use = 6
     }
 
     /// <summary>

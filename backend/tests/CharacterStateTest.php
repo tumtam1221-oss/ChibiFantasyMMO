@@ -728,6 +728,126 @@ final class CharacterStateTest extends BackendTestCase
         self::assertSame(0, $rows);
     }
 
+    // ---- devil fruit -------------------------------------------------------------
+
+    public function testACharacterWithNoDevilFruitLoadsAsOwningNone(): void
+    {
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertSame('', $loaded['devil_fruit']);
+        self::assertSame('', $loaded['devil_fruit_source']);
+    }
+
+    public function testADevilFruitSurvivesTheRoundTripAsAStableIdOnly(): void
+    {
+        $state = $this->sampleState();
+        $state['devil_fruit'] = 'devil_fruit.darkness';
+        $state['devil_fruit_source'] = 'inst-77';
+
+        self::assertTrue($this->states->save('acc-a', 'char-a1', $state, null)['ok']);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertSame('devil_fruit.darkness', $loaded['devil_fruit']);
+        self::assertSame('inst-77', $loaded['devil_fruit_source']);
+
+        // What it does is authored content, so nothing about it is stored here.
+        $columns = $this->pdo
+            ->query('SELECT * FROM character_devil_fruit')
+            ->fetch(\PDO::FETCH_ASSOC);
+
+        self::assertArrayNotHasKey('stat_modifiers', $columns);
+        self::assertArrayNotHasKey('active_ability', $columns);
+    }
+
+    public function testTheFruitBelongsToTheCharacterAndNotTheAccount(): void
+    {
+        $withFruit = $this->sampleState();
+        $withFruit['devil_fruit'] = 'devil_fruit.darkness';
+
+        $this->makeCharacter('char-a2', 'acc-a', 'srv-1', 'Ayla Two');
+
+        $this->states->save('acc-a', 'char-a1', $withFruit, null);
+
+        // The account's other character ate nothing and owns nothing.
+        $other = $this->states->load('acc-a', 'char-a2');
+
+        self::assertNotNull($other, 'the fixture needs a second character on this account');
+        self::assertSame('', $other['devil_fruit'],
+            'one character eating a fruit gave it to every character on the account');
+    }
+
+    public function testASecondCharacterCanOwnItsOwnFruitAtTheSameTime(): void
+    {
+        $first = $this->sampleState();
+        $first['devil_fruit'] = 'devil_fruit.darkness';
+
+        $second = $this->sampleState();
+        $second['devil_fruit'] = 'devil_fruit.light';
+
+        $this->makeCharacter('char-a2', 'acc-a', 'srv-1', 'Ayla Two');
+
+        self::assertTrue($this->states->save('acc-a', 'char-a1', $first, null)['ok']);
+        self::assertTrue($this->states->save('acc-a', 'char-a2', $second, null)['ok']);
+
+        self::assertSame('devil_fruit.darkness',
+            $this->states->load('acc-a', 'char-a1')['devil_fruit']);
+        self::assertSame('devil_fruit.light',
+            $this->states->load('acc-a', 'char-a2')['devil_fruit']);
+    }
+
+    public function testASaveThatOwnsNoFruitRemovesTheRowRatherThanLeavingAStaleOne(): void
+    {
+        $withFruit = $this->sampleState();
+        $withFruit['devil_fruit'] = 'devil_fruit.darkness';
+
+        $this->states->save('acc-a', 'char-a1', $withFruit, null);
+
+        $without = $this->sampleState();
+        $without['devil_fruit'] = '';
+
+        self::assertTrue($this->states->save('acc-a', 'char-a1', $without, 1)['ok']);
+
+        self::assertSame('', $this->states->load('acc-a', 'char-a1')['devil_fruit']);
+
+        $rows = (int) $this->pdo
+            ->query('SELECT COUNT(*) FROM character_devil_fruit')
+            ->fetchColumn();
+
+        self::assertSame(0, $rows, 'a fruit nobody owns is still on the table');
+    }
+
+    public function testARefusedSaveWritesNoFruitAtAll(): void
+    {
+        $stale = $this->sampleState();
+        $stale['devil_fruit'] = 'devil_fruit.darkness';
+
+        $this->states->save('acc-a', 'char-a1', $stale, 99);
+
+        self::assertSame('', $this->states->load('acc-a', 'char-a1')['devil_fruit'],
+            'a refused save granted a Devil Fruit');
+
+        $rows = (int) $this->pdo
+            ->query('SELECT COUNT(*) FROM character_devil_fruit')
+            ->fetchColumn();
+
+        self::assertSame(0, $rows);
+    }
+
+    public function testAnUnknownFruitIdIsStoredVerbatimForTheServerToRefuse(): void
+    {
+        // Storage does not know what content exists and must not guess: it keeps what it
+        // was given so the world can refuse it loudly, rather than quietly dropping the
+        // row and turning a content mistake into a silently missing power.
+        $state = $this->sampleState();
+        $state['devil_fruit'] = 'devil_fruit.not_authored';
+
+        $this->states->save('acc-a', 'char-a1', $state, null);
+
+        self::assertSame('devil_fruit.not_authored',
+            $this->states->load('acc-a', 'char-a1')['devil_fruit']);
+    }
+
     public function testAWornPieceWithNoEquipmentSlotAndNoBagSlotIsSkipped(): void
     {
         $state = $this->sampleState();

@@ -1,0 +1,52 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bc2b219010535bf4d84db8c3bcb10169, type: 3}
+  m_Name: devil_fruit_darkness
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.DevilFruitDefinition
+  _id:
+    _value: devil_fruit.darkness
+  _nameKey:
+    _key: devil_fruit.darkness.name
+  _descriptionKey:
+    _key: devil_fruit.darkness.desc
+  _icon:
+    _address: 
+  _rarity:
+    _value: rarity.legendary
+  _sourceBoss:
+    _value: 
+  _dropTable:
+    _value: 
+  _usage: 0
+  _uniqueEffectId:
+    _value: 
+  _passiveAbility:
+    _value: 
+  _activeAbility:
+    _value: skill.dark_shroud
+  _grantedEffects: []
+  _immunities: []
+  _immuneCategories: 
+  _statModifiers:
+  - _stat:
+      _value: stat.mdef
+    _kind: 0
+    _value: 10
+  - _stat:
+      _value: stat.matk
+    _kind: 0
+    _value: 15
+  _disabled: 0
+  _visualEffect:
+    _address: 
+  _soundEffect:
+    _address: 

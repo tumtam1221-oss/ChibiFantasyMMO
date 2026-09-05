@@ -67,7 +67,9 @@ namespace ChibiFantasy.Server
             IDefinitionRegistry<StatDefinition> stats,
             IDefinitionRegistry<StatusEffectDefinition> effects,
             EquipmentModifierResolver.Context equipment,
-            DefinitionId maxHealthStat, DefinitionId maxManaStat)
+            DefinitionId maxHealthStat, DefinitionId maxManaStat,
+            IDefinitionRegistry<DevilFruitDefinition> devilFruits = null,
+            IDefinitionRegistry<SkillDefinition> skills = null)
         {
             _characters = characters;
             _formulas = formulas ?? System.Array.Empty<DerivedStatFormulaDefinition>();
@@ -76,7 +78,15 @@ namespace ChibiFantasy.Server
             _equipment = equipment;
             _maxHealth = maxHealthStat;
             _maxMana = maxManaStat;
+            _devilFruits = devilFruits;
+            _skills = skills;
         }
+
+        /// <summary>Authored fruits. Null in a world with no fruit content.</summary>
+        private readonly IDefinitionRegistry<DevilFruitDefinition> _devilFruits;
+
+        /// <summary>Authored skills, which a fruit's abilities are named from.</summary>
+        private readonly IDefinitionRegistry<SkillDefinition> _skills;
 
         /// <summary>How many times stats have actually been recomputed.</summary>
         /// <remarks>For the test that proves a countdown does not cause work. A number that
@@ -222,6 +232,18 @@ namespace ChibiFantasy.Server
             {
                 character.Status.CollectModifiers(_effects, into);
             }
+
+            // The Devil Fruit, through Phase 12's own service rather than by reading the
+            // definition here. Its modifiers join the same list equipment and status use,
+            // so the one calculator below sees a character's whole self at once and no
+            // second arithmetic exists to disagree with it.
+            if (character.DevilFruit != null && _devilFruits != null)
+            {
+                DevilFruitService.CollectModifiers(character.DevilFruit,
+                    new DevilFruitService.Context(_devilFruits, character.Status, _effects,
+                        _skills, character.Owner),
+                    into);
+            }
         }
 
         /// <summary>
@@ -262,6 +284,14 @@ namespace ChibiFantasy.Server
                     hash = hash * 31 + (id == null ? 0 : id.GetHashCode());
                     hash = hash * 31 + active[i].Stacks;
                 }
+            }
+
+            // Which fruit, by revision rather than by id: activation is the only thing that
+            // moves it, so a quiet tick cannot make this differ and eating one cannot fail
+            // to. Nothing else about the fruit can change while it is owned.
+            if (character.DevilFruit != null)
+            {
+                hash = hash * 31 + character.DevilFruit.Revision.Value;
             }
 
             return hash;

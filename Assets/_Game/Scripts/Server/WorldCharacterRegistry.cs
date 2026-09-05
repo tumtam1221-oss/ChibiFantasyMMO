@@ -81,10 +81,19 @@ namespace ChibiFantasy.Server
             ServerId server, ChannelId channel, Character character, CharacterSkillsState skills,
             CharacterLocationState location, SpawnPointDefinition spawn, int saveRevision,
             CombatTeam team, ItemContainerState inventory = null,
-            CharacterEquipmentState equipment = null)
+            CharacterEquipmentState equipment = null,
+            CharacterDevilFruitState devilFruit = null)
         {
             Inventory = inventory;
             Equipment = equipment;
+
+            // One live fruit state per character, always present even when empty, so every
+            // reader asks the same object rather than null-checking a second representation
+            // into existence. Phase 12's type, unchanged: this class holds one, it does not
+            // model ownership itself.
+            DevilFruit = devilFruit
+                ?? new CharacterDevilFruitState(character.Identity.CharacterId,
+                    new OwnerId(account.Value));
             ConnectionId = connectionId;
             Session = session;
             Account = account;
@@ -128,6 +137,14 @@ namespace ChibiFantasy.Server
 
         /// <summary>The Phase 04 aggregate. There is no second character model.</summary>
         public Character Domain { get; }
+
+        /// <summary>
+        /// The Devil Fruit this character owns. Never null; empty when they own none.
+        /// </summary>
+        /// <remarks><b>The one live copy.</b> Stat modifiers, skill availability,
+        /// persistence and replication all read this object, so none of them can disagree
+        /// about what somebody ate.</remarks>
+        public CharacterDevilFruitState DevilFruit { get; }
 
         public CharacterSkillsState Skills { get; }
 
@@ -313,6 +330,9 @@ namespace ChibiFantasy.Server
         private readonly IDefinitionRegistry<ItemDefinition> _items;
         private readonly int _defaultInventoryCapacity;
 
+        /// <summary>Authored fruits, for resolving a persisted id. Null in a world with none.</summary>
+        private readonly IDefinitionRegistry<DevilFruitDefinition> _devilFruits;
+
         private readonly Dictionary<int, LivingCharacter> _byConnection =
             new Dictionary<int, LivingCharacter>();
 
@@ -334,12 +354,14 @@ namespace ChibiFantasy.Server
         public WorldCharacterRegistry(ICharacterStateStore store,
             IDefinitionRegistry<SpawnPointDefinition> spawnPoints,
             IDefinitionRegistry<ItemDefinition> items = null,
-            int defaultInventoryCapacity = 30)
+            int defaultInventoryCapacity = 30,
+            IDefinitionRegistry<DevilFruitDefinition> devilFruits = null)
         {
             _store = store;
             _spawnPoints = spawnPoints;
             _items = items;
             _defaultInventoryCapacity = defaultInventoryCapacity;
+            _devilFruits = devilFruits;
         }
 
         public int Count => _byConnection.Count;
@@ -422,9 +444,29 @@ namespace ChibiFantasy.Server
                 ? null
                 : PersistedCharacterMapper.ToEquipment(loaded.Character, owner, _items);
 
+            // The fruit they ate, restored by stable id. A row naming a fruit this world
+            // does not have is a refusal, not a substitution: silently giving somebody a
+            // different power is worse than telling an operator the content is wrong.
+            var fruit = new CharacterDevilFruitState(domain.Character.Identity.CharacterId,
+                owner);
+
+            if (loaded.Character.DevilFruit.IsValid)
+            {
+                if (_devilFruits == null
+                    || !_devilFruits.TryGet(loaded.Character.DevilFruit,
+                        out DevilFruitDefinition _))
+                {
+                    return WorldSpawnResult.Refused(WorldSpawnRejection.CorruptCharacter,
+                        "unknown devil fruit '" + loaded.Character.DevilFruit + "'");
+                }
+
+                fruit.Activate(loaded.Character.DevilFruit,
+                    new InstanceId(loaded.Character.DevilFruitSource ?? string.Empty));
+            }
+
             var living = new LivingCharacter(connectionId, admission.Session, admission.Account,
                 admission.Server, admission.Channel, domain.Character, domain.Skills, location,
-                spawn, loaded.Character.SaveRevision, team, inventory, equipment);
+                spawn, loaded.Character.SaveRevision, team, inventory, equipment, fruit);
 
             living.Combatant.SetLimits(limits);
 
@@ -513,7 +555,7 @@ namespace ChibiFantasy.Server
 
             PersistedCharacter row = PersistedCharacterMapper.ToPersisted(living.Domain,
                 living.Skills, living.Location, living.Server, living.Account,
-                living.SaveRevision, living.Inventory, living.Equipment);
+                living.SaveRevision, living.Inventory, living.Equipment, living.DevilFruit);
 
             CharacterPersistenceResult result = _store.Save(living.Session, row,
                 living.SaveRevision);
