@@ -16,17 +16,23 @@ namespace ChibiFantasy.Contracts
     /// <b>Join order is not decoration.</b> Round-robin loot and successor selection both
     /// walk the member list in sequence, so the order a party is stored in is the order it
     /// must come back in -- otherwise a server restart silently changes whose turn it is.
+    ///
+    /// <b>And neither is the cursor.</b> Storing the member list in order but forgetting
+    /// which of them is next means a restart quietly rewinds the rotation to the first
+    /// member, who then gets a second turn they never earned. The order and the position
+    /// in it are one fact, so they are stored together and read back together.
     /// </remarks>
     public readonly struct PersistedParty
     {
         public PersistedParty(PartyId party, CharacterId leader, PartyLootPolicy lootPolicy,
-            IReadOnlyList<CharacterId> members, int revision)
+            IReadOnlyList<CharacterId> members, int revision, int cursor = 0)
         {
             Party = party;
             Leader = leader;
             LootPolicy = lootPolicy;
             Members = members ?? System.Array.Empty<CharacterId>();
             Revision = revision;
+            Cursor = cursor;
         }
 
         public PartyId Party { get; }
@@ -41,13 +47,29 @@ namespace ChibiFantasy.Contracts
         /// <summary>Storage's own version, for refusing a stale write.</summary>
         public int Revision { get; }
 
+        /// <summary>
+        /// Which member is next in the round-robin, as an index into <see cref="Members"/>.
+        /// </summary>
+        /// <remarks>An index rather than a count of drops so far: a running total would
+        /// grow without bound and would have to be interpreted against a member count that
+        /// may since have changed. <see cref="IsCursorValid"/> is what a reader checks
+        /// before believing it.</remarks>
+        public int Cursor { get; }
+
+        /// <summary>Whether <see cref="Cursor"/> actually names one of these members.</summary>
+        /// <remarks>False is corruption, not a value to repair: a cursor pointing past the
+        /// end of the party names nobody's turn, and folding it back into range would hand
+        /// the next drop to an arbitrary member while looking like it worked.</remarks>
+        public bool IsCursorValid => Cursor >= 0 && Cursor < Members.Count;
+
         /// <summary>Whether this describes a party at all.</summary>
         public bool Exists => Party.IsValid && Members.Count > 0;
 
         public override string ToString()
         {
             return Exists
-                ? "party " + Party + " of " + Members.Count + " (" + LootPolicy + ")"
+                ? "party " + Party + " of " + Members.Count + " (" + LootPolicy
+                    + ", turn " + Cursor + ")"
                 : "no party";
         }
     }
@@ -70,7 +92,16 @@ namespace ChibiFantasy.Contracts
         AlreadyInAParty = 4,
 
         /// <summary>The party itself was refused: no leader, an unknown policy.</summary>
-        InvalidParty = 5
+        InvalidParty = 5,
+
+        /// <summary>
+        /// Storage answered, and what it said cannot be believed.
+        /// </summary>
+        /// <remarks>A loot policy outside the authored enum, or a round-robin cursor that
+        /// addresses no member. Separate from <see cref="InvalidParty"/> because that is a
+        /// write this world was refused, whereas this is a row already on disk: nothing the
+        /// caller can change makes it load, and an operator has to look at it.</remarks>
+        Corrupt = 6
     }
 
     /// <summary>What reading or writing a party did.</summary>

@@ -51,6 +51,8 @@ namespace ChibiFantasy.Tests.PlayMode
 
             public int Loads { get; private set; }
 
+            public int Saves { get; private set; }
+
             public PartyPersistenceResult Load(SessionId session)
             {
                 Loads++;
@@ -67,6 +69,8 @@ namespace ChibiFantasy.Tests.PlayMode
 
             public PartyPersistenceResult Save(SessionId session, PersistedParty party)
             {
+                Saves++;
+
                 foreach (string key in _byCharacter.Keys.ToArray())
                 {
                     if (_byCharacter[key].Party == party.Party) _byCharacter.Remove(key);
@@ -75,7 +79,7 @@ namespace ChibiFantasy.Tests.PlayMode
                 if (party.Members.Count == 0) return PartyPersistenceResult.Saved(0);
 
                 var stored = new PersistedParty(party.Party, party.Leader, party.LootPolicy,
-                    party.Members, party.Revision + 1);
+                    party.Members, party.Revision + 1, party.Cursor);
 
                 foreach (CharacterId member in party.Members)
                 {
@@ -424,6 +428,234 @@ namespace ChibiFantasy.Tests.PlayMode
 
             Assert.That(_bootstrap.Parties.TryGetPartyOf(new CharacterId("char-ann"),
                 out PartyState _), Is.False);
+        }
+
+        // ---- I: the turn a monster moved -----------------------------------------------------------------
+
+        [UnityTest]
+        public IEnumerator ATurnSpentOnABossIsStillSpentAfterTheWorldRestarts()
+        {
+            // The defect this gate closes. Nothing calls Persist after the kill: the
+            // rotation moves inside the reward path, and if that move is not written
+            // down, the restarted world hands the next drop back to the first member.
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter ann = Admit("char-ann", 1);
+            LivingCharacter ben = Admit("char-ben", 2);
+
+            PartyState party = Party(PartyLootPolicy.RoundRobin, ann, ben);
+            _bootstrap.Parties.Persist(Session("char-ann"), party, _parties);
+
+            PartyId original = party.Id;
+            int writesBefore = _parties.Saves;
+
+            Kill(ann, Spawn());
+
+            Assert.That(_bootstrap.Parties.RotationOf(original), Is.EqualTo(1),
+                "the boss dropped a pile without moving the party's turn");
+
+            Assert.That(_parties.Saves, Is.GreaterThan(writesBefore),
+                "the turn moved and nothing wrote it down");
+
+            yield return TearDownWorld();
+            yield return LoadWorld(roll: 0f);
+
+            Admit("char-ann", 1);
+
+            yield return Tick();
+
+            Assert.That(_bootstrap.Parties.TryGetPartyOf(new CharacterId("char-ann"),
+                out PartyState restored), Is.True);
+
+            Assert.That(_bootstrap.Parties.RotationOf(restored.Id), Is.EqualTo(1),
+                "the restarted world rewound the rotation to the first member");
+
+            Assert.That(PartyLootPolicyService.MemberOnTurn(restored,
+                    _bootstrap.Parties.RotationOf(restored.Id)),
+                Is.EqualTo(new CharacterId("char-ben")),
+                "the turn came back pointing at the wrong member");
+        }
+
+        // ---- J: A, B, C, A, across a restart each time -------------------------------------------------------
+
+        [UnityTest]
+        public IEnumerator TheRotationWalksTheWholePartyEvenIfTheWorldRestartsBetweenEveryDrop()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter ann = Admit("char-ann", 1);
+            LivingCharacter ben = Admit("char-ben", 2);
+            LivingCharacter cal = Admit("char-cal", 3);
+
+            PartyState formed = Party(PartyLootPolicy.RoundRobin, ann, ben, cal);
+            _bootstrap.Parties.Persist(Session("char-ann"), formed, _parties);
+
+            var order = new List<string>();
+
+            for (var restart = 0; restart < 4; restart++)
+            {
+                yield return TearDownWorld();
+                yield return LoadWorld();
+
+                Admit("char-ann", 1);
+
+                yield return Tick();
+
+                Assert.That(_bootstrap.Parties.TryGetPartyOf(new CharacterId("char-ann"),
+                    out PartyState party), Is.True,
+                    "restart " + restart + " lost the party");
+
+                order.Add(PartyLootPolicyService.MemberOnTurn(party,
+                    _bootstrap.Parties.RotationOf(party.Id)).Value);
+
+                // One pile handed to the party, as a defeat would.
+                _bootstrap.Parties.AdvanceRotation(party.Id);
+            }
+
+            Assert.That(order, Is.EqualTo(new[]
+            {
+                "char-ann", "char-ben", "char-cal", "char-ann",
+            }), "the rotation skipped or repeated a member across restarts");
+        }
+
+        // ---- K: the party gets smaller ------------------------------------------------------------------------
+
+        [UnityTest]
+        public IEnumerator AMemberLeavingLeavesATurnThatStillAddressesSomebody()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter ann = Admit("char-ann", 1);
+            LivingCharacter ben = Admit("char-ben", 2);
+            LivingCharacter cal = Admit("char-cal", 3);
+
+            PartyState party = Party(PartyLootPolicy.RoundRobin, ann, ben, cal);
+            _bootstrap.Parties.Persist(Session("char-ann"), party, _parties);
+
+            // Two drops: the turn now points at char-cal, the third member.
+            _bootstrap.Parties.AdvanceRotation(party.Id);
+            _bootstrap.Parties.AdvanceRotation(party.Id);
+
+            Assert.That(_bootstrap.Parties.RotationOf(party.Id), Is.EqualTo(2));
+
+            // char-cal leaves. Position two no longer exists.
+            Assert.That(party.TryRemove(cal.Character), Is.True);
+
+            Assert.That(_bootstrap.Parties.Persist(Session("char-ann"), party,
+                _parties).IsOk, Is.True, "a shrunk party could not be written");
+
+            yield return TearDownWorld();
+            yield return LoadWorld();
+
+            Admit("char-ann", 1);
+
+            yield return Tick();
+
+            Assert.That(_bootstrap.Parties.TryGetPartyOf(new CharacterId("char-ann"),
+                out PartyState restored), Is.True,
+                "a shrunk party wrote a turn its own loader refuses");
+
+            Assert.That(restored.Members.Count, Is.EqualTo(2));
+
+            // Position two, reduced against a two-member party, is position zero. Not an
+            // arbitrary choice: it is the member the running world was already going to
+            // pick, because MemberOnTurn takes the same modulo. The restart changes
+            // nothing, which is the whole point.
+            Assert.That(_bootstrap.Parties.RotationOf(restored.Id), Is.Zero);
+
+            Assert.That(PartyLootPolicyService.MemberOnTurn(restored,
+                _bootstrap.Parties.RotationOf(restored.Id)),
+                Is.EqualTo(ann.Character),
+                "the turn survived pointing at a member who left");
+        }
+
+        // ---- L: the restored turn decides who may take the boss drop -------------------------------------------
+
+        [UnityTest]
+        public IEnumerator ARestoredTurnDecidesWhoClaimsTheRareDrop()
+        {
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter ann = Admit("char-ann", 1);
+            LivingCharacter ben = Admit("char-ben", 2);
+
+            PartyState party = Party(PartyLootPolicy.RoundRobin, ann, ben);
+            _bootstrap.Parties.Persist(Session("char-ann"), party, _parties);
+
+            // One turn spent, and written down by the world rather than by this test.
+            _bootstrap.Parties.AdvanceRotation(party.Id);
+
+            yield return TearDownWorld();
+            yield return LoadWorld(roll: 0f);
+
+            LivingCharacter annAgain = Admit("char-ann", 1);
+            LivingCharacter benAgain = Admit("char-ben", 2);
+
+            yield return Tick();
+
+            Assert.That(_bootstrap.Parties.TryGetPartyOf(annAgain.Character,
+                out PartyState restored), Is.True);
+
+            Assert.That(_bootstrap.Parties.RotationOf(restored.Id), Is.EqualTo(1),
+                "the restored world forgot whose turn it was");
+
+            // char-ann kills it, but it is char-ben's turn -- and the rotation that says
+            // so came out of storage, not out of this world's memory.
+            Kill(annAgain, Spawn());
+
+            Assert.That(_rolls.RareRolls, Is.EqualTo(1),
+                "restoring a turn changed how often the fruit is rolled");
+
+            LootObjectState pile = _bootstrap.Loot.All()[0];
+
+            StandOn(annAgain, pile);
+            StandOn(benAgain, pile);
+
+            Assert.That(Pickup(annAgain, pile).IsAccepted, Is.False,
+                "the killer took a drop that a restored rotation had promised elsewhere");
+
+            Assert.That(Pickup(benAgain, pile).IsAccepted, Is.True,
+                "the member whose turn it was could not claim the drop");
+
+            Assert.That(Held(benAgain, DarknessItem), Is.EqualTo(1));
+        }
+
+        // ---- M: everybody comes back at the same moment -------------------------------------------------------
+
+        [UnityTest]
+        public IEnumerator SixMembersReconnectingAtOnceRestoreOneTurnBetweenThem()
+        {
+            yield return LoadWorld();
+
+            LivingCharacter[] members = Enumerable.Range(0, 6)
+                .Select(i => Admit("char-" + i, i + 1)).ToArray();
+
+            PartyState party = Party(PartyLootPolicy.RoundRobin, members);
+            _bootstrap.Parties.Persist(Session("char-0"), party, _parties);
+
+            _bootstrap.Parties.AdvanceRotation(party.Id);
+            _bootstrap.Parties.AdvanceRotation(party.Id);
+            _bootstrap.Parties.AdvanceRotation(party.Id);
+
+            yield return TearDownWorld();
+            yield return LoadWorld();
+
+            for (var i = 0; i < 6; i++) Admit("char-" + i, i + 1);
+
+            yield return Tick();
+
+            Assert.That(_bootstrap.Parties.Count, Is.EqualTo(1));
+
+            Assert.That(_bootstrap.Parties.TryGetPartyOf(new CharacterId("char-0"),
+                out PartyState restored), Is.True);
+
+            // Six reads of the same row must leave one turn, not six advances of it.
+            Assert.That(_bootstrap.Parties.RotationOf(restored.Id), Is.EqualTo(3),
+                "reconnecting members moved the turn between them");
+
+            Assert.That(PartyLootPolicyService.MemberOnTurn(restored,
+                _bootstrap.Parties.RotationOf(restored.Id)),
+                Is.EqualTo(new CharacterId("char-3")));
         }
 
         // ---- harness --------------------------------------------------------------------------------------------

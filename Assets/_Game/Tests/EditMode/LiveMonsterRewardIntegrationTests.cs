@@ -431,6 +431,73 @@ namespace ChibiFantasy.Tests.EditMode
                 "a disbanded party came back from MySQL");
         }
 
+        /// <summary>
+        /// Whose turn it is, through the real stack and back.
+        /// </summary>
+        /// <remarks>The cursor is the half of a party that used to be left behind: the
+        /// members reached MySQL in order and the position in that order did not, so every
+        /// restart handed the next drop back to the first member. This proves the column
+        /// exists, that PHP carries it both ways, and that MySQL refuses one that addresses
+        /// nobody.</remarks>
+        [Test]
+        public void ARoundRobinTurnSurvivesARealRoundTripThroughPhpAndMySql()
+        {
+            var store = new HttpPartyStateStore(_transport, new ApiToken(_api));
+
+            var me = new CharacterId(_fixture.RewardCharacterId);
+            var mate = new CharacterId("char-live-18-14a-mate");
+            var id = new PartyId("party-live-18-14a");
+
+            // Whatever ran before, this character starts in no party.
+            store.Save(_api.Session, new PersistedParty(id, me, PartyLootPolicy.Personal,
+                new CharacterId[0], 0));
+
+            // Two members, and it is the second one's turn.
+            PartyPersistenceResult saved = store.Save(_api.Session, new PersistedParty(
+                id, me, PartyLootPolicy.RoundRobin, new[] { me, mate }, 0, 1));
+
+            Assert.That(saved.IsOk, Is.True, "live save failed: " + saved.Detail);
+
+            // A brand new store and a brand new world: nothing in this process remembers
+            // the number, so anything read back came out of MySQL.
+            var reader = new HttpPartyStateStore(_transport, new ApiToken(_api));
+            var world = new WorldPartyRegistry();
+
+            PartyState restored = world.Restore(_api.Session, me, reader);
+
+            Assert.That(restored, Is.Not.Null, "a fresh world could not restore the party");
+
+            Assert.That(world.RotationOf(restored.Id), Is.EqualTo(1),
+                "the loot turn did not survive MySQL");
+
+            Assert.That(PartyLootPolicyService.MemberOnTurn(restored,
+                    world.RotationOf(restored.Id)), Is.EqualTo(mate),
+                "the restored turn names the wrong member");
+
+            // A turn past the end of the party is refused by the database rather than
+            // wrapped, and reported as a malformed request rather than a lost race --
+            // a world told it lost a race would re-send this forever.
+            PartyPersistenceResult refused = store.Save(_api.Session, new PersistedParty(
+                id, me, PartyLootPolicy.RoundRobin, new[] { me, mate }, 0, 5));
+
+            Assert.That(refused.IsOk, Is.False, "MySQL stored a turn addressing nobody");
+            Assert.That(refused.Failure,
+                Is.EqualTo(PartyPersistenceFailure.InvalidParty));
+
+            Assert.That(new HttpPartyStateStore(_transport, new ApiToken(_api))
+                    .Load(_api.Session).Party.Cursor, Is.EqualTo(1),
+                "a refused write moved the stored turn anyway");
+
+            // A policy nobody authored is refused by the same route.
+            Assert.That(store.Save(_api.Session, new PersistedParty(id, me,
+                (PartyLootPolicy)99, new[] { me, mate }, 0, 0)).IsOk, Is.False,
+                "MySQL stored a loot policy nobody authored");
+
+            // Disbanded, so the next run of this fixture starts clean.
+            Assert.That(store.Save(_api.Session, new PersistedParty(id, me,
+                PartyLootPolicy.Personal, new CharacterId[0], 0)).IsOk, Is.True);
+        }
+
         // ---- devil fruit reaches MySQL ------------------------------------------------------------
 
         /// <summary>

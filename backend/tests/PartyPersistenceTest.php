@@ -15,6 +15,8 @@ use ChibiFantasy\Party\PartyRepository;
  */
 final class PartyPersistenceTest extends BackendTestCase
 {
+    private const PASSWORD = 'not-a-real-password';
+
     private PartyRepository $parties;
 
     protected function setUp(): void
@@ -24,7 +26,8 @@ final class PartyPersistenceTest extends BackendTestCase
         $this->parties = new PartyRepository($this->pdo);
 
         $this->makeServer('srv-1');
-        $this->makeAccount('acc-a', 'party-a', 'not-a-real-password');
+        $this->makeChannel('ch-1', 'srv-1');
+        $this->makeAccount('acc-a', 'party-a', self::PASSWORD);
 
         foreach (['char-ann', 'char-ben', 'char-cal'] as $id) {
             $this->makeCharacter($id, 'acc-a', 'srv-1', ucfirst(substr($id, 5)));
@@ -316,5 +319,245 @@ final class PartyPersistenceTest extends BackendTestCase
                     'party rows carry gameplay state');
             }
         }
+    }
+
+    // ---- whose turn it is ------------------------------------------------------------
+
+    /**
+     * The cursor is an index into the member list, and the member list comes back in
+     * join order, so the two together are what make "whose turn is it" survive a
+     * restart. Each test below is about one of the halves failing on its own.
+     */
+    public function testTheRoundRobinCursorComesBackAsItWasStored(): void
+    {
+        $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben', 'char-cal'], null, 2);
+
+        self::assertSame(2,
+            $this->parties->loadByCharacter('char-ann')['round_robin_cursor']);
+    }
+
+    public function testAPartyThatNeverSetACursorStartsAtTheFirstMember(): void
+    {
+        $this->parties->save('party-1', 'char-ann', 1, ['char-ann', 'char-ben']);
+
+        self::assertSame(0,
+            $this->parties->loadByCharacter('char-ann')['round_robin_cursor']);
+    }
+
+    public function testEveryPositionInThePartyIsStorable(): void
+    {
+        $members = ['char-ann', 'char-ben', 'char-cal'];
+
+        foreach ([0, 1, 2] as $cursor) {
+            $this->parties->save('party-1', 'char-ann', 1, $members, null, $cursor);
+
+            self::assertSame($cursor,
+                $this->parties->loadByCharacter('char-ann')['round_robin_cursor'],
+                'position ' . $cursor . ' did not survive');
+        }
+    }
+
+    public function testACursorPastTheEndOfThePartyIsRefusedRatherThanWrapped(): void
+    {
+        // Wrapping is the failure this gate exists to prevent: 3 % 3 is 0, so a corrupt
+        // row would quietly hand the next drop to the first member and look correct.
+        $result = $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben', 'char-cal'], null, 3);
+
+        self::assertFalse($result['ok']);
+        self::assertSame('invalid_round_robin_cursor', $result['reason']);
+
+        self::assertNull($this->parties->loadByCharacter('char-ann'),
+            'a refused cursor created a party anyway');
+    }
+
+    public function testANegativeCursorIsRefused(): void
+    {
+        $result = $this->parties->save('party-1', 'char-ann', 1, ['char-ann'], null, -1);
+
+        self::assertFalse($result['ok']);
+        self::assertSame('invalid_round_robin_cursor', $result['reason']);
+    }
+
+    public function testARefusedCursorLeavesTheStoredPartyExactlyAsItWas(): void
+    {
+        $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben'], null, 1);
+
+        $refused = $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben'], null, 9);
+
+        self::assertFalse($refused['ok']);
+
+        $loaded = $this->parties->loadByCharacter('char-ann');
+
+        self::assertSame(1, $loaded['round_robin_cursor'], 'the turn was overwritten');
+        self::assertSame(1, $loaded['revision'], 'a refused save bumped the revision');
+    }
+
+    public function testTheCursorAndTheMembershipCommitTogetherOrNotAtAll(): void
+    {
+        $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben'], null, 1);
+
+        // char-cal is already spoken for, so the UNIQUE on character_id refuses the
+        // member insert after the party row has already been updated. Were the two not
+        // one transaction, the cursor would now read 2 for a two-member party -- exactly
+        // the corrupt row the loader is built to refuse.
+        $this->parties->save('party-2', 'char-cal', 0, ['char-cal']);
+
+        $refused = $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben', 'char-cal'], null, 2);
+
+        self::assertFalse($refused['ok']);
+        self::assertSame('character_already_in_a_party', $refused['reason']);
+
+        $loaded = $this->parties->loadByCharacter('char-ann');
+
+        self::assertCount(2, $loaded['members']);
+        self::assertSame(1, $loaded['round_robin_cursor'],
+            'the cursor survived a transaction the membership rolled back out of');
+    }
+
+    public function testAStaleWriteChangesNeitherTheMembershipNorTheTurn(): void
+    {
+        $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben'], null, 1);
+
+        $stale = $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben'], 99, 0);
+
+        self::assertFalse($stale['ok']);
+        self::assertSame('stale_revision', $stale['reason']);
+        self::assertSame(1,
+            $this->parties->loadByCharacter('char-ann')['round_robin_cursor']);
+    }
+
+    public function testAPartyThatShrankStoresATurnThatStillAddressesAMember(): void
+    {
+        $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben', 'char-cal'], null, 2);
+
+        // char-cal leaves. Position 2 no longer exists, so the world reduces the turn
+        // before writing; a save that still claimed 2 is refused, which is what stops a
+        // shrunk party from storing a turn nobody can take.
+        $refused = $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben'], 1, 2);
+
+        self::assertFalse($refused['ok']);
+        self::assertSame('invalid_round_robin_cursor', $refused['reason']);
+
+        $accepted = $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben'], 1, 0);
+
+        self::assertTrue($accepted['ok']);
+        self::assertSame(0,
+            $this->parties->loadByCharacter('char-ann')['round_robin_cursor']);
+    }
+
+    public function testADisbandedPartyDoesNotLendItsTurnToTheNextOne(): void
+    {
+        $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben', 'char-cal'], null, 2);
+
+        $this->parties->disband('party-1');
+
+        // Re-formed under the same id with fewer members. The tombstoned row still
+        // carries 2, which would address nobody in a two-member party.
+        $reformed = $this->parties->save('party-1', 'char-ann', 1,
+            ['char-ann', 'char-ben'], null, 0);
+
+        self::assertTrue($reformed['ok']);
+        self::assertSame(0,
+            $this->parties->loadByCharacter('char-ann')['round_robin_cursor']);
+    }
+
+    // ---- through the API -------------------------------------------------------------
+
+    private function reachTheWorld(string $characterId): string
+    {
+        $token = $this->login('party-a', self::PASSWORD);
+
+        foreach ([
+            ['/api/session/select-server', 'server_id', 'srv-1'],
+            ['/api/session/select-channel', 'channel_id', 'ch-1'],
+            ['/api/session/select-character', 'character_id', $characterId],
+        ] as [$path, $field, $value]) {
+            $this->post($path, ['request_id' => self::newRequestId(), $field => $value],
+                $token);
+        }
+
+        $this->post('/api/session/enter-world', [
+            'request_id'   => self::newRequestId(),
+            'account_id'   => 'acc-a',
+            'character_id' => $characterId,
+            'server_id'    => 'srv-1',
+            'channel_id'   => 'ch-1',
+        ], $token);
+
+        return $token;
+    }
+
+    public function testTheApiCarriesTheTurnBothWays(): void
+    {
+        $token = $this->reachTheWorld('char-ann');
+
+        $saved = $this->post('/api/party', [
+            'request_id'          => self::newRequestId(),
+            'party_id'            => 'party-1',
+            'leader_character_id' => 'char-ann',
+            'loot_policy'         => 1,
+            'round_robin_cursor'  => 1,
+            'revision'            => 0,
+            'members'             => ['char-ann', 'char-ben'],
+        ], $token);
+
+        self::assertSame(200, $saved->status, 'the party would not save');
+
+        $loaded = $this->get('/api/party', [], $token);
+
+        self::assertSame(200, $loaded->status);
+        self::assertSame(1, $loaded->body['round_robin_cursor'],
+            'the turn did not come back through the API');
+    }
+
+    public function testAnUnusableTurnIsReportedAsAMalformedRequestNotALostRace(): void
+    {
+        $token = $this->reachTheWorld('char-ann');
+
+        $response = $this->post('/api/party', [
+            'request_id'          => self::newRequestId(),
+            'party_id'            => 'party-1',
+            'leader_character_id' => 'char-ann',
+            'loot_policy'         => 1,
+            'round_robin_cursor'  => 7,
+            'revision'            => 0,
+            'members'             => ['char-ann', 'char-ben'],
+        ], $token);
+
+        // 400, not 409: 409 would tell the world it lost a race and should re-read and
+        // try again, which it would do forever, because no amount of re-reading makes
+        // 7 address two members.
+        self::assertSame(400, $response->status);
+        self::assertSame('invalid_round_robin_cursor', $response->body['code']);
+    }
+
+    public function testAPolicyNobodyAuthoredIsAlsoAMalformedRequest(): void
+    {
+        $token = $this->reachTheWorld('char-ann');
+
+        $response = $this->post('/api/party', [
+            'request_id'          => self::newRequestId(),
+            'party_id'            => 'party-1',
+            'leader_character_id' => 'char-ann',
+            'loot_policy'         => 99,
+            'round_robin_cursor'  => 0,
+            'revision'            => 0,
+            'members'             => ['char-ann'],
+        ], $token);
+
+        self::assertSame(400, $response->status);
+        self::assertSame('invalid_loot_policy', $response->body['code']);
     }
 }

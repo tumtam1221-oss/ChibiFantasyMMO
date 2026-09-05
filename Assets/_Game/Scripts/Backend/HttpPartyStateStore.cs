@@ -72,12 +72,34 @@ namespace ChibiFantasy.Backend
                 if (!string.IsNullOrEmpty(id)) members.Add(new CharacterId(id));
             }
 
-            return PartyPersistenceResult.Loaded(new PersistedParty(
+            if (!TryPolicy(json.Int("loot_policy"), out PartyLootPolicy policy))
+            {
+                // Not folded into Personal, not into anything else. A party whose policy
+                // nobody authored would loot by a rule its members never chose, and
+                // picking one here would make that look like a successful restore.
+                return PartyPersistenceResult.Failed(PartyPersistenceFailure.Corrupt,
+                    "stored loot policy is not an authored value");
+            }
+
+            var stored = new PersistedParty(
                 new PartyId(partyId),
                 new CharacterId(json.String("leader_character_id")),
-                PolicyOf(json.Int("loot_policy")),
+                policy,
                 members,
-                json.Int("revision")));
+                json.Int("revision"),
+                json.Int("round_robin_cursor"));
+
+            if (!stored.IsCursorValid)
+            {
+                // Same rule as the policy, for the same reason: a cursor past the end of
+                // the party is not a number to take modulo, it is a row an operator needs
+                // to look at. Silently wrapping it would give somebody a turn that
+                // belonged to a member who may not even be in the party any more.
+                return PartyPersistenceResult.Failed(PartyPersistenceFailure.Corrupt,
+                    "stored round-robin cursor addresses no member");
+            }
+
+            return PartyPersistenceResult.Loaded(stored);
         }
 
         public PartyPersistenceResult Save(SessionId session, PersistedParty party)
@@ -101,6 +123,7 @@ namespace ChibiFantasy.Backend
             body.Append("\"leader_character_id\":\"")
                 .Append(party.Leader.Value ?? string.Empty).Append("\",");
             body.Append("\"loot_policy\":").Append((int)party.LootPolicy).Append(',');
+            body.Append("\"round_robin_cursor\":").Append(party.Cursor).Append(',');
             body.Append("\"revision\":").Append(party.Revision).Append(',');
             body.Append("\"members\":[");
 
@@ -131,19 +154,35 @@ namespace ChibiFantasy.Backend
         }
 
         /// <summary>
-        /// The policy a stored number names.
+        /// The policy a stored number names, or false when it names none of them.
         /// </summary>
-        /// <remarks>A value outside the authored enum comes back as
-        /// <see cref="PartyLootPolicy.Personal"/> and is the strictest of the three, so a
-        /// row nobody understands cannot hand a party's loot to everyone. The server refuses
-        /// to write such a value in the first place; this is the second half of that.</remarks>
-        private static PartyLootPolicy PolicyOf(int stored)
+        /// <remarks>
+        /// <b>There is no default case.</b> An earlier version of this substituted
+        /// <see cref="PartyLootPolicy.Personal"/> on the grounds that it is the strictest
+        /// of the three, which was wrong twice over: strictness is not what a party asked
+        /// for, and a substitution that reports success gives a corrupt row no way of ever
+        /// being noticed -- the world would loot happily by a rule nobody chose and the
+        /// next write would stamp the substituted value over the evidence.
+        ///
+        /// The server refuses to write an unauthored policy in the first place. This is the
+        /// half that refuses to read one back.
+        /// </remarks>
+        private static bool TryPolicy(int stored, out PartyLootPolicy policy)
         {
             switch (stored)
             {
-                case (int)PartyLootPolicy.RoundRobin: return PartyLootPolicy.RoundRobin;
-                case (int)PartyLootPolicy.NeedGreed: return PartyLootPolicy.NeedGreed;
-                default: return PartyLootPolicy.Personal;
+                case (int)PartyLootPolicy.Personal:
+                    policy = PartyLootPolicy.Personal;
+                    return true;
+                case (int)PartyLootPolicy.RoundRobin:
+                    policy = PartyLootPolicy.RoundRobin;
+                    return true;
+                case (int)PartyLootPolicy.NeedGreed:
+                    policy = PartyLootPolicy.NeedGreed;
+                    return true;
+                default:
+                    policy = default;
+                    return false;
             }
         }
 
@@ -157,6 +196,12 @@ namespace ChibiFantasy.Backend
             {
                 case 403: return PartyPersistenceFailure.NotAMember;
                 case 409: return PartyPersistenceFailure.StaleRevision;
+
+                // A refusal of the party itself: an unauthored policy, a turn that
+                // addresses no member, a leader who is not one. Distinguished from
+                // Unreachable because re-sending the same body cannot help, and a world
+                // that read it as a network blip would re-send it forever.
+                case 400:
                 case 422: return PartyPersistenceFailure.InvalidParty;
                 default: return PartyPersistenceFailure.Unreachable;
             }

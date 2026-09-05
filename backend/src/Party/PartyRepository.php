@@ -38,12 +38,14 @@ final class PartyRepository
      * selection both depend on that sequence and neither may change across a reload.
      *
      * @return array{party_id:string,leader_character_id:string,loot_policy:int,
-     *               revision:int,members:list<array{character_id:string,join_order:int}>}|null
+     *               round_robin_cursor:int,revision:int,
+     *               members:list<array{character_id:string,join_order:int}>}|null
      */
     public function loadByCharacter(string $characterId): ?array
     {
         $statement = $this->pdo->prepare(
-            'SELECT p.party_id, p.leader_character_id, p.loot_policy, p.revision
+            'SELECT p.party_id, p.leader_character_id, p.loot_policy,
+                    p.round_robin_cursor, p.revision
              FROM party p
              INNER JOIN party_member m ON m.party_id = p.party_id
              WHERE m.character_id = :cid AND p.disbanded_at IS NULL'
@@ -61,6 +63,7 @@ final class PartyRepository
             'party_id'            => (string) $row['party_id'],
             'leader_character_id' => (string) $row['leader_character_id'],
             'loot_policy'         => (int) $row['loot_policy'],
+            'round_robin_cursor'  => (int) $row['round_robin_cursor'],
             'revision'            => (int) $row['revision'],
             'members'             => $this->loadMembers((string) $row['party_id']),
         ];
@@ -102,10 +105,11 @@ final class PartyRepository
      * meaning for.
      *
      * @param list<string> $memberIds in join order, leader included
+     * @param int $roundRobinCursor index into $memberIds; must address a member
      * @return array{ok:bool,reason?:string,revision?:int}
      */
     public function save(string $partyId, string $leaderCharacterId, int $lootPolicy,
-        array $memberIds, ?int $expectedRevision = null): array
+        array $memberIds, ?int $expectedRevision = null, int $roundRobinCursor = 0): array
     {
         if ($partyId === '' || $leaderCharacterId === '') {
             return ['ok' => false, 'reason' => 'invalid_party'];
@@ -126,6 +130,13 @@ final class PartyRepository
             return ['ok' => false, 'reason' => 'leader_not_a_member'];
         }
 
+        if ($roundRobinCursor < 0 || $roundRobinCursor >= count($memberIds)) {
+            // Refused for the same reason an unknown policy is: a cursor that does not
+            // address a member names nobody's turn, and quietly taking it modulo the
+            // party size would hand the next drop to whoever happened to land there.
+            return ['ok' => false, 'reason' => 'invalid_round_robin_cursor'];
+        }
+
         $this->pdo->beginTransaction();
 
         try {
@@ -143,24 +154,28 @@ final class PartyRepository
             if ($current === null) {
                 $this->pdo->prepare(
                     'INSERT INTO party
-                        (party_id, leader_character_id, loot_policy, revision, created_at)
-                     VALUES (:pid, :leader, :policy, :rev, NOW(3))'
+                        (party_id, leader_character_id, loot_policy, round_robin_cursor,
+                         revision, created_at)
+                     VALUES (:pid, :leader, :policy, :cursor, :rev, NOW(3))'
                 )->execute([
                     ':pid'    => $partyId,
                     ':leader' => $leaderCharacterId,
                     ':policy' => $lootPolicy,
+                    ':cursor' => $roundRobinCursor,
                     ':rev'    => $next,
                 ]);
             } else {
                 $this->pdo->prepare(
                     'UPDATE party
                      SET leader_character_id = :leader, loot_policy = :policy,
-                         revision = :rev, disbanded_at = NULL
+                         round_robin_cursor = :cursor, revision = :rev,
+                         disbanded_at = NULL
                      WHERE party_id = :pid'
                 )->execute([
                     ':pid'    => $partyId,
                     ':leader' => $leaderCharacterId,
                     ':policy' => $lootPolicy,
+                    ':cursor' => $roundRobinCursor,
                     ':rev'    => $next,
                 ]);
             }

@@ -494,6 +494,20 @@ final class Api
     }
 
     /**
+     * Party refusals that describe the request itself rather than a lost race.
+     *
+     * These are 422: the body is wrong and will still be wrong next time. Everything
+     * else the repository can refuse -- a stale revision, a member another world
+     * claimed first -- is a 409, because re-reading and retrying can fix it.
+     */
+    private const PARTY_MALFORMED = [
+        'invalid_party',
+        'invalid_loot_policy',
+        'invalid_round_robin_cursor',
+        'leader_not_a_member',
+    ];
+
+    /**
      * Writes a party back.
      *
      * The world server is the only thing that calls this, and it calls it with the whole
@@ -550,15 +564,21 @@ final class Api
                 // revision zero" -- a freshly formed party has no revision to have read,
                 // and a party id reused after a disband would otherwise look stale
                 // forever. A caller that did read one sends it and is checked against it.
-                $request->int('revision') > 0 ? $request->int('revision') : null
+                $request->int('revision') > 0 ? $request->int('revision') : null,
+                $request->int('round_robin_cursor')
             );
 
         if (!($result['ok'] ?? false)) {
-            return Response::problem(
-                ApiProblem::conflict((string) ($result['reason'] ?? 'party_save_failed'),
-                    'error.party.' . ((string) ($result['reason'] ?? 'save_failed'))),
-                $requestId
-            );
+            $reason = (string) ($result['reason'] ?? 'party_save_failed');
+
+            // A refusal the caller can never satisfy by re-reading is not a conflict.
+            // Reporting a malformed policy or cursor as 409 would tell the world it lost
+            // a race and should try again, and it would try again forever.
+            $problem = in_array($reason, self::PARTY_MALFORMED, true)
+                ? ApiProblem::validation($reason, 'error.party.' . $reason)
+                : ApiProblem::conflict($reason, 'error.party.' . $reason);
+
+            return Response::problem($problem, $requestId);
         }
 
         return Response::ok([

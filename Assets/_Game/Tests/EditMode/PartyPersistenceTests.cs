@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using ChibiFantasy.Backend;
 using ChibiFantasy.Contracts;
 using ChibiFantasy.Core;
 using ChibiFantasy.Data;
@@ -77,7 +78,7 @@ namespace ChibiFantasy.Tests.EditMode
                 if (party.Members.Count == 0) return PartyPersistenceResult.Saved(0);
 
                 var stored = new PersistedParty(party.Party, party.Leader, party.LootPolicy,
-                    party.Members, party.Revision + 1);
+                    party.Members, party.Revision + 1, party.Cursor);
 
                 foreach (CharacterId member in party.Members)
                 {
@@ -116,9 +117,13 @@ namespace ChibiFantasy.Tests.EditMode
                     "a persisted party carries '" + forbidden + "'");
             }
 
+            // Cursor joins the list because whose turn it is outlives a session exactly
+            // as membership does. The forbidden list above is unchanged: it is still a
+            // party, and it still carries nothing about a body or a connection.
             Assert.That(members, Is.EquivalentTo(new[]
             {
                 "party", "leader", "lootpolicy", "members", "revision", "exists",
+                "cursor", "iscursorvalid",
             }));
         }
 
@@ -522,6 +527,392 @@ namespace ChibiFantasy.Tests.EditMode
         private static SessionId Session(CharacterId character)
         {
             return new SessionId(character.Value);
+        }
+    
+
+        // ---- whose turn it is ---------------------------------------------------------
+
+        /// <summary>A transport that answers with whatever body a test hands it.</summary>
+        private sealed class CannedTransport : IHttpTransport, HttpCharacterStateStore.ITokenSource
+        {
+            private readonly string _body;
+
+            public CannedTransport(string body)
+            {
+                _body = body;
+            }
+
+            public HttpExchange Send(string method, string path, string jsonBody,
+                string bearerToken)
+            {
+                Sent = jsonBody;
+
+                return HttpExchange.Responded(200, _body);
+            }
+
+            /// <summary>The last body posted, so a test can read what went out.</summary>
+            public string Sent { get; private set; }
+
+            public bool TryGetToken(SessionId session, out string token)
+            {
+                token = "a-token-invented-here-only";
+
+                return true;
+            }
+        }
+
+        private static PartyState PartyOf(params CharacterId[] members)
+        {
+            var party = new PartyState(new PartyId("p-1"), members[0],
+                PartyLootPolicy.RoundRobin);
+
+            for (var i = 1; i < members.Length; i++) party.TryAdd(members[i]);
+
+            return party;
+        }
+
+        [Test]
+        public void ARestoredPartyResumesAtTheStoredTurnRatherThanTheFirstMember()
+        {
+            var store = new FakeStore();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben, Cal }, 3, 2));
+
+            var registry = new WorldPartyRegistry();
+
+            PartyState party = registry.Restore(Session(Ben), Ben, store);
+
+            Assert.That(party, Is.Not.Null);
+            Assert.That(registry.RotationOf(party.Id), Is.EqualTo(2),
+                "the rotation restarted at the first member");
+
+            // The point of the number: it has to name the same person it named before.
+            Assert.That(PartyLootPolicyService.MemberOnTurn(party,
+                registry.RotationOf(party.Id)), Is.EqualTo(Cal));
+        }
+
+        [Test]
+        public void APartyStoredBeforeThereWasATurnStartsAtTheFirstMember()
+        {
+            // A row written by an earlier build has no cursor, which reads as zero. That
+            // is a real position rather than a missing one, so it must simply work.
+            var store = new FakeStore();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben }, 1));
+
+            var registry = new WorldPartyRegistry();
+
+            PartyState party = registry.Restore(Session(Ann), Ann, store);
+
+            Assert.That(registry.RotationOf(party.Id), Is.Zero);
+            Assert.That(PartyLootPolicyService.MemberOnTurn(party, 0), Is.EqualTo(Ann));
+        }
+
+        [Test]
+        public void AStoredTurnThatAddressesNoMemberIsRefusedRatherThanWrapped()
+        {
+            var store = new FakeStore();
+
+            // Three members, position three. Folding it back into range would give the
+            // drop to Ann and look like a clean restore; that is the corruption.
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben, Cal }, 3, 3));
+
+            var registry = new WorldPartyRegistry();
+
+            UnityEngine.TestTools.LogAssert.Expect(UnityEngine.LogType.Warning,
+                new System.Text.RegularExpressions.Regex("addresses no member"));
+
+            Assert.That(registry.Restore(Session(Ann), Ann, store), Is.Null,
+                "a corrupt turn was restored anyway");
+
+            Assert.That(registry.Count, Is.Zero, "a refused restore registered a party");
+        }
+
+        [Test]
+        public void ANegativeStoredTurnIsRefusedForTheSameReason()
+        {
+            var store = new FakeStore();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben }, 1, -1));
+
+            var registry = new WorldPartyRegistry();
+
+            UnityEngine.TestTools.LogAssert.Expect(UnityEngine.LogType.Warning,
+                new System.Text.RegularExpressions.Regex("addresses no member"));
+
+            Assert.That(registry.Restore(Session(Ann), Ann, store), Is.Null);
+        }
+
+        [Test]
+        public void TheStoredTurnIsAnIndexIntoTheMembersAndNotACountOfDrops()
+        {
+            // Both halves of the same rule: what is written must address a member, and it
+            // must address the member the running world would have picked. If Persist and
+            // MemberOnTurn ever disagree about the arithmetic, this fails.
+            var store = new FakeStore();
+            var registry = new WorldPartyRegistry();
+            PartyState party = PartyOf(Ann, Ben, Cal);
+
+            registry.Register(party);
+
+            for (var spent = 0; spent < 8; spent++)
+            {
+                Assert.That(registry.Persist(Session(Ann), party, store).IsOk, Is.True);
+
+                var reader = new WorldPartyRegistry();
+                PartyState back = reader.Restore(Session(Ann), Ann, store);
+
+                Assert.That(back, Is.Not.Null,
+                    "a turn this world wrote came back unreadable after " + spent);
+
+                Assert.That(PartyLootPolicyService.MemberOnTurn(back,
+                        reader.RotationOf(back.Id)),
+                    Is.EqualTo(PartyLootPolicyService.MemberOnTurn(party,
+                        registry.RotationOf(party.Id))),
+                    "a restart changed whose turn it was after " + spent + " drops");
+
+                registry.AdvanceRotation(party.Id);
+            }
+        }
+
+        [Test]
+        public void ATurnSpentDuringCombatIsWrittenWhereItIsSpent()
+        {
+            // Nothing calls Persist when a monster dies -- the turn moves inside the
+            // reward path. If it were only saved on a membership change, a party that
+            // looted all week without anyone joining would restart at the first member.
+            var store = new FakeStore();
+            var registry = new WorldPartyRegistry();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben, Cal }, 1));
+
+            PartyState party = registry.Restore(Session(Ann), Ann, store);
+
+            int before = store.Saves;
+
+            registry.AdvanceRotation(party.Id);
+
+            Assert.That(store.Saves, Is.GreaterThan(before),
+                "the turn moved without being written down");
+
+            var reader = new WorldPartyRegistry();
+            PartyState back = reader.Restore(Session(Ben), Ben, store);
+
+            Assert.That(reader.RotationOf(back.Id), Is.EqualTo(1),
+                "a restart did not resume where the rotation had reached");
+
+            Assert.That(PartyLootPolicyService.MemberOnTurn(back,
+                reader.RotationOf(back.Id)), Is.EqualTo(Ben));
+        }
+
+        [Test]
+        public void ARotationSurvivesRestartAfterRestartWithoutSkippingOrRepeating()
+        {
+            // A, B, C, then back to A -- across a fresh registry every single time, which
+            // is what a world restart actually is.
+            var store = new FakeStore();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben, Cal }, 1));
+
+            var order = new List<CharacterId>();
+
+            for (var restart = 0; restart < 4; restart++)
+            {
+                var registry = new WorldPartyRegistry();
+                PartyState party = registry.Restore(Session(Ann), Ann, store);
+
+                Assert.That(party, Is.Not.Null, "restart " + restart + " lost the party");
+
+                order.Add(PartyLootPolicyService.MemberOnTurn(party,
+                    registry.RotationOf(party.Id)));
+
+                registry.AdvanceRotation(party.Id);
+            }
+
+            Assert.That(order, Is.EqualTo(new[] { Ann, Ben, Cal, Ann }));
+        }
+
+        [Test]
+        public void SixMembersReconnectingAtOnceShareOneTurn()
+        {
+            var store = new FakeStore();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben, Cal }, 1, 1));
+
+            var registry = new WorldPartyRegistry();
+
+            foreach (CharacterId member in new[] { Ann, Ben, Cal })
+            {
+                registry.Restore(Session(member), member, store);
+            }
+
+            Assert.That(registry.Count, Is.EqualTo(1));
+            Assert.That(registry.RotationOf(new PartyId("p-1")), Is.EqualTo(1),
+                "a second arrival re-read the turn and moved it");
+        }
+
+        [Test]
+        public void APartyThatShrankWritesATurnThatStillAddressesAMember()
+        {
+            var store = new FakeStore();
+            var registry = new WorldPartyRegistry();
+            PartyState party = PartyOf(Ann, Ben, Cal);
+
+            registry.Register(party);
+            registry.AdvanceRotation(party.Id);
+            registry.AdvanceRotation(party.Id);
+
+            Assert.That(registry.RotationOf(party.Id), Is.EqualTo(2));
+
+            // Cal leaves. Position two no longer exists.
+            party.TryRemove(Cal);
+
+            Assert.That(registry.Persist(Session(Ann), party, store).IsOk, Is.True);
+
+            PartyState back = new WorldPartyRegistry().Restore(Session(Ann), Ann, store);
+
+            Assert.That(back, Is.Not.Null,
+                "a shrunk party wrote a turn its own loader refuses");
+        }
+
+        [Test]
+        public void ATurnIsNotLostWhenTheMemberWhoRestoredThePartyHasGone()
+        {
+            // Any member's session can write the party, so Ann logging out must not make
+            // the party's turn unsaveable for everybody left in it.
+            var store = new FakeStore();
+            var registry = new WorldPartyRegistry();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben }, 1));
+
+            PartyState party = registry.Restore(Session(Ben), Ben, store);
+
+            int before = store.Saves;
+
+            registry.AdvanceRotation(party.Id);
+
+            Assert.That(store.Saves, Is.GreaterThan(before));
+        }
+
+        [Test]
+        public void ABackendThatCannotBeReachedDoesNotStopThePartyLooting()
+        {
+            // The pile has already been handed over by the time the turn moves. Failing
+            // the drop because a database blinked would be the worse outcome.
+            var store = new FakeStore();
+            var registry = new WorldPartyRegistry();
+
+            store.Seed(new PersistedParty(new PartyId("p-1"), Ann,
+                PartyLootPolicy.RoundRobin, new[] { Ann, Ben }, 1));
+
+            PartyState party = registry.Restore(Session(Ann), Ann, store);
+
+            store.Broken = true;
+
+            UnityEngine.TestTools.LogAssert.Expect(UnityEngine.LogType.Warning,
+                new System.Text.RegularExpressions.Regex("could not save the loot turn"));
+
+            Assert.That(registry.AdvanceRotation(party.Id), Is.EqualTo(1),
+                "the rotation stalled because the backend was down");
+        }
+
+        [Test]
+        public void ARegistryWithNoStoreStillRotates()
+        {
+            // Every EditMode test written before parties were persisted composes a
+            // registry with no store at all, and they must go on working.
+            var registry = new WorldPartyRegistry();
+            PartyState party = PartyOf(Ann, Ben);
+
+            registry.Register(party);
+
+            Assert.That(registry.AdvanceRotation(party.Id), Is.EqualTo(1));
+            Assert.That(registry.RotationOf(party.Id), Is.EqualTo(1));
+        }
+
+        // ---- a row nobody understands -------------------------------------------------
+
+        [Test]
+        public void AnUnknownStoredPolicyIsRefusedRatherThanBecomingPersonal()
+        {
+            // The bug this closes: the default case used to answer Personal and report
+            // success, so a corrupt row looted by a rule nobody chose and the next write
+            // stamped the substitution over the evidence.
+            var transport = new CannedTransport(
+                "{\"party_id\":\"p-1\",\"leader_character_id\":\"char-ann\","
+                + "\"loot_policy\":9,\"round_robin_cursor\":0,\"revision\":2,"
+                + "\"members\":[{\"character_id\":\"char-ann\"}]}");
+
+            var store = new HttpPartyStateStore(transport, transport);
+
+            PartyPersistenceResult result = store.Load(Session(Ann));
+
+            Assert.That(result.IsOk, Is.False, "an unauthored policy loaded as a party");
+            Assert.That(result.Failure, Is.EqualTo(PartyPersistenceFailure.Corrupt));
+            Assert.That(result.Party.Exists, Is.False,
+                "a refused load handed back a party anyway");
+        }
+
+        [Test]
+        public void EveryAuthoredPolicyStillLoads()
+        {
+            // Refusing the unknown must not have made Personal -- which is zero, and so
+            // the easiest one to lose to a truthiness test -- unreadable.
+            foreach (PartyLootPolicy policy in new[]
+            {
+                PartyLootPolicy.Personal, PartyLootPolicy.RoundRobin,
+                PartyLootPolicy.NeedGreed,
+            })
+            {
+                var transport = new CannedTransport(
+                    "{\"party_id\":\"p-1\",\"leader_character_id\":\"char-ann\","
+                    + "\"loot_policy\":" + (int)policy
+                    + ",\"round_robin_cursor\":0,\"revision\":2,"
+                    + "\"members\":[{\"character_id\":\"char-ann\"}]}");
+
+                PartyPersistenceResult result =
+                    new HttpPartyStateStore(transport, transport).Load(Session(Ann));
+
+                Assert.That(result.IsOk, Is.True, policy + " would not load");
+                Assert.That(result.Party.LootPolicy, Is.EqualTo(policy));
+            }
+        }
+
+        [Test]
+        public void AnUnreadableTurnIsRefusedAtTheStoreAsWellAsAtTheRegistry()
+        {
+            var transport = new CannedTransport(
+                "{\"party_id\":\"p-1\",\"leader_character_id\":\"char-ann\","
+                + "\"loot_policy\":1,\"round_robin_cursor\":5,\"revision\":2,"
+                + "\"members\":[{\"character_id\":\"char-ann\"},"
+                + "{\"character_id\":\"char-ben\"}]}");
+
+            PartyPersistenceResult result =
+                new HttpPartyStateStore(transport, transport).Load(Session(Ann));
+
+            Assert.That(result.IsOk, Is.False);
+            Assert.That(result.Failure, Is.EqualTo(PartyPersistenceFailure.Corrupt));
+        }
+
+        [Test]
+        public void TheTurnGoesOutOnTheWireWithTheParty()
+        {
+            var transport = new CannedTransport("{\"revision\":4}");
+
+            new HttpPartyStateStore(transport, transport).Save(Session(Ann),
+                new PersistedParty(new PartyId("p-1"), Ann, PartyLootPolicy.RoundRobin,
+                    new[] { Ann, Ben }, 3, 1));
+
+            Assert.That(transport.Sent, Does.Contain("\"round_robin_cursor\":1"),
+                "the turn was not sent");
         }
     }
 }

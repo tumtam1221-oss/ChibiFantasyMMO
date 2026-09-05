@@ -23,6 +23,12 @@ namespace ChibiFantasy.Server
     /// would make it per-pile and reset constantly; keeping it on the character would give
     /// six members six different ideas of whose turn it is. One number per party, moved
     /// only when a party actually claims something.
+    ///
+    /// <b>And written down when it moves.</b> Held only in memory, the cursor is reset by
+    /// every restart, so the first member in join order takes the first drop after each
+    /// one -- over a week of restarts that is a real share of a party's loot going to
+    /// whoever happens to sort first. It is saved on the same event that already saves the
+    /// character who was paid, and read back when a member arrives.
     /// </remarks>
     public sealed class WorldPartyRegistry
     {
@@ -30,6 +36,17 @@ namespace ChibiFantasy.Server
             new Dictionary<string, PartyState>();
 
         private readonly Dictionary<string, int> _rotation = new Dictionary<string, int>();
+
+        /// <summary>The session each member arrived on, so a turn can be written back.</summary>
+        /// <remarks>Per member rather than per party: the one who restored the party may
+        /// well have logged out by the time it takes a drop, and the party's turn must not
+        /// become unsaveable because of it.</remarks>
+        private readonly Dictionary<string, SessionId> _sessions =
+            new Dictionary<string, SessionId>();
+
+        /// <summary>The store this world last spoke to, remembered so a turn spent during
+        /// combat can be written where it is spent.</summary>
+        private IPartyStateStore _store;
 
         private readonly PartyDirectory _directory = new PartyDirectory();
 
@@ -86,11 +103,67 @@ namespace ChibiFantasy.Server
         {
             if (!party.IsValid) return 0;
 
-            int next = RotationOf(party) + 1;
+            _rotation[party.Value] = RotationOf(party) + 1;
 
-            _rotation[party.Value] = next;
+            // A turn that exists only in memory is the turn a restart hands back to the
+            // first member, who then receives twice. Written at the moment it is spent,
+            // on the same event that already writes the character who was paid.
+            WriteTurn(party);
 
-            return next;
+            return RotationOf(party);
+        }
+
+        /// <summary>
+        /// Saves the party because its turn moved, if this world can.
+        /// </summary>
+        /// <remarks>
+        /// <b>Any member's session will do.</b> The party is what is being written, not a
+        /// character, and the API scopes the write to a member -- so the first member still
+        /// connected is asked, and one member logging out cannot strand the cursor.
+        ///
+        /// <b>A refusal does not stop the loot.</b> The turn has already moved in memory
+        /// and the pile has already been handed over; failing the drop because a database
+        /// was briefly unreachable would be a worse outcome than a cursor that is re-sent
+        /// with the party's next write.
+        /// </remarks>
+        private void WriteTurn(PartyId party)
+        {
+            if (_store == null) return;
+
+            if (!_byParty.TryGetValue(party.Value, out PartyState state)) return;
+
+            if (state == null || !state.IsActive) return;
+
+            IReadOnlyList<CharacterId> members = state.Members;
+
+            for (var i = 0; i < members.Count; i++)
+            {
+                if (!_sessions.TryGetValue(members[i].Value, out SessionId session))
+                {
+                    continue;
+                }
+
+                if (Persist(session, state, _store).IsOk) return;
+            }
+
+            Debug.LogWarning("[party] could not save the loot turn for " + party
+                + "; it will go out with this party's next write.");
+        }
+
+        /// <summary>
+        /// A rotation count reduced to the member it names.
+        /// </summary>
+        /// <remarks>The same arithmetic <see cref="PartyLootPolicyService.MemberOnTurn"/>
+        /// applies when it picks a member, and it has to stay the same: this is what turns
+        /// an in-memory count into the index that is stored, and the stored index must
+        /// select the member the running world would have selected.</remarks>
+        private static int Bounded(int rotation, int members)
+        {
+            if (members <= 0) return 0;
+
+            int index = rotation % members;
+
+            return index < 0 ? index + members : index;
         }
 
         /// <summary>Forgets a party entirely, cursor and all.</summary>
@@ -132,6 +205,11 @@ namespace ChibiFantasy.Server
         {
             if (store == null || !character.IsValid) return null;
 
+            // Remembered whether or not this character turns out to have a party, because
+            // what they are needed for is writing somebody else's turn back later.
+            _store = store;
+            _sessions[character.Value] = session;
+
             // Already running: attach, do not re-read.
             if (TryGetPartyOf(character, out PartyState running)) return running;
 
@@ -160,6 +238,18 @@ namespace ChibiFantasy.Server
                 return existing;
             }
 
+            if (!stored.IsCursorValid)
+            {
+                // Refused rather than folded back into range. A cursor that addresses no
+                // member is a row somebody has to look at, and quietly taking it modulo
+                // the party size would give the next drop away while looking like a
+                // clean restore.
+                Debug.LogWarning("[party] refusing " + stored.Party
+                    + ": the stored loot turn addresses no member");
+
+                return null;
+            }
+
             var party = new PartyState(stored.Party, stored.Leader, stored.LootPolicy);
 
             // In stored order, because round-robin walks the member list and a party that
@@ -170,6 +260,10 @@ namespace ChibiFantasy.Server
             }
 
             _revisions[stored.Party.Value] = stored.Revision;
+
+            // Whose turn it was when the party was last written. Without this the members
+            // come back in order and the rotation restarts at the first of them.
+            _rotation[stored.Party.Value] = stored.Cursor;
 
             Register(party);
 
@@ -192,11 +286,28 @@ namespace ChibiFantasy.Server
 
             var members = new List<CharacterId>(party.Members);
 
+            // Reduced against the membership actually being written, so what lands in
+            // storage is an index into that list rather than a count that would grow for
+            // as long as the world runs. This is also where a party that shrank gets its
+            // turn brought back into range, because a leave, a kick and a disband all
+            // arrive here as "the party now looks like this".
+            int cursor = Bounded(RotationOf(party.Id), members.Count);
+
             PartyPersistenceResult saved = store.Save(session, new PersistedParty(
                 party.Id, party.Leader, party.LootPolicy, members,
-                RevisionOf(party.Id)));
+                RevisionOf(party.Id), cursor));
 
-            if (saved.IsOk) _revisions[party.Id.Value] = saved.Revision;
+            if (saved.IsOk)
+            {
+                _revisions[party.Id.Value] = saved.Revision;
+
+                // Memory follows storage. A world that saved and a world that restarted
+                // after saving then hold the same number, instead of two that agree only
+                // until the membership changes.
+                _rotation[party.Id.Value] = cursor;
+
+                _store = store;
+            }
 
             return saved;
         }
