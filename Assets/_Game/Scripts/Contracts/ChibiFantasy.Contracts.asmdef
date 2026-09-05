@@ -2,7 +2,8 @@
     "name": "ChibiFantasy.Contracts",
     "rootNamespace": "ChibiFantasy.Contracts",
     "references": [
-        "ChibiFantasy.Core"
+        "ChibiFantasy.Core",
+        "ChibiFantasy.Data"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

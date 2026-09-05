@@ -170,7 +170,8 @@ namespace ChibiFantasy.Server
         public void Compose(IWorldSessionAuthority authority = null,
             VersionRequirement required = default,
             ICharacterStateStore characters = null,
-            IMonsterSpawnConfigurationSource spawnConfiguration = null)
+            IMonsterSpawnConfigurationSource spawnConfiguration = null,
+            IPartyStateStore parties = null)
         {
             Registry = new WorldConnectionRegistry();
 
@@ -181,10 +182,12 @@ namespace ChibiFantasy.Server
                 // session authority, the character store and the monster configuration.
                 authority = BackendAuthority.WorldServicesOverHttp(_apiBaseAddress,
                     _apiTimeoutSeconds, out ICharacterStateStore store,
-                    out IMonsterSpawnConfigurationSource nests, out _authorityLifetime);
+                    out IMonsterSpawnConfigurationSource nests, out _authorityLifetime,
+                    out IPartyStateStore partyStore);
 
                 characters = characters ?? store;
                 spawnConfiguration = spawnConfiguration ?? nests;
+                parties = parties ?? partyStore;
             }
 
             Coordinator = new WorldEntryCoordinator(authority, Registry, required);
@@ -202,7 +205,7 @@ namespace ChibiFantasy.Server
             _networkManager.ServerManager.SetAuthenticator(_authenticator);
             _networkManager.ServerManager.OnRemoteConnectionState += OnRemoteConnectionState;
 
-            ComposeWorld(characters, spawnConfiguration);
+            ComposeWorld(characters, spawnConfiguration, parties);
         }
 
         /// <summary>
@@ -224,7 +227,8 @@ namespace ChibiFantasy.Server
         /// which stat is the health ceiling and how fast a character walks are content.
         /// </remarks>
         private void ComposeWorld(ICharacterStateStore characters,
-            IMonsterSpawnConfigurationSource spawnConfiguration)
+            IMonsterSpawnConfigurationSource spawnConfiguration,
+            IPartyStateStore parties)
         {
             IsWorldReady = false;
             _contentFaults.Clear();
@@ -239,6 +243,7 @@ namespace ChibiFantasy.Server
             Rewards = null;
             LootAuthority = null;
             Parties = null;
+            PartyStore = null;
 
             // A session-only process: it admits, places and releases, and simulates nothing.
             // Legitimate, and not a fault.
@@ -309,6 +314,8 @@ namespace ChibiFantasy.Server
             // The parties this world is running. Phase 13 decides what a party is; this
             // world just keeps them, so a defeat can ask who was in one.
             Parties = new WorldPartyRegistry();
+
+            PartyStore = parties;
 
             var rewards = new MonsterRewardAuthority(monsters, players, curve, loot, items,
                 _content.BuildDropTables(), _rolls ?? new SystemRandomSource(),
@@ -391,6 +398,9 @@ namespace ChibiFantasy.Server
 
         /// <summary>The parties this world is running. Null when unready.</summary>
         public WorldPartyRegistry Parties { get; private set; }
+
+        /// <summary>Where parties are kept between sessions. Null in a world with none.</summary>
+        public IPartyStateStore PartyStore { get; private set; }
 
         [Tooltip("How near a party member must be to share a kill, in metres. "
             + "Zero shares with the whole map.")]
@@ -611,6 +621,15 @@ namespace ChibiFantasy.Server
             {
                 WorldSpawnResult admitted = Simulation.Admit(connection.ClientId,
                     outcome.Admission, PlayerTeam);
+
+                // Their party, if they have one. Read when a member actually arrives
+                // rather than at world boot, and only when this world is not already
+                // running it -- six members reconnecting at once share one party object.
+                if (admitted.IsSpawned && Parties != null && PartyStore != null)
+                {
+                    Parties.Restore(outcome.Admission.Session,
+                        outcome.Admission.Character, PartyStore);
+                }
 
                 if (!admitted.IsSpawned)
                 {

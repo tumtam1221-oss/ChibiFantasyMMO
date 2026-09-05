@@ -59,7 +59,8 @@ namespace ChibiFantasy.Backend
         /// </remarks>
         public static IWorldSessionAuthority WorldServicesOverHttp(string baseAddress,
             int timeoutSeconds, out ICharacterStateStore characters,
-            out IMonsterSpawnConfigurationSource spawns, out IDisposable lifetime)
+            out IMonsterSpawnConfigurationSource spawns, out IDisposable lifetime,
+            out IPartyStateStore parties)
         {
             var transport = new UnityWebRequestTransport(baseAddress, timeoutSeconds);
 
@@ -69,6 +70,7 @@ namespace ChibiFantasy.Backend
 
             characters = new HttpCharacterStateStore(transport, authority);
             spawns = new HttpMonsterSpawnConfigurationSource(transport);
+            parties = new HttpPartyStateStore(transport, authority);
 
             return authority;
         }

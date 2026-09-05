@@ -1,7 +1,9 @@
 using System.Collections.Generic;
+using ChibiFantasy.Contracts;
 using ChibiFantasy.Core;
 using ChibiFantasy.Data;
 using ChibiFantasy.Gameplay;
+using UnityEngine;
 
 namespace ChibiFantasy.Server
 {
@@ -102,9 +104,112 @@ namespace ChibiFantasy.Server
             }
 
             _rotation.Remove(party.Value);
+            _revisions.Remove(party.Value);
 
             return _byParty.Remove(party.Value);
         }
+
+        /// <summary>
+        /// Brings a character's party back from storage, if they have one.
+        /// </summary>
+        /// <remarks>
+        /// <b>Lazily, when a member arrives.</b> Loading every party in the database at
+        /// world boot would make startup cost grow with the number of parties that ever
+        /// existed, most of whose members are not logged in. A party is needed when one of
+        /// its members is here, so that is when it is fetched.
+        ///
+        /// <b>Once, however many members arrive.</b> Six people reconnecting at the same
+        /// moment must attach to one <see cref="PartyState"/>, not six. The party id is
+        /// checked first, so the second and later arrivals find the object the first one
+        /// built and add nothing.
+        ///
+        /// <b>Storage is not asked again for a party already here.</b> A member rejoining a
+        /// party the world is already running reads nothing, which is also what stops a
+        /// reconnect from overwriting live membership with an older row.
+        /// </remarks>
+        public PartyState Restore(SessionId session, CharacterId character,
+            IPartyStateStore store)
+        {
+            if (store == null || !character.IsValid) return null;
+
+            // Already running: attach, do not re-read.
+            if (TryGetPartyOf(character, out PartyState running)) return running;
+
+            PartyPersistenceResult loaded = store.Load(session);
+
+            if (!loaded.IsOk)
+            {
+                // A backend that could not answer must not silently drop somebody out of
+                // their party -- they simply arrive partyless until it can.
+                Debug.LogWarning("[party] could not restore " + character + ": "
+                    + loaded.Failure);
+
+                return null;
+            }
+
+            PersistedParty stored = loaded.Party;
+
+            if (!stored.Exists) return null;
+
+            // Another member restored it while this one was in flight.
+            if (_byParty.TryGetValue(stored.Party.Value, out PartyState existing)
+                && existing != null && existing.IsActive)
+            {
+                _directory.Register(existing);
+
+                return existing;
+            }
+
+            var party = new PartyState(stored.Party, stored.Leader, stored.LootPolicy);
+
+            // In stored order, because round-robin walks the member list and a party that
+            // came back shuffled would change whose turn it is.
+            for (var i = 0; i < stored.Members.Count; i++)
+            {
+                party.TryAdd(stored.Members[i]);
+            }
+
+            _revisions[stored.Party.Value] = stored.Revision;
+
+            Register(party);
+
+            return party;
+        }
+
+        /// <summary>
+        /// Writes a party back as it now stands.
+        /// </summary>
+        /// <remarks>The whole membership, every time: join, leave, kick and a policy change
+        /// are one shape, so no two write paths can disagree about what a party is. An
+        /// empty party is stored as ended.</remarks>
+        public PartyPersistenceResult Persist(SessionId session, PartyState party,
+            IPartyStateStore store)
+        {
+            if (store == null || party == null)
+            {
+                return PartyPersistenceResult.Failed(PartyPersistenceFailure.InvalidParty);
+            }
+
+            var members = new List<CharacterId>(party.Members);
+
+            PartyPersistenceResult saved = store.Save(session, new PersistedParty(
+                party.Id, party.Leader, party.LootPolicy, members,
+                RevisionOf(party.Id)));
+
+            if (saved.IsOk) _revisions[party.Id.Value] = saved.Revision;
+
+            return saved;
+        }
+
+        /// <summary>The stored revision this world last saw, for refusing a stale write.</summary>
+        public int RevisionOf(PartyId party)
+        {
+            if (!party.IsValid) return 0;
+
+            return _revisions.TryGetValue(party.Value, out int revision) ? revision : 0;
+        }
+
+        private readonly Dictionary<string, int> _revisions = new Dictionary<string, int>();
 
         /// <summary>Every party this world is tracking.</summary>
         public IReadOnlyList<PartyState> All()

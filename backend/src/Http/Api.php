@@ -10,6 +10,7 @@ use ChibiFantasy\Auth\AuthFailure;
 use ChibiFantasy\Auth\RateLimiter;
 use ChibiFantasy\Character\CharacterRepository;
 use ChibiFantasy\Character\CharacterStateRepository;
+use ChibiFantasy\Party\PartyRepository;
 use ChibiFantasy\Directory\DirectoryRepository;
 use ChibiFantasy\Session\IdempotencyStore;
 use ChibiFantasy\Session\SessionRepository;
@@ -45,6 +46,7 @@ final class Api
     private readonly DirectoryRepository $directory;
     private readonly CharacterRepository $characters;
     private readonly CharacterStateRepository $characterState;
+    private readonly PartyRepository $parties;
     private readonly MonsterSpawnRepository $monsterSpawns;
     private readonly IdempotencyStore $idempotency;
 
@@ -56,6 +58,7 @@ final class Api
         $this->directory = new DirectoryRepository($pdo);
         $this->characters = new CharacterRepository($pdo);
         $this->characterState = new CharacterStateRepository($pdo);
+        $this->parties = new PartyRepository($pdo);
         $this->monsterSpawns = new MonsterSpawnRepository($pdo);
         $this->idempotency = new IdempotencyStore($pdo);
         $this->flow = new SessionService(
@@ -137,6 +140,12 @@ final class Api
 
             $request->method === 'POST' && $path === '/api/character/state'
                 => $this->saveCharacterState($request, $requestId),
+
+            $request->method === 'GET' && $path === '/api/party'
+                => $this->loadParty($request, $requestId),
+
+            $request->method === 'POST' && $path === '/api/party'
+                => $this->saveParty($request, $requestId),
 
             $request->method === 'GET' && $path === '/api/world/spawn-configuration'
                 => $this->spawnConfiguration($request, $requestId),
@@ -454,6 +463,111 @@ final class Api
      * entitled to, and a session that has not been authorised has no business
      * loading one.
      */
+    /**
+     * The party the session's own character belongs to.
+     *
+     * Scoped to the session's character, never to one the body names: a client that
+     * asked about somebody else's party would be reading a membership list it has no
+     * business seeing. An answer of "no party" and "that party is not yours" are the
+     * same response for the same reason.
+     */
+    private function loadParty(Request $request, string $requestId): Response
+    {
+        $session = $this->requireSession($request);
+
+        if ($session instanceof ApiProblem) {
+            return Response::problem($session, $requestId);
+        }
+
+        $characterId = (string) ($session['selected_character_id'] ?? '');
+
+        if ($characterId === '') {
+            return Response::problem(
+                ApiProblem::notFound('unknown_character', 'error.character.unknown'),
+                $requestId
+            );
+        }
+
+        $party = $this->parties->loadByCharacter($characterId);
+
+        return Response::ok($party ?? ['party_id' => '']);
+    }
+
+    /**
+     * Writes a party back.
+     *
+     * The world server is the only thing that calls this, and it calls it with the whole
+     * party as it now stands. The session's character must be in the member list, so a
+     * client that reached this endpoint cannot write a party it does not belong to.
+     */
+    private function saveParty(Request $request, string $requestId): Response
+    {
+        $session = $this->requireSession($request);
+
+        if ($session instanceof ApiProblem) {
+            return Response::problem($session, $requestId);
+        }
+
+        $characterId = (string) ($session['selected_character_id'] ?? '');
+
+        $partyId = trim((string) $request->string('party_id'));
+
+        if ($partyId === '') {
+            return Response::problem(
+                ApiProblem::validation('invalid_party', 'error.party.invalid'),
+                $requestId
+            );
+        }
+
+        $members = [];
+
+        foreach ($request->nested('members') as $member) {
+            $id = trim((string) $member);
+
+            if ($id !== '') {
+                $members[] = $id;
+            }
+        }
+
+        // Disband arrives as an empty member list, and is the one shape that does not
+        // require the caller to still be a member -- somebody has to be able to end a
+        // party they have just left.
+        if ($members !== [] && !in_array($characterId, $members, true)) {
+            return Response::problem(
+                ApiProblem::forbidden('not_a_member', 'error.party.not_a_member'),
+                $requestId
+            );
+        }
+
+        $result = $members === []
+            ? $this->parties->disband($partyId)
+            : $this->parties->save(
+                $partyId,
+                trim((string) $request->string('leader_character_id')),
+                $request->int('loot_policy'),
+                $members,
+                // Zero means "this world has never read this party", not "I expect
+                // revision zero" -- a freshly formed party has no revision to have read,
+                // and a party id reused after a disband would otherwise look stale
+                // forever. A caller that did read one sends it and is checked against it.
+                $request->int('revision') > 0 ? $request->int('revision') : null
+            );
+
+        if (!($result['ok'] ?? false)) {
+            return Response::problem(
+                ApiProblem::conflict((string) ($result['reason'] ?? 'party_save_failed'),
+                    'error.party.' . ((string) ($result['reason'] ?? 'save_failed'))),
+                $requestId
+            );
+        }
+
+        return Response::ok([
+            'party_id'  => $partyId,
+            'revision'  => $result['revision'] ?? 0,
+            'request_id' => $requestId,
+        ]);
+    }
+
     private function loadCharacterState(Request $request, string $requestId): Response
     {
         $session = $this->requireSession($request);

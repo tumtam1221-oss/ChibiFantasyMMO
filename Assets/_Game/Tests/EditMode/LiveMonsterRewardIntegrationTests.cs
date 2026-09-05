@@ -366,6 +366,71 @@ namespace ChibiFantasy.Tests.EditMode
                 Is.EqualTo(granted.ExperienceAfter));
         }
 
+        // ---- parties reach MySQL --------------------------------------------------------------------
+
+        /// <summary>
+        /// A party, through the real stack and back.
+        /// </summary>
+        /// <remarks>Unity -> HTTP -> PHP -> MySQL -> a new store -> back. The second read
+        /// goes through a repository that has never seen the first, which is what makes it
+        /// a persistence test rather than a memory one.</remarks>
+        [Test]
+        public void APartySurvivesARealRoundTripThroughPhpAndMySql()
+        {
+            var store = new HttpPartyStateStore(_transport, new ApiToken(_api));
+
+            CharacterId me = new CharacterId(_fixture.RewardCharacterId);
+
+            // Whatever ran before, this character starts in no party.
+            store.Save(_api.Session, new PersistedParty(new PartyId("party-live-18-14"),
+                me, PartyLootPolicy.Personal, new CharacterId[0], 0));
+
+            PartyPersistenceResult empty = store.Load(_api.Session);
+
+            Assert.That(empty.IsOk, Is.True, "live load failed: " + empty.Detail);
+            Assert.That(empty.Party.Exists, Is.False, "the character already has a party");
+
+            var party = new PersistedParty(new PartyId("party-live-18-14"), me,
+                PartyLootPolicy.RoundRobin, new[] { me }, 0);
+
+            PartyPersistenceResult saved = store.Save(_api.Session, party);
+
+            Assert.That(saved.IsOk, Is.True, "live save failed: " + saved.Detail);
+
+            // A brand new store over the same wire: nothing in this process remembers it.
+            var reader = new HttpPartyStateStore(_transport, new ApiToken(_api));
+
+            PartyPersistenceResult loaded = reader.Load(_api.Session);
+
+            Assert.That(loaded.IsOk, Is.True, loaded.Detail);
+            Assert.That(loaded.Party.Exists, Is.True, "the party did not survive MySQL");
+            Assert.That(loaded.Party.Party.Value, Is.EqualTo("party-live-18-14"));
+            Assert.That(loaded.Party.Leader, Is.EqualTo(me));
+            Assert.That(loaded.Party.LootPolicy, Is.EqualTo(PartyLootPolicy.RoundRobin),
+                "the loot policy did not round-trip");
+            Assert.That(loaded.Party.Members, Is.EqualTo(new[] { me }));
+
+            // And a fresh world restores it, which is the shape a server restart takes.
+            var world = new WorldPartyRegistry();
+
+            PartyState restored = world.Restore(_api.Session, me, reader);
+
+            Assert.That(restored, Is.Not.Null, "a fresh world could not restore the party");
+            Assert.That(restored.LootPolicy, Is.EqualTo(PartyLootPolicy.RoundRobin));
+
+            // Two members restoring the same persisted party share one runtime object.
+            Assert.That(world.Restore(_api.Session, me, reader), Is.SameAs(restored));
+            Assert.That(world.Count, Is.EqualTo(1));
+
+            // Disbanded, and gone for good.
+            Assert.That(store.Save(_api.Session, new PersistedParty(restored.Id, me,
+                PartyLootPolicy.Personal, new CharacterId[0], 0)).IsOk, Is.True);
+
+            Assert.That(new HttpPartyStateStore(_transport, new ApiToken(_api))
+                .Load(_api.Session).Party.Exists, Is.False,
+                "a disbanded party came back from MySQL");
+        }
+
         // ---- devil fruit reaches MySQL ------------------------------------------------------------
 
         /// <summary>
