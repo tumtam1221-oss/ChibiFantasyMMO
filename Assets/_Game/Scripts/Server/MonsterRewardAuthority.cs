@@ -229,8 +229,12 @@ namespace ChibiFantasy.Server
             IRandomResultSource rolls = null,
             IRandomRangeSource quantities = null,
             float lootLifetimeSeconds = 0f,
-            float personalWindowSeconds = 0f)
+            float personalWindowSeconds = 0f,
+            WorldPartyRegistry parties = null,
+            float rewardRangeMetres = 0f)
         {
+            _parties = parties;
+            _rewardRangeMetres = rewardRangeMetres;
             _monsters = monsters;
             _characters = characters;
             _progression = progression;
@@ -354,8 +358,21 @@ namespace ChibiFantasy.Server
 
             _paid.Add(monster.Value);
 
-            return Apply(monster, recipient, defeat.ExperienceReward,
-                DropLoot(defeat, living, recipient, rolled));
+            // Who this kill belongs to, decided now and not revisited.
+            DefeatRewardContext context = ContextFor(recipient, living);
+
+            // The pile is attributed through Phase 13's own policy. One claimant, recorded
+            // immutably on the loot, so a party that disbands later cannot make it
+            // unclaimable and a party somebody joins later cannot make it theirs.
+            LootObjectState pile = DropLoot(defeat, living, ClaimantFor(context), rolled);
+
+            if (pile != null && context.Party.IsValid && _parties != null)
+            {
+                // A turn is spent only when a party is actually given something.
+                _parties.AdvanceRotation(context.Party);
+            }
+
+            return ApplyShared(monster, recipient, defeat.ExperienceReward, context, pile);
         }
 
         /// <summary>
@@ -434,13 +451,13 @@ namespace ChibiFantasy.Server
         /// the world is a pickup request that can only ever be refused.
         /// </remarks>
         private LootObjectState DropLoot(in MonsterDefeatResult defeat, LivingMonster monster,
-            LivingCharacter recipient, List<LootResult> rolled)
+            CharacterId claimant, List<LootResult> rolled)
         {
             if (!CanDrop || rolled == null || rolled.Count == 0) return null;
 
             LootObjectState pile = MonsterDefeatService.CreateLoot(defeat, rolled,
                 monster.State.Position, LootPolicy.OwnerOnly,
-                recipient.Domain.Identity.CharacterId, _lootLifetimeSeconds,
+                claimant, _lootLifetimeSeconds,
                 _personalWindowSeconds);
 
             if (pile == null) return null;
@@ -455,6 +472,100 @@ namespace ChibiFantasy.Server
         /// combatant id is its <see cref="CharacterId"/> as an <see cref="InstanceId"/>.
         /// A monster's id resolves to nothing here, which is what stops a monster killing a
         /// monster from paying anybody.</remarks>
+        /// <summary>
+        /// Which single member may take this pile, according to the party's own policy.
+        /// </summary>
+        /// <remarks>
+        /// <b>Phase 13 decides; this only asks.</b> Personal attributes to the killer,
+        /// exactly as a solo kill always has. RoundRobin hands it to whoever the rotation
+        /// says. Nothing here re-implements either rule, and nothing here knows what the
+        /// item is -- a Devil Fruit and a copper coin are attributed identically, because
+        /// rarity is the drop table's business and not the party's.
+        /// </remarks>
+        private CharacterId ClaimantFor(in DefeatRewardContext context)
+        {
+            if (!context.Party.IsValid || _parties == null) return context.Killer;
+
+            if (!_parties.TryGetPartyOf(context.Killer, out PartyState party))
+            {
+                return context.Killer;
+            }
+
+            var claimants = new List<CharacterId>();
+
+            PartyLootPolicyService.EligibleClaimants(party, context.Killer, context.Rotation,
+                claimants);
+
+            for (var i = 0; i < claimants.Count; i++)
+            {
+                // The rotation can land on a member who was not part of this defeat -- out
+                // of range, on another map, offline. Their turn passes to the next one who
+                // was actually there rather than reserving loot nobody can reach.
+                if (Contains(context.Eligible, claimants[i])) return claimants[i];
+            }
+
+            return context.Killer;
+        }
+
+        private static bool Contains(IReadOnlyList<CharacterId> members, CharacterId member)
+        {
+            for (var i = 0; i < members.Count; i++)
+            {
+                if (members[i] == member) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Pays every member the defeat is allowed to pay.
+        /// </summary>
+        /// <remarks>
+        /// <b>The split is Phase 13's arithmetic, not a second one.</b>
+        /// <see cref="PartyExperiencePolicy.Share"/> divides the monster's experience and
+        /// hands the remainder out a point at a time, so a hundred experience across three
+        /// members is 34/33/33 and never 33/33/33 with one point quietly lost.
+        ///
+        /// <b>The killer's own result is what is returned.</b> The caller asked what this
+        /// command did, and what it did for them is their share -- the others are paid, and
+        /// a reward event for somebody else's screen is not this method's business.
+        /// </remarks>
+        private MonsterRewardResult ApplyShared(InstanceId monster, LivingCharacter killer,
+            int experience, in DefeatRewardContext context, LootObjectState pile)
+        {
+            var shares = new List<PartyExperienceShare>();
+
+            PartyExperiencePolicy.Share(experience, context.Eligible, shares);
+
+            MonsterRewardResult mine = default;
+
+            var paid = false;
+
+            for (var i = 0; i < shares.Count; i++)
+            {
+                PartyExperienceShare share = shares[i];
+
+                if (share.Character == context.Killer)
+                {
+                    mine = Apply(monster, killer, share.Experience, pile);
+                    paid = true;
+
+                    continue;
+                }
+
+                if (!_characters.TryGetByCharacter(share.Character,
+                    out LivingCharacter member))
+                {
+                    continue;
+                }
+
+                Apply(monster, member, share.Experience, pile);
+            }
+
+            // No share at all -- an experience reward of zero, which is legitimate content.
+            return paid ? mine : Apply(monster, killer, 0, pile);
+        }
+
         private bool TryResolveRecipient(InstanceId killer, out LivingCharacter recipient)
         {
             recipient = null;
@@ -474,6 +585,84 @@ namespace ChibiFantasy.Server
         /// is not checked, matching every other map rule in this project, where an unset map
         /// means unrestricted rather than forbidden.
         /// </remarks>
+        /// <summary>The parties this world is running. Null in a world with none.</summary>
+        private readonly WorldPartyRegistry _parties;
+
+        /// <summary>How near a member must have been to share. Zero means anywhere on the map.</summary>
+        private readonly float _rewardRangeMetres;
+
+        /// <summary>
+        /// Who this defeat may pay, worked out once at the moment it is claimed.
+        /// </summary>
+        /// <remarks>
+        /// <b>Every filter is applied at defeat time and never again.</b> Same party, same
+        /// map, close enough, still alive. A member who was across the map when the boss
+        /// died does not become eligible by running over afterwards, and one who was there
+        /// does not stop being eligible by leaving the party -- which is what makes a share
+        /// something a player earns rather than something they can arrange later.
+        ///
+        /// <b>Solo is the same code path with a party of one.</b> There is no branch here
+        /// for "not in a party": the eligible list is simply the killer, and everything
+        /// downstream divides by one.
+        /// </remarks>
+        private DefeatRewardContext ContextFor(LivingCharacter killer, LivingMonster monster)
+        {
+            CharacterId killerId = killer.Domain.Identity.CharacterId;
+
+            var eligible = new List<CharacterId>();
+
+            PartyState party = null;
+
+            if (_parties != null) _parties.TryGetPartyOf(killerId, out party);
+
+            if (party == null || !party.IsActive)
+            {
+                eligible.Add(killerId);
+
+                return new DefeatRewardContext(monster.Instance, killerId, PartyId.None,
+                    eligible, monster.Map, 0);
+            }
+
+            IReadOnlyList<CharacterId> members = party.Members;
+
+            for (var i = 0; i < members.Count; i++)
+            {
+                if (!SharesTheDefeat(members[i], killerId, monster)) continue;
+
+                eligible.Add(members[i]);
+            }
+
+            // A party whose every member was out of range still pays the one who landed the
+            // blow: a kill that rewarded nobody would be a bug wearing a rule's clothes.
+            if (eligible.Count == 0) eligible.Add(killerId);
+
+            return new DefeatRewardContext(monster.Instance, killerId, party.Id, eligible,
+                monster.Map, _parties.RotationOf(party.Id));
+        }
+
+        /// <summary>Whether one member was actually part of this kill.</summary>
+        private bool SharesTheDefeat(CharacterId member, CharacterId killer,
+            LivingMonster monster)
+        {
+            // The killer is always in: they are standing on the corpse by definition.
+            if (member == killer) return true;
+
+            if (!_characters.TryGetByCharacter(member, out LivingCharacter living))
+            {
+                // Not in this world right now -- disconnected, or on another server.
+                return false;
+            }
+
+            if (!IsEligible(living, monster)) return false;
+
+            if (_rewardRangeMetres <= 0f) return true;
+
+            CombatPosition from = living.Combatant.Position;
+
+            return from.SqrDistanceTo(monster.State.Position)
+                <= _rewardRangeMetres * _rewardRangeMetres;
+        }
+
         private static bool IsEligible(LivingCharacter recipient, LivingMonster monster)
         {
             if (recipient.Domain == null || recipient.Combatant == null) return false;

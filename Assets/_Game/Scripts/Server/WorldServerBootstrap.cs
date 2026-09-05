@@ -238,6 +238,7 @@ namespace ChibiFantasy.Server
             Loot = null;
             Rewards = null;
             LootAuthority = null;
+            Parties = null;
 
             // A session-only process: it admits, places and releases, and simulates nothing.
             // Legitimate, and not a fault.
@@ -305,10 +306,15 @@ namespace ChibiFantasy.Server
                 ? progressions.All[0]
                 : null;
 
+            // The parties this world is running. Phase 13 decides what a party is; this
+            // world just keeps them, so a defeat can ask who was in one.
+            Parties = new WorldPartyRegistry();
+
             var rewards = new MonsterRewardAuthority(monsters, players, curve, loot, items,
                 _content.BuildDropTables(), _rolls ?? new SystemRandomSource(),
                 _quantities as IRandomRangeSource ?? new SystemRandomSource(),
-                _lootLifetimeSeconds, _lootPersonalWindowSeconds);
+                _lootLifetimeSeconds, _lootPersonalWindowSeconds,
+                Parties, _rewardRangeMetres);
 
             var combat = new ServerCombatPipeline(commands, monsters, rewards,
                 BasicAttackRules.Melee(_content.AttackStat, _content.DefenceStat,
@@ -382,6 +388,13 @@ namespace ChibiFantasy.Server
 
         /// <summary>Where a pickup request lands. Null when unready.</summary>
         public CharacterLootAuthority LootAuthority { get; private set; }
+
+        /// <summary>The parties this world is running. Null when unready.</summary>
+        public WorldPartyRegistry Parties { get; private set; }
+
+        [Tooltip("How near a party member must be to share a kill, in metres. "
+            + "Zero shares with the whole map.")]
+        [SerializeField] private float _rewardRangeMetres = 40f;
 
         [Tooltip("How close a character must be to take a pile, in metres.")]
         [SerializeField] private float _lootReachMetres = 4f;

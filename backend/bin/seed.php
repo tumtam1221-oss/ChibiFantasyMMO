@@ -100,8 +100,53 @@ try {
         ':pk'       => 1,
     ]);
 
+    // The world boss, where a running world expects to find it.
+    //
+    // The database owns where and how often a monster appears; Unity owns what it is.
+    // So only the placement is here -- the boss's stats, rank, loot table and reward all
+    // stay in the authored MonsterDefinition, and nothing below repeats them.
+    //
+    // Idempotent, because a seed that fails the second time it runs is a seed nobody runs.
+    $spawn = $pdo->prepare(
+        'INSERT INTO monster_spawn_point
+            (spawn_point_id, map_definition_id, monster_definition_id,
+             position_x, position_y, position_z, spawn_radius,
+             initial_spawn_count, max_alive, respawn_seconds, enabled,
+             spawn_group_id, created_at, updated_at)
+         VALUES (:id, :map, :monster, :x, :y, :z, :radius,
+                 :initial, :max_alive, :respawn, 1, :grp, NOW(3), NOW(3))
+         ON DUPLICATE KEY UPDATE
+            map_definition_id = VALUES(map_definition_id),
+            monster_definition_id = VALUES(monster_definition_id),
+            position_x = VALUES(position_x),
+            position_y = VALUES(position_y),
+            position_z = VALUES(position_z),
+            spawn_radius = VALUES(spawn_radius),
+            initial_spawn_count = VALUES(initial_spawn_count),
+            max_alive = VALUES(max_alive),
+            respawn_seconds = VALUES(respawn_seconds),
+            enabled = VALUES(enabled),
+            updated_at = NOW(3)'
+    );
+
+    $spawn->execute([
+        ':id'        => 'spawn.harbor_town.slime_king',
+        ':map'       => 'map.harbor_town',
+        ':monster'   => 'monster.ancient_slime_king',
+        ':x'         => 40.0,
+        ':y'         => 0.0,
+        ':z'         => 40.0,
+        ':radius'    => 0.0,
+        ':initial'   => 1,
+        ':max_alive' => 1,
+        // Thirty minutes, matching the authored RespawnSettings the runtime already uses.
+        ':respawn'   => 1800.0,
+        ':grp'       => null,
+    ]);
+
     echo 'seeded ' . ($useTest ? 'test' : 'application') . ' database' . PHP_EOL;
     echo '  1 currency, 1 server, 2 channels (one with PK enabled)' . PHP_EOL;
+    echo '  1 world-boss spawn point (monster.ancient_slime_king on map.harbor_town)' . PHP_EOL;
     echo '  no accounts: fixtures never ship credentials' . PHP_EOL;
 
     exit(0);
