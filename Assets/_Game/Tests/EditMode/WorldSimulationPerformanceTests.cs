@@ -19,11 +19,21 @@ namespace ChibiFantasy.Tests.EditMode
     /// <see cref="WorldSimulation"/> over the real registries, authorities and monster
     /// runtime. A benchmark against a toy loop would measure the toy.
     ///
-    /// <b>Allocations are the assertion; time is the observation.</b> Managed bytes per tick
-    /// are deterministic enough to fail a build on, and are what a server actually suffers
-    /// from -- a collection pause is the thing players feel. Wall-clock timings are recorded
-    /// and reported, but only asserted against deliberately generous ceilings, because a test
-    /// runner sharing a machine with a compiler is not a measurement instrument.
+    /// <b>Two different things are measured here, and neither is allocation traffic.</b>
+    /// The first is wall-clock cost per tick, recorded and reported but asserted only
+    /// against deliberately generous ceilings, because a test runner sharing a machine with
+    /// a compiler is not a measurement instrument. The second is <em>retained</em> managed
+    /// heap growth across a measured run: what the world was still holding at the end that
+    /// it was not holding at the start.
+    ///
+    /// <b>Retained growth is not bytes allocated.</b> A tick that allocates a megabyte and
+    /// drops it is invisible to <c>GC.GetTotalMemory</c>, and a collection inside the run
+    /// makes the figure smaller still. Reading it as "bytes allocated per tick" would be
+    /// wrong in the direction that flatters the code, so it is named for what it is and
+    /// asserted only as what it can honestly carry: a leak check. How much a tick actually
+    /// allocates is a different measurement, taken on a real allocation counter in
+    /// <c>WorldSimulationAllocationTests</c>, which needs frame boundaries and therefore
+    /// PlayMode.
     ///
     /// <b>What is missing here, honestly.</b> Replication is not composed: it needs a live
     /// FishNet <c>NetworkManager</c>, so snapshot preparation is measured in PlayMode
@@ -71,14 +81,14 @@ namespace ChibiFantasy.Tests.EditMode
         private readonly struct Measurement
         {
             public Measurement(string fixture, int characters, int monsters,
-                double medianMicroseconds, double p95Microseconds, long bytesPerTick)
+                double medianMicroseconds, double p95Microseconds, long retainedBytesPerTick)
             {
                 Fixture = fixture;
                 Characters = characters;
                 Monsters = monsters;
                 MedianMicroseconds = medianMicroseconds;
                 P95Microseconds = p95Microseconds;
-                BytesPerTick = bytesPerTick;
+                RetainedBytesPerTick = retainedBytesPerTick;
             }
 
             public string Fixture { get; }
@@ -91,7 +101,8 @@ namespace ChibiFantasy.Tests.EditMode
 
             public double P95Microseconds { get; }
 
-            public long BytesPerTick { get; }
+            /// <summary>Heap still held at the end of the run, per tick. Not allocation.</summary>
+            public long RetainedBytesPerTick { get; }
 
             public override string ToString()
             {
@@ -99,7 +110,7 @@ namespace ChibiFantasy.Tests.EditMode
                     + " monsters=" + Monsters
                     + " median=" + MedianMicroseconds.ToString("0.00") + "us"
                     + " p95=" + P95Microseconds.ToString("0.00") + "us"
-                    + " alloc=" + BytesPerTick + "B/tick";
+                    + " retainedPerTick=" + RetainedBytesPerTick + "B";
             }
         }
 
@@ -188,42 +199,45 @@ namespace ChibiFantasy.Tests.EditMode
                 "a fifty-character world costs more than sixty milliseconds a tick");
         }
 
-        // ---- what a steady-state tick may allocate --------------------------------------------
+        // ---- what a steady-state run may still be holding afterwards ---------------------------
 
         [Test]
-        public void AnIdleWorldStaysWithinItsAllocationBudget()
+        public void AnIdleWorldRetainsNothingPerTick()
         {
-            // The budget this gate exists to establish. A world where nothing changed --
-            // nobody moved, nothing expired, no reward is owed -- should cost almost no
-            // managed memory, because every collection it needs it already has.
+            // A world where nothing changed -- nobody moved, nothing expired, no reward is
+            // owed -- must not be holding more at the end of two hundred and forty ticks
+            // than it was at the start. That is a leak check, and all this counter can say.
             Measurement measured = Measure("IDLE", characters: 20, monsters: 200);
 
             Report(measured);
 
-            Assert.That(measured.BytesPerTick, Is.LessThanOrEqualTo(256L),
-                "a steady-state tick allocates " + measured.BytesPerTick + " bytes");
+            Assert.That(measured.RetainedBytesPerTick, Is.LessThanOrEqualTo(256L),
+                "a steady-state run still held " + measured.RetainedBytesPerTick
+                    + " bytes a tick at the end of it");
         }
 
         [Test]
-        public void AStressWorldStaysWithinItsAllocationBudget()
+        public void AStressWorldRetainsNothingPerTick()
         {
-            Measurement measured = Measure("STRESS-ALLOC", characters: 50, monsters: 500);
+            Measurement measured = Measure("STRESS-RETAINED", characters: 50, monsters: 500);
 
             Report(measured);
 
-            Assert.That(measured.BytesPerTick, Is.LessThanOrEqualTo(512L),
-                "a stress tick allocates " + measured.BytesPerTick + " bytes");
+            Assert.That(measured.RetainedBytesPerTick, Is.LessThanOrEqualTo(512L),
+                "a stress run still held " + measured.RetainedBytesPerTick
+                    + " bytes a tick at the end of it");
         }
 
         [Test]
-        public void AnEmptyWorldAllocatesNothingPerTick()
+        public void AnEmptyWorldRetainsNothingPerTick()
         {
             Measurement measured = Measure("EMPTY", characters: 0, monsters: 0);
 
             Report(measured);
 
-            Assert.That(measured.BytesPerTick, Is.LessThanOrEqualTo(32L),
-                "an empty world allocates " + measured.BytesPerTick + " bytes a tick");
+            Assert.That(measured.RetainedBytesPerTick, Is.LessThanOrEqualTo(32L),
+                "an empty world still held " + measured.RetainedBytesPerTick
+                    + " bytes a tick at the end of the run");
         }
 
         // ---- what the caching may not change ------------------------------------------------------
@@ -353,15 +367,19 @@ namespace ChibiFantasy.Tests.EditMode
 
             var watch = new Stopwatch();
 
-            // Managed heap growth across the whole measured run, divided by the tick
-            // count. Coarse, and deliberately so: GC.GetAllocatedBytesForCurrentThread
-            // returns zero on this Mono runtime -- verified, not assumed -- so it would
-            // report every tick as free whatever the code did. GetTotalMemory moves, which
-            // makes it the only counter here that can fail an honest test.
+            // RETAINED heap growth across the whole measured run, divided by the tick
+            // count. This is not allocation traffic and must never be reported as such:
+            // garbage the run created and dropped never appears here, and a collection
+            // inside the run pushes the figure down further.
             //
-            // Its limitation is stated where it is used: a collection during the run makes
-            // this under-report, so it is a floor on what a tick allocates rather than an
-            // exact figure. Zero from it means the run genuinely did not grow the heap.
+            // What it can honestly say is whether the world ended the run holding more than
+            // it began with, which is a leak check -- and that is the only thing asserted
+            // against it. The two other instruments were considered and rejected on this
+            // runtime: GC.GetAllocatedBytesForCurrentThread returns zero here (verified by
+            // allocating ten thousand objects and reading a delta of zero), and
+            // ProfilerRecorder's "GC Allocated In Frame" samples at frame boundaries, of
+            // which EditMode has none -- so allocation traffic is measured in PlayMode by
+            // WorldSimulationAllocationTests instead.
             System.GC.Collect();
             System.GC.WaitForPendingFinalizers();
 
@@ -378,16 +396,16 @@ namespace ChibiFantasy.Tests.EditMode
                 samples[i] = watch.Elapsed.TotalMilliseconds * 1000d;
             }
 
-            long allocated = System.GC.GetTotalMemory(false) - before;
+            long retained = System.GC.GetTotalMemory(false) - before;
 
-            if (allocated < 0L) allocated = 0L;
+            if (retained < 0L) retained = 0L;
 
             System.Array.Sort(samples);
 
             return new Measurement(fixture, characters, monsters,
                 samples[samples.Length / 2],
                 samples[(int)(samples.Length * 0.95f)],
-                allocated / Samples);
+                retained / Samples);
         }
 
         private static void Report(Measurement measured)

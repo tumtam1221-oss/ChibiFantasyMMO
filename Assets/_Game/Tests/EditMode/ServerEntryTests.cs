@@ -35,6 +35,10 @@ namespace ChibiFantasy.Tests.EditMode
         private const string KnownPrototypeAnimator =
             "Assets/_Game/Prefabs/Prototype/Proto_Locomotion.controller";
 
+        /// <summary>The development-only load driver, which production must not contain.</summary>
+        private const string Harness =
+            "Assets/_Game/Scripts/Server/WorldSoakHarness.cs";
+
         // ---- entry ---------------------------------------------------------------------------
 
         [Test]
@@ -124,6 +128,102 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(client.scenes[0], Is.EqualTo(Login));
 
             Assert.That(server.subtarget, Is.Not.EqualTo(client.subtarget));
+        }
+
+        [Test]
+        public void AProductionServerBuildCarriesNoDevelopmentFlag()
+        {
+            // What ships is what ships. A development flag on the production options would
+            // define DEVELOPMENT_BUILD and compile the soak harness into a live server,
+            // where an operator's stray argument could start it against real players.
+            BuildPlayerOptions server = GameBuilder.ServerOptions(
+                BuildTarget.StandaloneLinux64, "Builds/x/s");
+
+            Assert.That(server.options, Is.EqualTo(BuildOptions.None),
+                "the production server build carries " + server.options);
+
+            Assert.That(server.options.HasFlag(BuildOptions.Development), Is.False);
+        }
+
+        [Test]
+        public void TheDevelopmentServerDiffersFromTheRealOneByExactlyOneFlag()
+        {
+            // A soak is only evidence about production if it runs production. Same scene,
+            // same subtarget, same target -- one flag apart, and that flag is the whole
+            // reason the harness exists in the process at all.
+            BuildPlayerOptions real = GameBuilder.ServerOptions(
+                BuildTarget.StandaloneWindows64, "Builds/x/s");
+
+            BuildPlayerOptions development = GameBuilder.DevelopmentServerOptions(
+                BuildTarget.StandaloneWindows64, "Builds/x/s");
+
+            Assert.That(development.scenes, Is.EqualTo(real.scenes));
+            Assert.That(development.subtarget, Is.EqualTo(real.subtarget));
+            Assert.That(development.target, Is.EqualTo(real.target));
+            Assert.That(development.locationPathName, Is.EqualTo(real.locationPathName));
+
+            Assert.That(development.options, Is.EqualTo(BuildOptions.Development));
+        }
+
+        [Test]
+        public void TheSoakHarnessIsCompiledOutOfAProductionServer()
+        {
+            // The guard is the mechanism, so it is asserted rather than trusted: without
+            // DEVELOPMENT_BUILD or the editor, none of the file exists to be started.
+            string[] lines = File.ReadAllLines(Harness);
+
+            string guard = lines.First(line => line.TrimStart().StartsWith("#if"));
+
+            Assert.That(guard.Trim(),
+                Is.EqualTo("#if DEVELOPMENT_BUILD || UNITY_EDITOR"),
+                "the soak harness is guarded by " + guard.Trim());
+
+            Assert.That(lines.Count(line => line.TrimStart().StartsWith("#if")), Is.EqualTo(1),
+                "a second guard would make the first one hard to reason about");
+
+            Assert.That(lines.Last(line => line.Trim().Length > 0).Trim(),
+                Is.EqualTo("#endif"));
+        }
+
+        [Test]
+        public void TheSoakHarnessStartsNothingWithoutBeingAskedTo()
+        {
+            // Compiled in is not the same as running. Even a development server does
+            // nothing at all unless -soak was passed, so a development build can be used
+            // for ordinary work without becoming a load generator.
+            string source = Code(Harness);
+
+            Assert.That(source.Contains("if (!HasFlag(Flag)) return;"), Is.True,
+                "the harness no longer checks its own flag before starting");
+
+            Assert.That(source.Contains("const string Flag = \"-soak\";"), Is.True);
+        }
+
+        [Test]
+        public void TheSoakHarnessDrivesTheProductionWorldRatherThanASecondOne()
+        {
+            // The point of a soak is that it exercises what ships. A harness that built its
+            // own simulation, its own reward path or its own pet rules would be measuring
+            // itself, so the couplings that make it a driver are pinned here.
+            string source = Code(Harness);
+
+            Assert.That(source.Contains("_bootstrap.Compose("), Is.True,
+                "the harness must compose the shipped world, not assemble its own");
+
+            Assert.That(source.Contains("_bootstrap.Simulation.Admit("), Is.True,
+                "characters must enter through the production admission path");
+
+            Assert.That(source.Contains("new WorldSimulation("), Is.False,
+                "the harness constructed a second simulation");
+
+            Assert.That(source.Contains("new MonsterRewardAuthority("), Is.False,
+                "the harness constructed a second reward authority");
+
+            Assert.That(source.Contains("new CharacterPetAuthority("), Is.False,
+                "the harness constructed a second pet authority");
+
+            Assert.That(source.Contains("TryGrantExperience"), Is.False,
+                "the harness granted experience itself instead of letting a defeat do it");
         }
 
         [Test]

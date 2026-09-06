@@ -249,6 +249,18 @@ namespace ChibiFantasy.Server
             return _snapshot;
         }
 
+        /// <summary>
+        /// How many times the candidate list has actually been rebuilt.
+        /// </summary>
+        /// <remarks>
+        /// Diagnostic, in the same sense as the reward authority's own counters: it changes
+        /// no behaviour and nothing reads it to decide anything. It exists because "the
+        /// gather happens once per map per tick" is otherwise unobservable from outside --
+        /// the saving is the absence of work, and a test cannot assert an absence it cannot
+        /// count.
+        /// </remarks>
+        public int CandidateGathers { get; private set; }
+
         /// <summary>Which map the candidate list currently holds, within this tick.</summary>
         private DefinitionId _candidatesMap;
 
@@ -524,6 +536,8 @@ namespace ChibiFantasy.Server
 
             _candidatesMap = map;
             _candidatesGathered = true;
+
+            CandidateGathers++;
 
             _candidates.Clear();
 

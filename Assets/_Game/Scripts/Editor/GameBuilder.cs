@@ -88,6 +88,13 @@ namespace ChibiFantasy.Editor
                 "Builds/LinuxServer/ChibiFantasyServer.x86_64"));
         }
 
+        [MenuItem("ChibiFantasy/Build/Windows Development Dedicated Server")]
+        public static void BuildWindowsDevelopmentServer()
+        {
+            Report(BuildDevelopmentDedicatedServer(BuildTarget.StandaloneWindows64,
+                "Builds/WindowsServerDev/ChibiFantasyServer.exe"));
+        }
+
         // ---- the builds themselves ----------------------------------------------------------------
 
         /// <summary>
@@ -138,6 +145,36 @@ namespace ChibiFantasy.Editor
         public static BuildReport BuildDedicatedServer(BuildTarget target, string outputPath)
         {
             return Build(ServerOptions(target, outputPath));
+        }
+
+        /// <summary>
+        /// The same dedicated server, built so it can be measured.
+        /// </summary>
+        /// <remarks>
+        /// <b>One flag apart from the real thing.</b> Same scene, same subtarget, same
+        /// content: only <see cref="BuildOptions.Development"/> is added, which is what
+        /// defines <c>DEVELOPMENT_BUILD</c> and so what compiles the soak harness in. A
+        /// separate scene list or a second bootstrap would mean the soak measured something
+        /// the players will never run.
+        ///
+        /// <b>It is not what ships.</b> <see cref="ServerOptions"/> is untouched and carries
+        /// no development flag, so a production server contains no harness whatever the
+        /// command line says to it. That split is pinned by a test rather than by care.
+        /// </remarks>
+        public static BuildPlayerOptions DevelopmentServerOptions(BuildTarget target,
+            string outputPath)
+        {
+            BuildPlayerOptions options = ServerOptions(target, outputPath);
+
+            options.options = BuildOptions.Development;
+
+            return options;
+        }
+
+        public static BuildReport BuildDevelopmentDedicatedServer(BuildTarget target,
+            string outputPath)
+        {
+            return Build(DevelopmentServerOptions(target, outputPath));
         }
 
         private static BuildReport Build(BuildPlayerOptions options)
