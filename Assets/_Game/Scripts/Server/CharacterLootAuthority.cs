@@ -48,6 +48,11 @@ namespace ChibiFantasy.Server
         /// <summary>How many requests were handled, accepted or not. For diagnostics.</summary>
         public int Handled { get; private set; }
 
+        /// <summary>How many times the ground has been described to everybody.</summary>
+        /// <remarks>Diagnostic, and what a test counts to prove that a quiet world publishes
+        /// nothing.</remarks>
+        public int Publications { get; private set; }
+
         /// <summary>What the last request did.</summary>
         public LootPickupOutcome LastResult { get; private set; }
 
@@ -224,6 +229,42 @@ namespace ChibiFantasy.Server
 
             return published;
         }
+
+        /// <summary>
+        /// Tells everybody what the ground looks like, but only when it has changed.
+        /// </summary>
+        /// <remarks>
+        /// <b>The gap this closes.</b> A pile was published to a player exactly once -- when
+        /// their character spawned -- and never again. A monster could die at somebody's feet
+        /// and leave something they were entitled to, and no client was ever told, because
+        /// nothing in the world called <see cref="PublishAll"/> after the first moment.
+        ///
+        /// <b>Changed, not every tick.</b> The number of piles moves when one is created or
+        /// expires, and <see cref="Handled"/> moves when somebody takes something out of one.
+        /// Between those, the ground is what it was and nothing is sent. A world where
+        /// nobody is fighting therefore costs one comparison a tick.
+        /// </remarks>
+        /// <returns>How many players were told. Zero when nothing had changed.</returns>
+        public int PublishChanged()
+        {
+            if (_loot == null) return 0;
+
+            int piles = _loot.Count;
+
+            if (piles == _publishedPiles && Handled == _publishedHandled) return 0;
+
+            _publishedPiles = piles;
+            _publishedHandled = Handled;
+
+            Publications++;
+
+            return PublishAll();
+        }
+
+        /// <summary>What the ground looked like the last time anybody was told.</summary>
+        private int _publishedPiles = -1;
+
+        private int _publishedHandled = -1;
 
         /// <summary>Forgets a character's replay history when they leave.</summary>
         public bool Forget(CharacterId character)

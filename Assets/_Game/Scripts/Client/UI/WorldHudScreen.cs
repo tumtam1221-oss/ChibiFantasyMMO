@@ -34,6 +34,16 @@ namespace ChibiFantasy.Client.UI
         private TextMeshProUGUI _level;
         private TextMeshProUGUI _experience;
         private Image _healthFill;
+
+        /// <summary>What the player is currently pointing at, drawn only while there is one.</summary>
+        /// <remarks>Its own small panel rather than a second column in the vitals: a target
+        /// comes and goes, and the player's own numbers must not move around the screen when
+        /// it does.</remarks>
+        private RectTransform _targetPanel;
+
+        private TextMeshProUGUI _targetName;
+        private TextMeshProUGUI _targetHealth;
+        private Image _targetHealthFill;
         private RectTransform _statusAnchor;
         private StatusEffectBar _statusBar;
         private IDefinitionRegistry<StatusEffectDefinition> _effects;
@@ -184,6 +194,8 @@ namespace ChibiFantasy.Client.UI
             _statusBar = _statusAnchor.gameObject.AddComponent<StatusEffectBar>();
             _statusBar.Compose(_statusAnchor);
 
+            BuildTargetPanel(root);
+
             Button bag = UiFactory.CreateButton("Inventory", root, "Inventory",
                 out TextMeshProUGUI _);
 
@@ -197,6 +209,85 @@ namespace ChibiFantasy.Client.UI
             bag.onClick.AddListener(() => InventoryRequested?.Invoke());
 
             _panel.gameObject.SetActive(false);
+        }
+
+        /// <summary>The target readout: a name, a bar and a number.</summary>
+        private void BuildTargetPanel(RectTransform root)
+        {
+            _targetPanel = UiFactory.CreateAnchored("Target", root, new Vector2(0.5f, 1f),
+                new Vector2(320f, 72f), new Vector2(0f, -24f));
+
+            UiFactory.CreatePanel("Frame", _targetPanel, UiFactory.Panel).rectTransform
+                .SetAsFirstSibling();
+
+            var frame = (RectTransform)_targetPanel.GetChild(0);
+            frame.anchorMin = Vector2.zero;
+            frame.anchorMax = Vector2.one;
+            frame.offsetMin = Vector2.zero;
+            frame.offsetMax = Vector2.zero;
+
+            _targetName = UiFactory.CreateLabel("TargetName", _targetPanel, string.Empty,
+                18f, TextAlignmentOptions.Center);
+
+            Row(_targetName.rectTransform, -6f, 24f);
+
+            UiFactory.CreateBar("TargetHealthBar", _targetPanel,
+                new Color(0.78f, 0.28f, 0.30f), out _targetHealthFill);
+
+            var bar = (RectTransform)_targetPanel.GetChild(_targetPanel.childCount - 1);
+            Row(bar, -34f, 20f);
+
+            _targetHealth = UiFactory.CreateLabel("TargetHealth", _targetPanel, string.Empty,
+                15f, TextAlignmentOptions.Center);
+
+            Row(_targetHealth.rectTransform, -34f, 20f);
+
+            _targetPanel.gameObject.SetActive(false);
+        }
+
+        /// <summary>
+        /// Draws the monster the player has selected, or nothing.
+        /// </summary>
+        /// <remarks>Called with whatever the input has selected. The numbers are the ones the
+        /// server replicated onto that monster; this screen computes none of them and cannot
+        /// make a monster look healthier than the server says it is.</remarks>
+        public void ShowTarget(string displayName, int health, int maxHealth)
+        {
+            if (_targetPanel == null) return;
+
+            bool has = !string.IsNullOrEmpty(displayName);
+
+            if (_targetPanel.gameObject.activeSelf != has)
+            {
+                _targetPanel.gameObject.SetActive(has);
+            }
+
+            if (!has) return;
+
+            if (_targetName != null && _targetName.text != displayName)
+            {
+                _targetName.text = displayName;
+            }
+
+            string label = health + " / " + maxHealth;
+
+            if (_targetHealth != null && _targetHealth.text != label)
+            {
+                _targetHealth.text = label;
+            }
+
+            if (_targetHealthFill != null)
+            {
+                _targetHealthFill.fillAmount = maxHealth <= 0
+                    ? 0f
+                    : Mathf.Clamp01(health / (float)maxHealth);
+            }
+        }
+
+        /// <summary>Stops drawing a target.</summary>
+        public void ClearTarget()
+        {
+            ShowTarget(null, 0, 0);
         }
 
         private static void Row(RectTransform rect, float fromTop, float height)

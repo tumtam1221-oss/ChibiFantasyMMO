@@ -44,6 +44,14 @@ namespace ChibiFantasy.Server
         private readonly ServerCombatPipeline _combat;
         private readonly MonsterWorldRuntime _monsters;
         private readonly MonsterLootRegistry _loot;
+
+        /// <summary>
+        /// Who tells players what is on the ground. Optional.
+        /// </summary>
+        /// <remarks>A world composed without one still drops loot and still lets a player
+        /// pick it up; it simply never volunteers that a pile is there, which is what the
+        /// world did until 18.18B1.</remarks>
+        private readonly CharacterLootAuthority _lootAuthority;
         private readonly MonsterRewardAuthority _rewards;
         private readonly CharacterReplicationService _replication;
         private readonly MonsterReplicationService _monsterReplication;
@@ -57,8 +65,10 @@ namespace ChibiFantasy.Server
             MonsterWorldRuntime monsters = null,
             MonsterLootRegistry loot = null,
             MonsterReplicationService monsterReplication = null,
-            MonsterRewardAuthority rewards = null)
+            MonsterRewardAuthority rewards = null,
+            CharacterLootAuthority lootAuthority = null)
         {
+            _lootAuthority = lootAuthority;
             _characters = characters;
             _replication = replication;
             _status = status;
@@ -171,6 +181,10 @@ namespace ChibiFantasy.Server
             // 4. Monsters: spawning, thinking, retiring, and the piles they left.
             _monsters?.Tick(deltaSeconds);
             _loot?.Tick(deltaSeconds);
+
+            // And anybody standing near a pile that has just appeared, gone, or been dipped
+            // into is told. Nothing is sent when the ground has not changed.
+            _lootAuthority?.PublishChanged();
 
             // A defeat whose party turn would not commit is decided but unpaid. Retried
             // here because this is already the step that owns monsters and their piles,

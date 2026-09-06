@@ -415,7 +415,7 @@ namespace ChibiFantasy.Server
                 : new MonsterReplicationService(_networkManager, monsters, _monsterPrefab);
 
             Simulation = new WorldSimulation(players, replication, status, stat, movement,
-                combat, monsters, loot, MonsterReplication, rewards);
+                combat, monsters, loot, MonsterReplication, rewards, LootAuthority);
 
             Loot = loot;
             Rewards = rewards;

@@ -76,9 +76,35 @@ namespace ChibiFantasy.Client.UI
             _loaded = scene;
             LoadCount++;
 
-            if (LoadScenes) SceneManager.LoadScene(scene);
+            // Never load a scene that is already loaded.
+            //
+            // Loading the one the player is standing in destroys this driver and builds
+            // another one, whose own record of where it is starts empty -- so it decides the
+            // same thing and loads the same scene, forever. That could not happen while
+            // nothing bound a session to a driver, which is why it survived until the client
+            // was finally composed: the very first evaluation on the login screen asks for
+            // the login screen.
+            //
+            // The driver's own scene is the reliable half of the check: a driver that lives
+            // in the login screen is in the login screen, whether or not Unity has finished
+            // reporting that scene as loaded -- and during Awake, it has not.
+            if (LoadScenes && !AlreadyThere(scene))
+            {
+                SceneManager.LoadScene(scene);
+            }
 
             ScreenChanged?.Invoke(screen);
+        }
+
+        /// <summary>Whether the screen being asked for is one this client is already in.</summary>
+        /// <remarks>Two ways, because neither is enough alone: the scene this driver lives
+        /// in answers correctly while that scene is still loading, and the loaded-scene check
+        /// catches a driver that has been moved out of the scene it came from.</remarks>
+        private bool AlreadyThere(string scene)
+        {
+            if (gameObject.scene.name == scene) return true;
+
+            return SceneManager.GetSceneByName(scene).isLoaded;
         }
 
         private void Update()
