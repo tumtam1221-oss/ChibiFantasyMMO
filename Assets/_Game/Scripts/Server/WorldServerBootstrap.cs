@@ -74,6 +74,24 @@ namespace ChibiFantasy.Server
         [SerializeField] private FishNet.Object.NetworkObject _characterPrefab;
 
         /// <summary>
+        /// The networked object a monster is drawn from.
+        /// </summary>
+        /// <remarks>
+        /// <b>Without this, monsters exist and nobody is told.</b> They spawn, chase, fight,
+        /// die and pay out on the server exactly as they always did -- and no client ever
+        /// receives one, because nothing was replicating them. That was the shipped state
+        /// until 18.18B measured a client's world and found it empty of everything except
+        /// other players.
+        ///
+        /// Optional in the same sense the character prefab is not: a world with no monster
+        /// prefab replicates no monsters and still runs, which is the right behaviour for a
+        /// scene that has not been wired rather than a crash. The shipped scene wires it,
+        /// and a test says so.
+        /// </remarks>
+        [Tooltip("The networked monster object the world spawns per living monster.")]
+        [SerializeField] private FishNet.Object.NetworkObject _monsterPrefab;
+
+        /// <summary>
         /// Spawn points, so arrivals resolve from authored data rather than coordinates.
         /// </summary>
         /// <remarks>
@@ -251,6 +269,7 @@ namespace ChibiFantasy.Server
             Cards = null;
             Pets = null;
             PetAuthority = null;
+            MonsterReplication = null;
 
             // A session-only process: it admits, places and releases, and simulates nothing.
             // Legitimate, and not a fault.
@@ -389,8 +408,14 @@ namespace ChibiFantasy.Server
                 new EquipmentModifierResolver.Context(items, cards: cards),
                 _content.MaxHealthStat, _content.MaxManaStat, fruits, skills);
 
+            // What tells clients about monsters. Composed from the same runtime the
+            // simulation already ticks, so there is one monster world and one shadow of it.
+            MonsterReplication = _monsterPrefab == null
+                ? null
+                : new MonsterReplicationService(_networkManager, monsters, _monsterPrefab);
+
             Simulation = new WorldSimulation(players, replication, status, stat, movement,
-                combat, monsters, loot, rewards: rewards);
+                combat, monsters, loot, MonsterReplication, rewards);
 
             Loot = loot;
             Rewards = rewards;
@@ -416,6 +441,11 @@ namespace ChibiFantasy.Server
 
             Debug.LogError("[world] " + fault);
         }
+
+        /// <summary>
+        /// What replicates monsters to clients, or null when no monster prefab is wired.
+        /// </summary>
+        public MonsterReplicationService MonsterReplication { get; private set; }
 
         /// <summary>The live characters this world holds, or null when unready.</summary>
         public WorldCharacterRegistry Characters { get; private set; }

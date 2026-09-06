@@ -63,6 +63,7 @@ namespace ChibiFantasy.Server
         private const string ServerPrefix = "srv-soak";
         private const string ChannelPrefix = "ch-soak";
         private const string PetPrefix = "soakpet-";
+        private const string GuestPrefix = "soakguest-";
 
         /// <summary>Starts the harness when the process was launched with <c>-soak</c>.</summary>
         /// <remarks>A hook rather than a component on the shipped scene, so the production
@@ -295,7 +296,61 @@ namespace ChibiFantasy.Server
         /// <summary>The session authority a process with no login server in front of it needs.</summary>
         private sealed class AlwaysAdmits : IWorldSessionAuthority
         {
-            public WorldAdmission Admit(WorldJoinClaim claim) => default;
+            private readonly MemoryCharacterStore _store;
+            private readonly string _map;
+            private readonly string _characterClass;
+
+            private int _next;
+
+            public AlwaysAdmits(MemoryCharacterStore store, string map,
+                string characterClass)
+            {
+                _store = store;
+                _map = map;
+                _characterClass = characterClass;
+            }
+
+            /// <summary>How many real clients this soak let in.</summary>
+            public int Admitted { get; private set; }
+
+            /// <summary>
+            /// Lets a real socket client into the soak, with a character of its own.
+            /// </summary>
+            /// <remarks>
+            /// <b>There is no account database in front of a soak.</b> A development server
+            /// driving itself needs somebody to say yes, and this says yes to anything --
+            /// which is exactly why the harness is compiled out of a production build and
+            /// does nothing without <c>-soak</c>. Nothing about production admission is
+            /// changed by it existing.
+            ///
+            /// The character is written into the in-memory store first, because the world
+            /// loads whoever the admission names and refuses a name it cannot find.
+            /// </remarks>
+            public WorldAdmission Admit(WorldJoinClaim claim)
+            {
+                string character = GuestPrefix + _next++;
+                string session = SessionPrefix + character;
+                string account = AccountPrefix + character;
+
+                _store.Seed(new SessionId(session), new PersistedCharacter(
+                    new CharacterId(character), new AccountId(account),
+                    new ServerId(ServerPrefix), character, 1, 20, 0, 104, 35,
+                    new DefinitionId(_characterClass), default, new DefinitionId(_map),
+                    default, new[]
+                    {
+                        new PersistedStat(new DefinitionId("stat.str"), 10),
+                        new PersistedStat(new DefinitionId("stat.vit"), 8),
+                        new PersistedStat(new DefinitionId("stat.int"), 3),
+                    }, null, null, 1, null, 0, default, null, null, default));
+
+                Admitted++;
+
+                return WorldAdmission.Admitted(new SessionId(session),
+                    new AccountId(account), new CharacterId(character),
+                    new ServerId(ServerPrefix), new ChannelId(ChannelPrefix),
+                    new DefinitionId(_map), new Revision(1), new Revision(1),
+                    SessionState.EnteringWorld);
+            }
 
             public bool ConfirmArrival(SessionId session) => true;
 
@@ -304,6 +359,7 @@ namespace ChibiFantasy.Server
 
         private WorldServerBootstrap _bootstrap;
         private MemoryCharacterStore _store;
+        private AlwaysAdmits _admits;
         private MemoryOutbox _outbox;
         private MonsterWorldRuntime _monsters;
         private ServerCombatPipeline _combat;
@@ -457,8 +513,10 @@ namespace ChibiFantasy.Server
             _store = new MemoryCharacterStore();
             _outbox = new MemoryOutbox(_store);
 
+            _admits = new AlwaysAdmits(_store, _map, _class);
+
             _bootstrap.StopServer();
-            _bootstrap.Compose(new AlwaysAdmits(), default, _store, null, null, _outbox);
+            _bootstrap.Compose(_admits, default, _store, null, null, _outbox);
 
             if (!_bootstrap.IsWorldReady)
             {
@@ -725,6 +783,9 @@ namespace ChibiFantasy.Server
                 + " rewardsHeld=" + (_bootstrap.Rewards == null
                     ? 0 : _bootstrap.Rewards.HeldCount)
                 + " applicationsInFlight=" + _store.ApplicationsInFlight()
+                + " realClients=" + (_bootstrap.Characters == null
+                    ? 0 : _bootstrap.Characters.Count - _actors.Count)
+                + " admitted=" + (_admits == null ? 0 : _admits.Admitted)
                 + " monoUsedMB=" + UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong()
                     / (1024 * 1024)
                 + " monoHeapMB=" + UnityEngine.Profiling.Profiler.GetMonoHeapSizeLong()

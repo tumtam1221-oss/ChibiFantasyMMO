@@ -177,11 +177,6 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    - target: {fileID: 3462012269369269435, guid: 3219f49f317e95a4f912f8cc01e0f697,
-        type: 3}
-      propertyPath: m_IsActive
-      value: 1
-      objectReference: {fileID: 0}
     - target: {fileID: 1199570223300177901, guid: 3219f49f317e95a4f912f8cc01e0f697,
         type: 3}
       propertyPath: _content
@@ -195,6 +190,12 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 1199570223300177901, guid: 3219f49f317e95a4f912f8cc01e0f697,
         type: 3}
+      propertyPath: _monsterPrefab
+      value: 
+      objectReference: {fileID: 3675592820772907855, guid: d30551cb8af835f4cbae77b466cc5d8e,
+        type: 3}
+    - target: {fileID: 1199570223300177901, guid: 3219f49f317e95a4f912f8cc01e0f697,
+        type: 3}
       propertyPath: _characterPrefab
       value: 
       objectReference: {fileID: 3639435068301065108, guid: f72c814b04096384895feeed4f33b5af,
@@ -203,6 +204,11 @@ PrefabInstance:
         type: 3}
       propertyPath: m_Name
       value: World_NetworkManager
+      objectReference: {fileID: 0}
+    - target: {fileID: 3462012269369269435, guid: 3219f49f317e95a4f912f8cc01e0f697,
+        type: 3}
+      propertyPath: m_IsActive
+      value: 1
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
