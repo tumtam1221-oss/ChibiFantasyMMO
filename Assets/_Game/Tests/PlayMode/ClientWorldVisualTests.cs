@@ -182,7 +182,7 @@ namespace ChibiFantasy.Tests.PlayMode
 
             Assert.That(visual.Gender, Is.EqualTo(CharacterGender.Male),
                 "the model follows the gender the server replicated");
-            Assert.That(visual.Model.name, Does.Contain("CHR_Base_Male"),
+            Assert.That(visual.Model.name, Does.Contain("CHR_Male_Meshy"),
                 "the approved production model, not a stand-in");
             Assert.That(visual.VisualRoot, Is.Not.Null);
             Assert.That(visual.Model.transform.IsChildOf(visual.VisualRoot), Is.True,
@@ -601,7 +601,7 @@ namespace ChibiFantasy.Tests.PlayMode
             CharacterVisualPresenter visual = Visual(_clientA, "char-f");
 
             Assert.That(visual.Gender, Is.EqualTo(CharacterGender.Female));
-            Assert.That(visual.Model.name, Does.Contain("CHR_Base_Female"),
+            Assert.That(visual.Model.name, Does.Contain("CHR_Female_Meshy"),
                 "the approved female model, not the male one with a different name");
 
             Animator animator = visual.Animator;
@@ -617,7 +617,7 @@ namespace ChibiFantasy.Tests.PlayMode
             // The mapping this rig has previously lost. Checked on the imported asset, which
             // is what the instance above was built from.
             var importer = UnityEditor.AssetImporter.GetAtPath(
-                "Assets/_Game/Art/Characters/Production/Female/CHR_Base_Female_LOD0.fbx")
+                "Assets/_Game/Art/Characters/Production/FemaleMeshy/CHR_Female_Meshy.fbx")
                 as UnityEditor.ModelImporter;
 
             Assert.That(importer, Is.Not.Null);
@@ -630,7 +630,7 @@ namespace ChibiFantasy.Tests.PlayMode
 
                 mapped = true;
 
-                Assert.That(bone.boneName, Is.EqualTo("chest"),
+                Assert.That(bone.boneName, Is.EqualTo("Spine01"),
                     "the explicit Chest mapping has been remapped");
             }
 

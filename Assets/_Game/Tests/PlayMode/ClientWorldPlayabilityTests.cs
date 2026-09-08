@@ -214,7 +214,7 @@ namespace ChibiFantasy.Tests.PlayMode
             yield return Until(() => visual != null && visual.HasVisual, 900);
 
             Assert.That(visual.HasVisual, Is.True, "no approved model was built");
-            Assert.That(visual.Model.name, Does.Contain("CHR_Base_"),
+            Assert.That(visual.Model.name, Does.Contain("_Meshy"),
                 "something other than an approved production model was drawn");
 
             // And the HUD is showing this character rather than nothing.

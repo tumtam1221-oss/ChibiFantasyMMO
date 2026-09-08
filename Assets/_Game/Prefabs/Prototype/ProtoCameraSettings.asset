@@ -13,15 +13,15 @@ MonoBehaviour:
   m_Name: ProtoCameraSettings
   m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.Prototype.ProtoCameraSettings
   followHeight: 0.85
-  defaultDistance: 3
+  defaultDistance: 4
   minDistance: 1.2
   maxDistance: 6
   pitchMin: -20
   pitchMax: 60
-  startPitch: 15
+  startPitch: 50
   orbitSensitivityX: 0.15
   orbitSensitivityY: 0.12
-  zoomSensitivity: 0.004
+  zoomMetresPerNotch: 0.6
   positionSmoothTime: 0.06
   zoomSmoothTime: 0.1
   collisionRadius: 0.2

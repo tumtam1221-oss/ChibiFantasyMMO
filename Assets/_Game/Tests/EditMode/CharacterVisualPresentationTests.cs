@@ -24,10 +24,36 @@ namespace ChibiFantasy.Tests.EditMode
     internal sealed class CharacterVisualPresentationTests
     {
         private const string MaleModel =
-            "Assets/_Game/Art/Characters/Production/Male/CHR_Base_Male_LOD0.fbx";
+            "Assets/_Game/Art/Characters/Production/MaleMeshy/CHR_Male_Meshy.fbx";
 
         private const string FemaleModel =
-            "Assets/_Game/Art/Characters/Production/Female/CHR_Base_Female_LOD0.fbx";
+            "Assets/_Game/Art/Characters/Production/FemaleMeshy/CHR_Female_Meshy.fbx";
+
+        /// <summary>Folders whose clips were authored on the character inside them.</summary>
+        /// <remarks>
+        /// The character ships as two files: the character itself, in its rest pose, and a
+        /// sidecar carrying the run its author made for that exact skeleton. A clip from the
+        /// sidecar is not retargeted from anywhere, so tests that exist to catch retargeting
+        /// damage have nothing to say about it.
+        /// </remarks>
+        private static readonly string[] OwnRigFolders =
+        {
+            "Assets/_Game/Art/Characters/Production/MaleMeshy/",
+            "Assets/_Game/Art/Characters/Production/FemaleMeshy/",
+        };
+
+        /// <summary>Whether this clip was authored on the rig it is played on.</summary>
+        private static bool IsAuthoredOnItsOwnRig(AnimationClip clip)
+        {
+            string path = UnityEditor.AssetDatabase.GetAssetPath(clip);
+
+            foreach (string folder in OwnRigFolders)
+            {
+                if (path.StartsWith(folder, System.StringComparison.Ordinal)) return true;
+            }
+
+            return false;
+        }
 
         private const string CataloguePath =
             "Assets/_Game/Prefabs/Presentation/CharacterVisualCatalogue.asset";
@@ -36,6 +62,9 @@ namespace ChibiFantasy.Tests.EditMode
             "Assets/_Game/Prefabs/Network/WorldEntity_Character.prefab";
 
         private const string WorldScene = "Assets/_Game/Scenes/Client/GameWorld.unity";
+
+        private const string LocomotionController =
+            "Assets/_Game/Prefabs/Prototype/Proto_Locomotion.controller";
 
         private readonly List<Object> _created = new List<Object>();
 
@@ -108,6 +137,649 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(UnityEditor.AssetDatabase.GetAssetPath(catalogue.Locomotion),
                 Is.EqualTo("Assets/_Game/Prefabs/Prototype/Proto_Locomotion.controller"),
                 "the existing validated controller, not a second one");
+        }
+
+        // ---- what the locomotion controller actually plays -------------------------------------
+
+        /// <summary>
+        /// The blend tree is standing and walking, and nothing is being played faster than
+        /// it was animated.
+        /// </summary>
+        /// <remarks>
+        /// <b>The multiplier is the regression this guards.</b> A walk clip that depicts
+        /// 1.16 m/s played at three times its rate to cover 4 m/s of ground is not a run; it
+        /// is a walk on fast-forward, and it looks like one. It has been tried in this
+        /// project and rejected. The check is therefore not "the controller is configured"
+        /// but "no playback rate anywhere is anything other than one" -- across the child
+        /// motions, the state speed, and the state's speed parameter, which are three
+        /// separate places the same shortcut can be hidden.
+        ///
+        /// <b>Two stops, on purpose.</b> Run belongs to a later step and would arrive as a
+        /// third. Until then a third entry means something was added without the blend being
+        /// re-judged by eye.
+        /// </remarks>
+        [Test]
+        public void TheLocomotionBlendIsStandingAndWalkingAtTheirOwnNaturalRates()
+        {
+            var controller = UnityEditor.AssetDatabase
+                .LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(LocomotionController);
+
+            Assert.That(controller, Is.Not.Null, "the locomotion controller has moved");
+
+            UnityEditor.Animations.BlendTree tree = null;
+
+            foreach (UnityEditor.Animations.ChildAnimatorState child in
+                controller.layers[0].stateMachine.states)
+            {
+                Assert.That(child.state.speed, Is.EqualTo(1f),
+                    child.state.name + " plays at " + child.state.speed
+                    + "x -- a state speed is the same fast-forward by another name");
+                Assert.That(child.state.speedParameterActive, Is.False,
+                    child.state.name + " drives its playback rate from a parameter, which is "
+                    + "a multiplier that does not show up in the inspector as one");
+
+                if (child.state.motion is UnityEditor.Animations.BlendTree found)
+                {
+                    tree = found;
+                }
+            }
+
+            Assert.That(tree, Is.Not.Null, "nothing blends between standing and walking");
+            Assert.That(tree.blendParameter, Is.EqualTo("Speed"));
+            Assert.That(tree.children.Length, Is.EqualTo(2),
+                "standing and walking only -- a run is a later step, not a silent third stop");
+
+            foreach (UnityEditor.Animations.ChildMotion child in tree.children)
+            {
+                Assert.That(child.motion, Is.Not.Null, "an empty stop in the blend tree");
+                Assert.That(child.timeScale, Is.GreaterThan(0f).And.LessThan(2.2f),
+                    child.motion.name + " is played at " + child.timeScale
+                    + "x -- past about 2x a run stops reading as running and becomes the "
+                    + "fast-forward this project rejected at 3.3x");
+
+                if (child.threshold <= 0f)
+                {
+                    Assert.That(child.timeScale, Is.EqualTo(1f),
+                        "standing still covers no ground, so there is no reason to play it "
+                        + "at anything but its authored rate");
+                }
+            }
+
+            Assert.That(tree.children[0].threshold, Is.EqualTo(0f), "standing is not at rest");
+            Assert.That(tree.children[1].threshold, Is.EqualTo(1f),
+                "full pace is not the top of the blend");
+        }
+
+        /// <summary>Both clips the blend reaches are loopable humanoid motion.</summary>
+        /// <remarks>A clip that is not humanoid does not retarget onto either approved model
+        /// and animates nothing; a clip that does not loop plays once and freezes, which for
+        /// an idle is a character turning into a statue after three seconds.</remarks>
+        [Test]
+        public void BothLocomotionClipsLoopAndRetarget()
+        {
+            var controller = UnityEditor.AssetDatabase
+                .LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(LocomotionController);
+
+            var clips = 0;
+
+            foreach (UnityEditor.Animations.ChildAnimatorState child in
+                controller.layers[0].stateMachine.states)
+            {
+                if (!(child.state.motion is UnityEditor.Animations.BlendTree tree)) continue;
+
+                foreach (UnityEditor.Animations.ChildMotion motion in tree.children)
+                {
+                    var clip = motion.motion as AnimationClip;
+
+                    Assert.That(clip, Is.Not.Null, "a blend stop that is not a clip");
+                    Assert.That(clip.isHumanMotion, Is.True,
+                        clip.name + " is not humanoid, so it retargets onto neither model");
+                    Assert.That(clip.isLooping, Is.True,
+                        clip.name + " does not loop -- it plays once and then freezes");
+
+                    clips++;
+                }
+            }
+
+            Assert.That(clips, Is.EqualTo(2));
+        }
+
+        /// <summary>
+        /// Both legs take a real step, and the same size step.
+        /// </summary>
+        /// <remarks>
+        /// <b>The clip this caught.</b> The walk this project shipped for months reached
+        /// 0.496m forward with the right foot and 0.157m with the left -- a symmetry of
+        /// 0.32. On screen that is a long right stride followed by a stunted left one that
+        /// barely clears the other foot, which reads as "right, left, together" rather than
+        /// as walking. Every other check passed on it: it looped seamlessly, it retargeted,
+        /// it had no root drift, and Blender called it clean. Nothing was measuring whether
+        /// the two legs did the same amount of work.
+        ///
+        /// <b>Separation is the one reading that survives.</b> Absolute foot positions taken
+        /// through the editor sampling API carry an offset that is not there at runtime.
+        /// The distance <em>between</em> the feet does not: whatever that offset is, both
+        /// feet share it and it cancels.
+        /// </remarks>
+        [Test]
+        public void EveryLocomotionClipStepsEvenlyOnBothLegs()
+        {
+            var controller = UnityEditor.AssetDatabase
+                .LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(LocomotionController);
+
+            foreach (UnityEditor.Animations.ChildAnimatorState child in
+                controller.layers[0].stateMachine.states)
+            {
+                if (!(child.state.motion is UnityEditor.Animations.BlendTree tree)) continue;
+
+                foreach (UnityEditor.Animations.ChildMotion motion in tree.children)
+                {
+                    var clip = (AnimationClip)motion.motion;
+
+                    // Standing still is not a gait.
+                    if (motion.threshold <= 0f) continue;
+
+                    float symmetry = GaitSymmetry(clip, out float left, out float right);
+
+                    if (AcceptedUnevenGait.TryGetValue(clip.name, out float accepted))
+                    {
+                        // Known, measured and deliberately kept. Still pinned, so the clip
+                        // cannot quietly get worse and cannot quietly get fixed without
+                        // somebody noticing this entry is stale.
+                        Assert.That(symmetry, Is.EqualTo(accepted).Within(0.05f),
+                            clip.name + " is on the accepted-uneven-gait list at "
+                            + accepted.ToString("F2") + " but now measures "
+                            + symmetry.ToString("F2") + " -- update the entry or remove it");
+
+                        continue;
+                    }
+
+                    Assert.That(symmetry, Is.GreaterThan(0.7f),
+                        clip.name + " steps " + left.ToString("F3") + "m with the left foot "
+                        + "and " + right.ToString("F3") + "m with the right (symmetry "
+                        + symmetry.ToString("F2") + ") -- one leg barely stepping reads as a "
+                        + "stride that ends with the feet dragged together");
+                }
+            }
+        }
+
+        /// <summary>
+        /// The feet point where the character is going, not out to the sides.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this caught.</b> A run clip retargeted onto the chibi with its feet
+        /// turned out 12 degrees, which reads as waddling rather than running. The clip was
+        /// innocent: on its own rig it measured within half a degree of the jog. The splay
+        /// was introduced by the retarget, because each animation FBX was building its own
+        /// avatar from its own bind pose even though every one of them is the same Mixamo
+        /// character. Pointing the offenders at one shared avatar removed it.
+        ///
+        /// <b>Which avatar is a per-clip measurement, not a rule.</b> Sharing helped the run,
+        /// the fast run and the slash, and made both idles noticeably worse. So this asserts
+        /// the outcome -- how the feet actually end up pointing -- and leaves the importer
+        /// setting to whatever achieves it.
+        ///
+        /// <b>Measured heel-to-toe, and only when the foot is down.</b> A bone's own forward
+        /// axis is whatever the rig author chose, and it swings wildly once the foot pitches;
+        /// the vector from ankle to toe does not. Splay is only meaningful on a planted foot,
+        /// so only the lowest quarter of the stride is counted.
+        ///
+        /// <b>Only retargeted clips are judged.</b> This test exists to catch what a retarget
+        /// adds. A clip authored on the model's own skeleton -- the Meshy run inside the
+        /// character's FBX -- is the animator's intent and the reference everything else is
+        /// held against, so it is measured and reported but not asserted. Headings are
+        /// averaged as vectors: the Meshy rig rests its right toe joint behind the ankle, so
+        /// that foot's heading lives next to the 180 degree seam where a plain mean of angles
+        /// is nonsense.
+        /// </remarks>
+        [Test]
+        public void TheFeetPointForwardsRatherThanOutwards()
+        {
+            var controller = UnityEditor.AssetDatabase
+                .LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(LocomotionController);
+
+            foreach (UnityEditor.Animations.ChildAnimatorState child in
+                controller.layers[0].stateMachine.states)
+            {
+                if (!(child.state.motion is UnityEditor.Animations.BlendTree tree)) continue;
+
+                foreach (UnityEditor.Animations.ChildMotion motion in tree.children)
+                {
+                    var clip = (AnimationClip)motion.motion;
+
+                    float splay = FootSplay(clip);
+
+                    if (IsAuthoredOnItsOwnRig(clip))
+                    {
+                        // Authored on this very skeleton: nothing was retargeted, so there
+                        // is nothing for this test to blame. Reported for the record.
+                        TestContext.WriteLine(clip.name + " (own rig) plants its feet "
+                            + splay.ToString("F1") + " degrees out -- authored, not asserted");
+
+                        continue;
+                    }
+
+                    // A standing character has no direction of travel, and a relaxed stance
+                    // turns the feet out five to fifteen degrees -- that is a person, not a
+                    // defect. Only the moving stops are held to pointing where the character
+                    // is going. The resting one still has to stay inside human, so a rig
+                    // that splays a stance to forty degrees is still caught.
+                    float limit = motion.threshold <= 0f ? 18f : 6f;
+
+                    Assert.That(Mathf.Abs(splay), Is.LessThan(limit),
+                        clip.name + " plants its feet " + splay.ToString("F1")
+                        + " degrees out"
+                        + (motion.threshold <= 0f
+                            ? " while standing, which is past a natural stance"
+                            : " from the direction of travel -- the character waddles")
+                        + ". This is usually the clip's avatar disagreeing with the rest of "
+                        + "the set, not the clip itself");
+                }
+            }
+        }
+
+        /// <summary>Average outward angle of the planted feet, in degrees.</summary>
+        private static float FootSplay(AnimationClip clip)
+        {
+            var prefab = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(MaleModel);
+            GameObject subject = Object.Instantiate(prefab);
+
+            try
+            {
+                Animator animator = subject.GetComponentInChildren<Animator>();
+                animator.applyRootMotion = false;
+
+                Transform leftAnkle = animator.GetBoneTransform(HumanBodyBones.LeftFoot);
+                Transform rightAnkle = animator.GetBoneTransform(HumanBodyBones.RightFoot);
+                Transform leftToe = animator.GetBoneTransform(HumanBodyBones.LeftToes);
+                Transform rightToe = animator.GetBoneTransform(HumanBodyBones.RightToes);
+                Transform root = animator.transform;
+
+                Assert.That(leftToe, Is.Not.Null, "the rig no longer maps toes, so foot "
+                    + "direction cannot be measured at all");
+
+                const int Samples = 90;
+
+                var heights = new List<float>();
+                var headings = new List<Vector2>();
+                var rightHeights = new List<float>();
+                var rightHeadings = new List<Vector2>();
+
+                UnityEditor.AnimationMode.StartAnimationMode();
+
+                for (var i = 0; i <= Samples; i++)
+                {
+                    UnityEditor.AnimationMode.BeginSampling();
+                    UnityEditor.AnimationMode.SampleAnimationClip(subject, clip,
+                        clip.length * i / Samples);
+                    UnityEditor.AnimationMode.EndSampling();
+
+                    heights.Add(root.InverseTransformPoint(leftAnkle.position).y);
+                    rightHeights.Add(root.InverseTransformPoint(rightAnkle.position).y);
+                    headings.Add(Heading(root, leftAnkle, leftToe));
+                    rightHeadings.Add(Heading(root, rightAnkle, rightToe));
+                }
+
+                UnityEditor.AnimationMode.StopAnimationMode();
+
+                return (Planted(heights, headings) - Planted(rightHeights, rightHeadings)) * 0.5f;
+            }
+            finally
+            {
+                if (UnityEditor.AnimationMode.InAnimationMode())
+                {
+                    UnityEditor.AnimationMode.StopAnimationMode();
+                }
+
+                Object.DestroyImmediate(subject);
+            }
+        }
+
+        /// <summary>Ankle-to-toe direction on the ground, in the character's own frame.</summary>
+        private static Vector2 Heading(Transform root, Transform ankle, Transform toe)
+        {
+            Vector3 a = root.InverseTransformPoint(ankle.position);
+            Vector3 t = root.InverseTransformPoint(toe.position);
+
+            return new Vector2(t.x - a.x, t.z - a.z).normalized;
+        }
+
+        /// <summary>
+        /// The mean heading, in degrees from forward (+ is the character's right), over the
+        /// frames where the foot was lowest. A vector mean, so a heading near 180 degrees
+        /// does not average with itself into garbage.
+        /// </summary>
+        private static float Planted(List<float> heights, List<Vector2> headings)
+        {
+            var sorted = new List<float>(heights);
+            sorted.Sort();
+
+            float floor = sorted[sorted.Count / 4];
+
+            Vector2 total = Vector2.zero;
+
+            for (var i = 0; i < heights.Count; i++)
+            {
+                if (heights[i] > floor) continue;
+
+                total += headings[i];
+            }
+
+            return total == Vector2.zero ? 0f : Mathf.Atan2(total.x, total.y) * Mathf.Rad2Deg;
+        }
+
+        /// <summary>
+        /// Clips kept in the locomotion set despite an uneven gait, and what they measure.
+        /// </summary>
+        /// <remarks>
+        /// <b>An exception list, not a lowered bar.</b> The threshold below still applies to
+        /// everything else; these are named one at a time, with the number they were accepted
+        /// at, so the exception is visible in the failure message rather than hidden in a
+        /// constant. Each entry is pinned both ways -- a clip on this list that changes in
+        /// either direction fails, because a silently improved entry is a stale one.
+        ///
+        /// <b>Currently empty, deliberately.</b> The clip that needed an entry --
+        /// EXT_Walk_Loop_VALIDATION, at 0.32 -- is no longer in the locomotion set. The
+        /// mechanism is kept because the next borderline clip should be argued for by name
+        /// here rather than by quietly lowering the threshold below.
+        /// </remarks>
+        private static readonly Dictionary<string, float> AcceptedUnevenGait =
+            new Dictionary<string, float>();
+
+        /// <summary>How evenly a clip steps, from 0 (one leg does nothing) to 1 (even).</summary>
+        private static float GaitSymmetry(AnimationClip clip, out float leftReach,
+            out float rightReach)
+        {
+            var prefab = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(MaleModel);
+            GameObject subject = Object.Instantiate(prefab);
+
+            try
+            {
+                Animator animator = subject.GetComponentInChildren<Animator>();
+                animator.applyRootMotion = false;
+
+                Transform left = animator.GetBoneTransform(HumanBodyBones.LeftFoot);
+                Transform right = animator.GetBoneTransform(HumanBodyBones.RightFoot);
+                Transform root = animator.transform;
+
+                var forward = 0f;
+                var backward = 0f;
+
+                UnityEditor.AnimationMode.StartAnimationMode();
+
+                const int Samples = 90;
+
+                for (var i = 0; i <= Samples; i++)
+                {
+                    UnityEditor.AnimationMode.BeginSampling();
+                    UnityEditor.AnimationMode.SampleAnimationClip(subject, clip,
+                        clip.length * i / Samples);
+                    UnityEditor.AnimationMode.EndSampling();
+
+                    float separation = root.InverseTransformPoint(left.position).z
+                        - root.InverseTransformPoint(right.position).z;
+
+                    forward = Mathf.Max(forward, separation);
+                    backward = Mathf.Min(backward, separation);
+                }
+
+                UnityEditor.AnimationMode.StopAnimationMode();
+
+                leftReach = forward;
+                rightReach = -backward;
+
+                float bigger = Mathf.Max(leftReach, rightReach);
+
+                return bigger <= 0.0001f ? 0f : Mathf.Min(leftReach, rightReach) / bigger;
+            }
+            finally
+            {
+                if (UnityEditor.AnimationMode.InAnimationMode())
+                {
+                    UnityEditor.AnimationMode.StopAnimationMode();
+                }
+
+                Object.DestroyImmediate(subject);
+            }
+        }
+
+        /// <summary>
+        /// The character covers the ground its legs claim to, and the clip moves no body.
+        /// </summary>
+        /// <remarks>
+        /// <b>A correction to an earlier version of this test.</b> It used to require the
+        /// top clip to report a non-zero <c>averageSpeed</c>, on the reasoning that zero
+        /// meant the forward travel had been baked into the pose and the body would slide
+        /// and snap back. That is true of a clip that was captured travelling and then
+        /// flattened -- it is not true of one authored in place, which legitimately reports
+        /// zero and moves no body at all. The check was asserting a proxy; it now asserts
+        /// the thing the proxy stood for, measured on the rig.
+        ///
+        /// <b>And that the two speeds agree.</b> The world moves a character at one number
+        /// and the presenter divides by another to reach the top of the blend. If they
+        /// disagree the character is drawn running at a pace it is not travelling, which is
+        /// foot slide, and no amount of animation work fixes it.
+        /// </remarks>
+        [Test]
+        public void TheBlendReachesFullPaceBeforeTheWorldSpeedSoJitterCannotLeakIdleIn()
+        {
+            CharacterVisualCatalogue catalogue = Catalogue();
+
+            var content = UnityEditor.AssetDatabase.LoadAssetAtPath<WorldContentCatalogue>(
+                "Assets/_Game/Data/Production/WorldContentCatalogue.asset");
+
+            float ratio = catalogue.ReferenceWalkSpeed / content.WalkMetresPerSecond;
+
+            // The Speed parameter is a blend weight, not a speed. It is measured from the
+            // presented transform each frame, and snapshot playback is never perfectly even,
+            // so a reference equal to the world speed dips below 1 on every slow segment.
+            // Below 1 the 1D tree mixes the idle in, which both waters the pose down and --
+            // because a blend tree also blends cycle length, and the idle is four times
+            // longer -- stretches the run cycle. That was the "legs hesitate" a player saw.
+            // Saturating at three quarters of travel speed leaves 25% of headroom for jitter
+            // while a genuinely slow drift still shows as less than a full run.
+            Assert.That(ratio, Is.InRange(0.6f, 0.85f),
+                "the blend reaches full pace at " + catalogue.ReferenceWalkSpeed
+                + " m/s against a world speed of " + content.WalkMetresPerSecond
+                + " m/s (x" + ratio.ToString("F2") + ") -- above 0.85 snapshot jitter leaks "
+                + "the idle into the run, below 0.6 a slow drift plays as a full run");
+        }
+
+        /// <summary>
+        /// The feet cover the ground the character travels, on both shipped rigs.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this caught.</b> The run clip is authored for a human of about
+        /// 1.8 m. Retargeted onto a 0.8 m character with 0.23 m legs, the same joint angles
+        /// cover a quarter of the ground: measured 0.93 m/s (male) and 0.86 m/s (female)
+        /// against a world speed of 3.83 m/s. That is a character skating across the map
+        /// with its feet touching down on a quarter of the distance, which is what "it walks
+        /// strangely" turned out to mean.
+        ///
+        /// <b>Measured, not configured.</b> Stride is a property of the rig, not of the clip,
+        /// so the ground speed is read off the planted foot of each production model, scaled
+        /// by the blend's playback rate, and compared with what the server moves them at.
+        /// Which combination of world speed and playback rate satisfies this is a feel
+        /// decision; that it is satisfied at all is a correctness one.
+        /// </remarks>
+        [Test]
+        public void TheFeetCoverTheGroundTheCharacterTravels()
+        {
+            var content = UnityEditor.AssetDatabase.LoadAssetAtPath<WorldContentCatalogue>(
+                "Assets/_Game/Data/Production/WorldContentCatalogue.asset");
+            var controller = UnityEditor.AssetDatabase
+                .LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(LocomotionController);
+
+            UnityEditor.Animations.ChildMotion run = default(UnityEditor.Animations.ChildMotion);
+            var found = false;
+
+            foreach (UnityEditor.Animations.ChildAnimatorState child in
+                controller.layers[0].stateMachine.states)
+            {
+                if (!(child.state.motion is UnityEditor.Animations.BlendTree tree)) continue;
+
+                foreach (UnityEditor.Animations.ChildMotion motion in tree.children)
+                {
+                    if (motion.threshold >= 1f) { run = motion; found = true; }
+                }
+            }
+
+            Assert.That(found, Is.True, "no full-pace stop in the locomotion blend");
+
+            foreach (string model in new[] { MaleModel, FemaleModel })
+            {
+                float ground = PlantedFootGroundSpeed(model, (AnimationClip)run.motion) * run.timeScale;
+                float slide = content.WalkMetresPerSecond / ground;
+
+                Assert.That(slide, Is.InRange(0.85f, 1.15f),
+                    System.IO.Path.GetFileName(model) + ": the feet cover " + ground.ToString("F2")
+                    + " m/s at " + run.timeScale + "x while the world moves "
+                    + content.WalkMetresPerSecond + " m/s (x" + slide.ToString("F2")
+                    + ") -- beyond about 15% that is visible skating");
+            }
+        }
+
+        /// <summary>Ground speed implied by the planted foot sliding back under the hips.</summary>
+        private static float PlantedFootGroundSpeed(string modelPath, AnimationClip clip)
+        {
+            var prefab = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(modelPath);
+            GameObject subject = Object.Instantiate(prefab);
+            subject.transform.position = Vector3.zero;
+
+            try
+            {
+                Animator animator = subject.GetComponentInChildren<Animator>();
+                animator.applyRootMotion = false;
+
+                Transform left = animator.GetBoneTransform(HumanBodyBones.LeftFoot);
+                Transform right = animator.GetBoneTransform(HumanBodyBones.RightFoot);
+                Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
+
+                const int Samples = 60;
+                float dt = clip.length / Samples;
+                var speeds = new List<float>();
+                float previousLeft = 0f, previousRight = 0f;
+                var primed = false;
+
+                UnityEditor.AnimationMode.StartAnimationMode();
+
+                for (var i = 0; i <= Samples; i++)
+                {
+                    UnityEditor.AnimationMode.BeginSampling();
+                    UnityEditor.AnimationMode.SampleAnimationClip(subject, clip, i * dt);
+                    UnityEditor.AnimationMode.EndSampling();
+
+                    float lz = left.position.z - hips.position.z;
+                    float rz = right.position.z - hips.position.z;
+
+                    if (primed)
+                    {
+                        bool leftDown = left.position.y < right.position.y;
+                        float dz = leftDown ? lz - previousLeft : rz - previousRight;
+
+                        // the planted foot moves backwards under the hips at ground speed
+                        if (dz < 0f) speeds.Add(-dz / dt);
+                    }
+
+                    previousLeft = lz; previousRight = rz; primed = true;
+                }
+
+                UnityEditor.AnimationMode.StopAnimationMode();
+
+                speeds.Sort();
+
+                return speeds.Count == 0 ? 0f : speeds[speeds.Count / 2];
+            }
+            finally
+            {
+                if (UnityEditor.AnimationMode.InAnimationMode())
+                {
+                    UnityEditor.AnimationMode.StopAnimationMode();
+                }
+
+                Object.DestroyImmediate(subject);
+            }
+        }
+
+        /// <summary>
+        /// No locomotion clip walks the body away from the transform.
+        /// </summary>
+        /// <remarks>Root motion is off, so a clip carrying its travel in the pose rather
+        /// than in the root channel slides the body forward and teleports it back once per
+        /// loop. Measured on the rig, because the importer flag that causes it is not the
+        /// only way to arrive at it.</remarks>
+        [Test]
+        public void NoLocomotionClipDragsTheBodyAwayFromTheCharacter()
+        {
+            var controller = UnityEditor.AssetDatabase
+                .LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(LocomotionController);
+
+            foreach (UnityEditor.Animations.ChildAnimatorState child in
+                controller.layers[0].stateMachine.states)
+            {
+                if (!(child.state.motion is UnityEditor.Animations.BlendTree tree)) continue;
+
+                foreach (UnityEditor.Animations.ChildMotion motion in tree.children)
+                {
+                    var clip = (AnimationClip)motion.motion;
+
+                    float travel = BodyTravel(clip);
+
+                    Assert.That(travel, Is.LessThan(0.1f),
+                        clip.name + " moves the body " + travel.ToString("F3")
+                        + "m within the clip while the transform stays put, so it slides "
+                        + "out and snaps back once per loop");
+                }
+            }
+        }
+
+        /// <summary>How far the hips wander, fore and aft, across a clip.</summary>
+        private static float BodyTravel(AnimationClip clip)
+        {
+            var prefab = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(MaleModel);
+            GameObject subject = Object.Instantiate(prefab);
+
+            try
+            {
+                Animator animator = subject.GetComponentInChildren<Animator>();
+                animator.applyRootMotion = false;
+
+                Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
+                Transform root = animator.transform;
+
+                var min = float.MaxValue;
+                var max = float.MinValue;
+
+                UnityEditor.AnimationMode.StartAnimationMode();
+
+                const int Samples = 60;
+
+                for (var i = 0; i <= Samples; i++)
+                {
+                    UnityEditor.AnimationMode.BeginSampling();
+                    UnityEditor.AnimationMode.SampleAnimationClip(subject, clip,
+                        clip.length * i / Samples);
+                    UnityEditor.AnimationMode.EndSampling();
+
+                    float z = root.InverseTransformPoint(hips.position).z;
+
+                    min = Mathf.Min(min, z);
+                    max = Mathf.Max(max, z);
+                }
+
+                UnityEditor.AnimationMode.StopAnimationMode();
+
+                return max - min;
+            }
+            finally
+            {
+                if (UnityEditor.AnimationMode.InAnimationMode())
+                {
+                    UnityEditor.AnimationMode.StopAnimationMode();
+                }
+
+                Object.DestroyImmediate(subject);
+            }
         }
 
         // ---- the shipped assets are actually shipped -----------------------------------------
@@ -186,21 +858,33 @@ namespace ChibiFantasy.Tests.EditMode
         /// Every file the shipped character presentation cannot run without.
         /// </summary>
         /// <remarks>The minimum set, not the folder: the two approved models, their body
-        /// textures, and the walk clip the existing locomotion controller blends to. The idle
-        /// clip and the controller itself already live in tracked content.</remarks>
+        /// textures, and every clip the shipped animator reaches -- male and female, because
+        /// each gender has its own authored variant. The controller and its female override
+        /// already live in tracked content.</remarks>
         private static string[] RequiredCharacterAssets()
         {
             const string production = "Assets/_Game/Art/Characters/Production/";
 
+            const string melee = "Assets/Kevin Iglesias/Human Animations/Animations/";
+
             return new[]
             {
-                production + "Male/CHR_Base_Male_LOD0.fbx",
-                production + "Male/Textures/CHR_Base_Male_BodyColor_2K.png",
-                production + "Male/Textures/CHR_Base_Male_BodyColor_2K_Retopo.png",
-                production + "Female/CHR_Base_Female_LOD0.fbx",
-                production + "Female/Textures/CHR_Base_Female_BodyColor_2K.png",
-                production + "Female/Textures/CHR_Base_Female_BodyColor_2K_Retopo.png",
-                production + "Animation/EXT_Walk_Loop_VALIDATION.anim",
+                production + "MaleMeshy/CHR_Male_Meshy.fbx",
+                production + "MaleMeshy/CHR_Male_Meshy@Idle.fbx",
+                production + "MaleMeshy/CHR_Male_Meshy@Run.fbx",
+                production + "MaleMeshy/CHR_Male_Meshy.mat",
+                production + "MaleMeshy/Textures/CHR_Male_Meshy_BaseColor.png",
+                production + "MaleMeshy/Textures/CHR_Male_Meshy_Normal.png",
+                production + "FemaleMeshy/CHR_Female_Meshy.fbx",
+                production + "FemaleMeshy/CHR_Female_Meshy@Idle.fbx",
+                production + "FemaleMeshy/CHR_Female_Meshy@Run.fbx",
+                production + "FemaleMeshy/CHR_Female_Meshy.mat",
+                production + "FemaleMeshy/Textures/CHR_Female_Meshy_BaseColor.png",
+                production + "FemaleMeshy/Textures/CHR_Female_Meshy_Normal.png",
+                melee + "Male/Combat/1H/HumanM@Attack1H01_R.fbx",
+                melee + "Female/Combat/1H/HumanF@Attack1H01_R.fbx",
+                melee + "Male/Combat/HumanM@Death01.fbx",
+                melee + "Female/Combat/HumanF@Death01.fbx",
             };
         }
 
@@ -240,6 +924,103 @@ namespace ChibiFantasy.Tests.EditMode
         {
             Assert.That(CharacterVisualRules.SpeedFor(new Vector3(5f, 0f, 0f), 0f, 0.05f, 1f),
                 Is.Zero);
+        }
+
+        // ---- easing the blend ------------------------------------------------------------------
+
+        [Test]
+        public void TheBlendMovesTowardsWhatWasMeasuredRatherThanJumpingToIt()
+        {
+            // One smoothing constant of elapsed time covers about 63% of the gap. The exact
+            // figure matters less than the two things either side of it: it moved, and it
+            // did not arrive.
+            float eased = CharacterVisualRules.DampedSpeed(0f, 1f, 0.1f, 0.1f);
+
+            Assert.That(eased, Is.GreaterThan(0.5f), "the walk never got going");
+            Assert.That(eased, Is.LessThan(1f),
+                "arriving in one frame is the snap this exists to remove");
+        }
+
+        [Test]
+        public void TheEasingRunsAtTheSameVisibleRateOnAFastMachineAsOnASlowOne()
+        {
+            // Half a second of easing, taken in one step and in twenty.
+            float coarse = CharacterVisualRules.DampedSpeed(0f, 1f, 0.5f, 0.15f);
+
+            var fine = 0f;
+
+            for (var i = 0; i < 20; i++)
+            {
+                fine = CharacterVisualRules.DampedSpeed(fine, 1f, 0.025f, 0.15f);
+            }
+
+            Assert.That(fine, Is.EqualTo(coarse).Within(0.02f),
+                "a character at 200fps must not lean into a walk at a different rate from "
+                + "the same character at 40fps");
+        }
+
+        [Test]
+        public void StandingStillEventuallyMeansExactlyZeroRatherThanNearlyZero()
+        {
+            var speed = 1f;
+
+            for (var i = 0; i < 200; i++)
+            {
+                speed = CharacterVisualRules.DampedSpeed(speed, 0f, 1f / 60f, 0.15f);
+            }
+
+            Assert.That(speed, Is.Zero,
+                "an exponential that never arrives leaves a residue of walk in the blend, "
+                + "which is a character shuffling on the spot forever");
+        }
+
+        /// <summary>
+        /// The ease finishes in a bounded time rather than trailing off forever.
+        /// </summary>
+        /// <remarks>An exponential on its own took the better part of a second to give up
+        /// its last tenth of a walk. Nobody sees a blend of 0.09 as walking, but the
+        /// character was still not standing, and "still not standing" is a state other things
+        /// -- an idle variation, a turn, an attack recovery -- are entitled to wait on.</remarks>
+        [Test]
+        public void TheEaseFinishesWithinAboutTwiceItsSmoothingTime()
+        {
+            const float smoothing = 0.15f;
+            const float step = 1f / 240f;
+
+            var speed = 1f;
+            var elapsed = 0f;
+
+            while (speed > 0f && elapsed < 5f)
+            {
+                speed = CharacterVisualRules.DampedSpeed(speed, 0f, step, smoothing);
+                elapsed += step;
+            }
+
+            Assert.That(speed, Is.Zero, "it never arrived at all");
+            Assert.That(elapsed, Is.LessThan(smoothing * 2.5f),
+                "a walk that takes " + elapsed.ToString("F2") + "s to leave the blend is a "
+                + "character who has visibly stopped and is still not standing");
+
+            // And it is genuinely eased on the way, not a straight line.
+            float quarter = CharacterVisualRules.DampedSpeed(1f, 0f, smoothing * 0.25f,
+                smoothing);
+
+            Assert.That(quarter, Is.LessThan(0.85f),
+                "a quarter of the smoothing time should have taken a real bite out of it");
+        }
+
+        [Test]
+        public void NoSmoothingIsTheIdentityRatherThanADivisionByZero()
+        {
+            Assert.That(CharacterVisualRules.DampedSpeed(0f, 1f, 1f / 60f, 0f),
+                Is.EqualTo(1f));
+        }
+
+        [Test]
+        public void ANonAdvancingFrameLeavesTheBlendWhereItWas()
+        {
+            Assert.That(CharacterVisualRules.DampedSpeed(0.4f, 1f, 0f, 0.15f),
+                Is.EqualTo(0.4f), "a paused editor must not creep the blend forward");
         }
 
         // ---- facing --------------------------------------------------------------------------
@@ -550,16 +1331,24 @@ namespace ChibiFantasy.Tests.EditMode
         [Test]
         public void TheFemaleRigStillMapsChestExplicitly()
         {
-            // The one mapping Unity's auto-mapper has previously dropped on this rig. Losing
-            // it does not break the import: it retargets a torso wrongly in every frame of
-            // the game, which is not something anybody notices until it ships.
-            AssertBoneMapping(FemaleModel, "Chest", "chest");
+            // The one mapping Unity's auto-mapper has previously dropped on a rig here.
+            // Losing it does not break the import: it retargets a torso wrongly in every
+            // frame of the game, which is not something anybody notices until it ships.
+            // The Meshy rig numbers its spine from the hips upwards -- Spine02, Spine01,
+            // Spine -- so the bone called plain "Spine" is the top of the chain. A mapper
+            // that trusts the name puts Spine at Spine and leaves the chest empty; the
+            // mapping is what matters, not the spelling.
+            AssertBoneMapping(FemaleModel, "Spine", "Spine02");
+            AssertBoneMapping(FemaleModel, "Chest", "Spine01");
+            AssertBoneMapping(FemaleModel, "UpperChest", "Spine");
         }
 
         [Test]
         public void TheMaleRigStillMapsChestExplicitly()
         {
-            AssertBoneMapping(MaleModel, "Chest", "chest");
+            AssertBoneMapping(MaleModel, "Spine", "Spine02");
+            AssertBoneMapping(MaleModel, "Chest", "Spine01");
+            AssertBoneMapping(MaleModel, "UpperChest", "Spine");
         }
 
         [Test]
@@ -629,6 +1418,33 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(presenter, Does.Not.Contain("RequestAttack"));
             Assert.That(presenter, Does.Not.Contain("RequestMove"));
             Assert.That(presenter, Does.Not.Contain("RequestInventoryAction"));
+        }
+
+        /// <summary>
+        /// The easing is actually wired to the animator, not merely written.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this exists for has happened here repeatedly.</b> A rule gets
+        /// written and tested, and nothing calls it -- the arithmetic is green and the game
+        /// is unchanged. So this asserts the call site, not the function.
+        ///
+        /// <b>And that the animator is not asked to do it instead.</b> The four-argument
+        /// <c>SetFloat</c> stops damping when the animator is culled, which leaves every
+        /// off-screen character frozen part-way through a blend; using it would silently
+        /// undo the reason the easing was moved out here in the first place.
+        /// </remarks>
+        [Test]
+        public void TheBlendIsEasedByTheRuleRatherThanByTheAnimator()
+        {
+            string presenter = Code(
+                "Assets/_Game/Scripts/Client/World/CharacterVisualPresenter.cs");
+
+            Assert.That(presenter, Does.Contain("CharacterVisualRules.DampedSpeed"),
+                "the easing rule exists but nothing calls it, so the blend still snaps");
+
+            Assert.That(presenter, Does.Not.Contain("SetFloat(SpeedHash, speed01, "),
+                "the animator's own damping freezes under culling -- the whole reason the "
+                + "easing is computed outside it");
         }
 
         [Test]

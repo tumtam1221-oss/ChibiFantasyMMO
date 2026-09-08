@@ -12,12 +12,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1e574ce1ad3e12149a61c968e60507fe, type: 3}
   m_Name: CharacterVisualCatalogue
   m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.World.CharacterVisualCatalogue
-  _male: {fileID: 919132149155446097, guid: a1d154d338410054e8134dc9e6e42b07, type: 3}
-  _female: {fileID: 919132149155446097, guid: d16093ee2e2c84842b3d76cf24618572, type: 3}
-  _fallback: {fileID: 919132149155446097, guid: a1d154d338410054e8134dc9e6e42b07,
+  _male: {fileID: 919132149155446097, guid: 52b4554bfc57bb641b719d208b59c26e, type: 3}
+  _female: {fileID: 919132149155446097, guid: 354b85b300f64f34e921101c7e06d4fc, type: 3}
+  _fallback: {fileID: 919132149155446097, guid: 52b4554bfc57bb641b719d208b59c26e,
     type: 3}
   _locomotion: {fileID: 9100000, guid: 39555be8cb9455a48b3b7653b13bdf46, type: 2}
-  _referenceWalkSpeed: 1.2
+  _femaleLocomotion: {fileID: 22100000, guid: 103b6b5efb48bb746907c25519bf1763, type: 2}
+  _referenceWalkSpeed: 1
   _moveThreshold: 0.05
-  _nameplateHeight: 1.9
+  _nameplateHeight: 1
   _showOwnNameplate: 0

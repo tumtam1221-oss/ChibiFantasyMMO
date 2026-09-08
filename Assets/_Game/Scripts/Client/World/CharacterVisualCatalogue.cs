@@ -37,10 +37,18 @@ namespace ChibiFantasy.Client.World
         [SerializeField] private GameObject _fallback;
 
         [Header("Animation")]
-        [Tooltip("The existing locomotion controller. Idle and Walk on one Speed parameter.")]
+        [Tooltip("The locomotion controller. Idle and Run on one Speed parameter. Its own "
+            + "clips are the male ones; the female override below replaces them.")]
         [SerializeField] private RuntimeAnimatorController _locomotion;
 
-        [Tooltip("The speed the walk clip depicts, used only to normalise Speed into 0..1.")]
+        [Tooltip("The same controller with the female clips substituted. An override rather "
+            + "than a second controller, so there is one animator graph to reason about and "
+            + "one place a state or a parameter can be added.")]
+        [SerializeField] private RuntimeAnimatorController _femaleLocomotion;
+
+        [Tooltip("The presented speed at which the locomotion blend reaches full pace. Kept "
+            + "below the world speed (about three quarters of it) so that snapshot jitter in "
+            + "the presented speed saturates at 1 instead of mixing the idle into the run.")]
         [SerializeField] private float _referenceWalkSpeed = 1.2f;
 
         [Tooltip("Metres per second below which the character is presented as standing.")]
@@ -60,6 +68,31 @@ namespace ChibiFantasy.Client.World
         public GameObject Fallback => _fallback;
 
         public RuntimeAnimatorController Locomotion => _locomotion;
+
+        /// <summary>The animator graph to use for a given gender.</summary>
+        /// <remarks>
+        /// <b>One graph, two sets of clips.</b> The animation set ships authored male and
+        /// female variants of every locomotion clip, and using one gender's for both is a
+        /// visible difference in stride and posture, not a subtlety. The female entry is an
+        /// <c>AnimatorOverrideController</c> over the same base, so states, parameters and
+        /// transitions exist once: adding an attack state later adds it for both.
+        ///
+        /// <b>Falls back rather than guessing.</b> An unset override means the base graph,
+        /// which animates correctly and merely looks male -- where a null would animate
+        /// nothing at all.
+        /// </remarks>
+        public RuntimeAnimatorController LocomotionFor(CharacterGender gender)
+        {
+            if (gender != CharacterGender.Female) return _locomotion;
+
+            return _femaleLocomotion != null ? _femaleLocomotion : _locomotion;
+        }
+
+        /// <summary>The animator graph for a replicated gender code.</summary>
+        public RuntimeAnimatorController LocomotionFor(int genderCode)
+        {
+            return LocomotionFor(GenderOf(genderCode));
+        }
 
         public float ReferenceWalkSpeed => _referenceWalkSpeed <= 0.0001f
             ? 1f

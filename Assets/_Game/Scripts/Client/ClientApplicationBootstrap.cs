@@ -87,6 +87,9 @@ namespace ChibiFantasy.Client
         /// <summary>How a person picks a monster and asks to hit it.</summary>
         public WorldCombatInput Combat { get; private set; }
 
+        /// <summary>What reads the mouse in the world. Null outside it.</summary>
+        public WorldPointerInput Pointer { get; private set; }
+
         /// <summary>How a person picks up what a monster left.</summary>
         public WorldLootInput Loot { get; private set; }
 
@@ -150,13 +153,57 @@ namespace ChibiFantasy.Client
             BindScene(SceneManager.GetActiveScene());
         }
 
+        private void OnApplicationQuit()
+        {
+            // Fires before teardown on a normal quit, which is the reliable moment to hand
+            // the session back.
+            ReleaseSessionOnExit();
+        }
+
         private void OnDestroy()
         {
             if (Current == this) Current = null;
 
             SceneManager.sceneLoaded -= OnSceneLoaded;
 
+            // Covers the paths OnApplicationQuit does not: leaving Play Mode in the editor,
+            // or this root being destroyed directly.
+            ReleaseSessionOnExit();
+
             _transportLifetime?.Dispose();
+        }
+
+        private bool _sessionReleased;
+
+        /// <summary>
+        /// Hands the live session back to the server as the client shuts down.
+        /// </summary>
+        /// <remarks>
+        /// Closing the client used to strand its session: nothing released it, so the
+        /// account's next sign-in was refused with <c>session_already_active</c> until the
+        /// row expired, and the login screen -- which maps every failure to the same
+        /// message -- reported only that it could not sign in. The account API sends
+        /// synchronously to a known address, so a release issued here reaches the server
+        /// before the process is gone. A client on its way out can do nothing useful with a
+        /// failure, so one is swallowed; the guard makes the two shutdown hooks idempotent.
+        /// </remarks>
+        private void ReleaseSessionOnExit()
+        {
+            if (_sessionReleased) return;
+
+            _sessionReleased = true;
+
+            if (Api is HttpAccountApi http && !string.IsNullOrEmpty(http.SessionToken))
+            {
+                try
+                {
+                    http.ReleaseSession(RequestId.New());
+                }
+                catch
+                {
+                    // A process that is exiting cannot act on a release failure.
+                }
+            }
         }
 
         /// <summary>
@@ -184,10 +231,7 @@ namespace ChibiFantasy.Client
 
             if (Session == null) Session = gameObject.AddComponent<SessionUiController>();
 
-            var versions = new VersionSet(Parse(_clientVersion), Parse(_protocolVersion),
-                Parse(_contentVersion));
-
-            Session.Bind(api, authority, _sessions, versions, default);
+            Session.Bind(api, authority, _sessions, ReportedVersions, default);
 
             _items = _content == null
                 ? new DefinitionRegistry<ItemDefinition>()
@@ -199,6 +243,143 @@ namespace ChibiFantasy.Client
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             BindScene(scene);
+        }
+
+        /// <summary>
+        /// Carries what a player typed to the API that verifies it.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this closes.</b> <see cref="LoginScreen"/> raises
+        /// <see cref="LoginScreen.Credentials"/> with the login and password a person typed,
+        /// and <see cref="HttpAccountApi"/> exposes somewhere to put them, because
+        /// <see cref="LoginRequest"/> deliberately has no room for a password. Nothing in
+        /// production connected the two. Every manual sign-in therefore posted a null login
+        /// to the API, which answered <c>400 invalid_login_identifier</c> -- reported to the
+        /// player as "Could not reach the server", though the server had answered perfectly.
+        ///
+        /// <b>The credential is not stored here.</b> It is handed straight to the API, which
+        /// clears both fields in a <c>finally</c> as soon as the request has been built. This
+        /// object keeps no copy, and nothing on this path logs either value.
+        ///
+        /// <b>Versions for the same reason.</b> The screen documents its versions as supplied
+        /// rather than invented, and nothing supplied them, so every login reported an empty
+        /// build. This is the one place that knows what this build claims to be.
+        /// </remarks>
+        /// <summary>
+        /// Connects a screen's "the authority accepted this" event to the flow driver.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this closes, on every screen at once.</b> Each screen raises an
+        /// event when the authority accepted what a player did --
+        /// <see cref="ServerSelectScreen.Selected"/>,
+        /// <see cref="ChannelSelectScreen.Selected"/>,
+        /// <see cref="CharacterSelectScreen.WorldAuthorised"/>,
+        /// <see cref="LoginScreen.SignedIn"/> -- and not one of them had a subscriber in
+        /// production. Clicking a server called the authority, was accepted, and then
+        /// nothing happened, because nothing was listening.
+        ///
+        /// <b>Why the driver could not recover on its own.</b> It advances from its
+        /// <c>Update</c> only when <c>RefreshIfChanged</c> reports a revision it has not
+        /// seen, and every <c>Submit...</c> on the controller refreshes itself before
+        /// returning. The one revision change that matters was therefore always already
+        /// consumed. That is true of login, server, channel and character alike -- so the
+        /// flow could never advance past any screen without this.
+        ///
+        /// <b>Every screen, deliberately.</b> Wiring only the one that was reported would
+        /// have left the identical defect two clicks further on.
+        /// </remarks>
+        private void BindAdvance(SessionScreenBase screen)
+        {
+            // Subtracted before added, so re-binding -- a scene loaded beside this one, a
+            // second sceneLoaded for the same screen -- cannot advance the flow twice.
+            switch (screen)
+            {
+                case LoginScreen login:
+                    BindLogin(login);
+
+                    break;
+
+                case ServerSelectScreen servers:
+                    servers.Selected -= Advance;
+                    servers.Selected += Advance;
+
+                    // Signing out moves the session back to Unauthenticated, which is a
+                    // flow change like any other. Without this the client hands the session
+                    // back and then sits on a screen it can no longer act on -- every button
+                    // alive, every request refused, and no way forward.
+                    servers.SignedOut -= Advance;
+                    servers.SignedOut += Advance;
+
+                    break;
+
+                case ChannelSelectScreen channels:
+                    channels.Selected -= Advance;
+                    channels.Selected += Advance;
+
+                    channels.WentBack -= Advance;
+                    channels.WentBack += Advance;
+
+                    break;
+
+                case CharacterSelectScreen characters:
+                    characters.WorldAuthorised -= AdvanceToWorld;
+                    characters.WorldAuthorised += AdvanceToWorld;
+
+                    characters.WentBack -= Advance;
+                    characters.WentBack += Advance;
+
+                    break;
+            }
+        }
+
+        /// <summary>The world's entry carries a result; the decision does not need it.</summary>
+        /// <remarks>A named method rather than a lambda, so that subtracting it before
+        /// adding it actually removes the previous subscription. Where the client goes is
+        /// still read from the session state by the driver, not from this payload.</remarks>
+        private void AdvanceToWorld(EnterWorldResult entry)
+        {
+            Advance();
+        }
+
+        private void BindLogin(LoginScreen login)
+        {
+            login.Versions = ReportedVersions;
+
+            login.SignedIn -= Advance;
+            login.SignedIn += Advance;
+
+            if (!(Api is HttpAccountApi http)) return;
+
+            login.Credentials = (identifier, password) =>
+            {
+                http.PendingLoginIdentifier = identifier;
+                http.PendingPassword = password;
+            };
+        }
+
+        /// <summary>
+        /// Moves the client on once the authority has accepted a sign-in.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this closes.</b> <see cref="ClientFlowDriver"/> advances from its
+        /// <c>Update</c>, but only when <c>RefreshIfChanged</c> reports a revision it has not
+        /// seen -- and <c>SubmitLogin</c> refreshes the controller itself before returning,
+        /// so the one transition that matters was always already consumed by the time the
+        /// driver looked. A correct sign-in therefore left the player on the login screen
+        /// with no error and nothing happening.
+        ///
+        /// <see cref="LoginScreen.SignedIn"/> exists for exactly this and had no subscriber.
+        /// The driver is asked to evaluate; it decides where to go, from the session state,
+        /// as it always did. Nothing here names a scene or a screen.
+        /// </remarks>
+        private void Advance()
+        {
+            foreach (ClientFlowDriver driver in
+                FindObjectsByType<ClientFlowDriver>(FindObjectsInactive.Include,
+                    FindObjectsSortMode.None))
+            {
+                driver.Evaluate();
+            }
         }
 
         /// <summary>
@@ -216,6 +397,8 @@ namespace ChibiFantasy.Client
                     FindObjectsSortMode.None))
             {
                 screen.Bind(Session);
+
+                BindAdvance(screen);
             }
 
             foreach (ClientFlowDriver driver in
@@ -308,7 +491,15 @@ namespace ChibiFantasy.Client
 
             ComposePresentation();
 
-            World.Connect();
+            // The result is read rather than dropped. StartConnection only reports whether
+            // the attempt began -- whether it arrives is answered later, on the state
+            // callback the bootstrap now raises -- but an attempt that will not even start
+            // is worth saying out loud rather than leaving as an empty world.
+            if (!World.Connect())
+            {
+                Debug.LogError("[client] could not start a connection to the world server at "
+                    + _worldAddress + ":" + _worldPort, this);
+            }
         }
 
         /// <summary>
@@ -355,6 +546,15 @@ namespace ChibiFantasy.Client
                 return;
             }
         }
+
+        /// <summary>
+        /// What this build reports about itself.
+        /// </summary>
+        /// <remarks>Built from the serialized fields rather than stored, so the value the
+        /// session controller was bound with and the value a screen puts on a login request
+        /// cannot drift apart.</remarks>
+        private VersionSet ReportedVersions => new VersionSet(Parse(_clientVersion),
+            Parse(_protocolVersion), Parse(_contentVersion));
 
         /// <summary>
         /// Reads a version the way the world server reads it.
@@ -424,6 +624,32 @@ namespace ChibiFantasy.Client
 
             Loot.Compose(NetworkManager);
 
+            // The one thing that reads a click. Composed after combat and loot because it
+            // drives both of them, and never duplicated: a second one would mean two
+            // opinions about where the character is walking.
+            Pointer = host.GetComponent<WorldPointerInput>();
+
+            if (Pointer == null) Pointer = host.AddComponent<WorldPointerInput>();
+
+            Pointer.Compose(NetworkManager, camera == null ? null : camera.Camera, Combat,
+                Loot);
+
+            // Orbiting now needs the right button held. Without this the camera would spin
+            // whenever the player moved the mouse to point at something, which is exactly
+            // the gesture the left button now uses.
+            if (camera != null && camera.Rig != null)
+            {
+                var look = FindAnyObjectByType<Prototype.ProtoPlayerInput>(
+                    FindObjectsInactive.Include);
+
+                if (look != null)
+                {
+                    look.RequireHoldToLook = true;
+
+                    camera.Rig.SetInput(look);
+                }
+            }
+
             _hud = hud;
 
 #if DEVELOPMENT_BUILD || UNITY_EDITOR
@@ -435,6 +661,20 @@ namespace ChibiFantasy.Client
             }
 
             monsters.Compose(NetworkManager);
+
+            var piles = host.GetComponent<DevelopmentLootVisualizer>();
+
+            if (piles == null) piles = host.AddComponent<DevelopmentLootVisualizer>();
+
+            piles.Compose(Loot);
+
+            // Nothing in this project draws a floor yet, and a click needs something to
+            // land on. Composed only when the world really has no ground of its own.
+            var ground = host.GetComponent<DevelopmentGroundPlane>();
+
+            if (ground == null) ground = host.AddComponent<DevelopmentGroundPlane>();
+
+            ground.Compose();
 #endif
         }
 

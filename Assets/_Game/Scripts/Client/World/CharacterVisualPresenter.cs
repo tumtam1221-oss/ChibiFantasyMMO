@@ -50,6 +50,16 @@ namespace ChibiFantasy.Client.World
         [Tooltip("Degrees the visual falls over when the server says they are down.")]
         [SerializeField] private float _deathTilt = 80f;
 
+        [Tooltip("Seconds the blend takes to lean into a walk. This and the one below are "
+            + "the only knobs between standing and walking -- the two clips share one blend "
+            + "tree, so there is no state transition to time.")]
+        [SerializeField] private float _speedRiseSeconds = 0.08f;
+
+        [Tooltip("Seconds the blend takes to settle back to standing. Longer than the rise, "
+            + "so stopping reads as a character slowing rather than a clip being switched "
+            + "off, but short enough that the feet do not keep walking on the spot.")]
+        [SerializeField] private float _speedFallSeconds = 0.15f;
+
         private CharacterNetworkEntity _entity;
 
         private Transform _visualRoot;
@@ -58,6 +68,9 @@ namespace ChibiFantasy.Client.World
         private CharacterNameplate _nameplate;
 
         private Vector3 _lastPosition;
+
+        /// <summary>The number the animator was last shown, which is the eased one.</summary>
+        private float _shownSpeed;
         private bool _hasLastPosition;
         private int _builtGenderCode = int.MinValue;
         private bool _presentedDead;
@@ -81,7 +94,16 @@ namespace ChibiFantasy.Client.World
         public int BuildCount { get; private set; }
 
         /// <summary>The last normalised speed handed to the animator, 0..1.</summary>
+        /// <summary>
+        /// How much walk is in the blend, from standing at zero to full pace at one.
+        /// </summary>
+        /// <remarks>This is the eased number actually handed to the animator, not the raw
+        /// per-frame measurement, because the eased one is what a player sees and therefore
+        /// the one worth asserting on.</remarks>
         public float Speed01 { get; private set; }
+
+        /// <summary>The measurement before easing. For diagnosis and for tests.</summary>
+        public float MeasuredSpeed01 { get; private set; }
 
         /// <summary>Whether the presentation is currently showing them as down.</summary>
         public bool IsPresentedDead => _presentedDead;
@@ -131,14 +153,23 @@ namespace ChibiFantasy.Client.World
             if (_presentedDead)
             {
                 // Down: no walking, no turning. The position still follows the server,
-                // because the server is still the one saying where the body is.
+                // because the server is still the one saying where the body is. The ease is
+                // dropped rather than run down, so a corpse is standing still on the frame
+                // it falls over rather than a fifth of a second later.
+                MeasuredSpeed01 = 0f;
+                _shownSpeed = 0f;
                 Speed01 = 0f;
                 Apply(0f);
 
                 return;
             }
 
-            Speed01 = speed;
+            MeasuredSpeed01 = speed;
+
+            _shownSpeed = CharacterVisualRules.DampedSpeed(_shownSpeed, speed, deltaSeconds,
+                speed > _shownSpeed ? _speedRiseSeconds : _speedFallSeconds);
+
+            Speed01 = _shownSpeed;
 
             Apply(Speed01);
 
@@ -195,25 +226,40 @@ namespace ChibiFantasy.Client.World
             _model.transform.localPosition = Vector3.zero;
             _model.transform.localRotation = Quaternion.identity;
 
+            // The imported models carry a degenerate skinned-mesh bounding box (millimetres,
+            // measured 0.004 x 0.009 x 0.002 on both production rigs). Left alone, the
+            // renderer is judged off-screen the moment that box leaves the frustum and the
+            // animator stops updating -- the character freezes mid-stride or vanishes while
+            // its position keeps moving, which reads as stutter. Recomputing the bounds from
+            // the bones every frame costs a little and makes culling honest.
+            foreach (SkinnedMeshRenderer skinned in _model.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                skinned.updateWhenOffscreen = true;
+            }
+
             BuildCount++;
 
-            BindAnimator();
+            BindAnimator(code);
             BuildNameplate();
         }
 
-        private void BindAnimator()
+        private void BindAnimator(int genderCode)
         {
             _animator = _model.GetComponentInChildren<Animator>();
 
             if (_animator == null) return;
 
-            // Animation never moves anybody. A clip with root motion would be the client
-            // writing its own position, one frame at a time.
+            // Animation never moves anybody. The locomotion clips are the in-place variants
+            // and this is off, so the authored forward travel is discarded rather than
+            // applied: a clip that moved the transform would be the client writing its own
+            // position, one frame at a time.
             _animator.applyRootMotion = false;
 
-            if (_catalogue.Locomotion != null)
+            RuntimeAnimatorController controller = _catalogue.LocomotionFor(genderCode);
+
+            if (controller != null)
             {
-                _animator.runtimeAnimatorController = _catalogue.Locomotion;
+                _animator.runtimeAnimatorController = controller;
             }
         }
 
@@ -307,6 +353,8 @@ namespace ChibiFantasy.Client.World
                     ? Quaternion.Euler(_deathTilt, _facing, 0f)
                     : Quaternion.Euler(0f, _facing, 0f);
             }
+
+            _shownSpeed = 0f;
 
             if (_animator != null && _animator.runtimeAnimatorController != null)
             {

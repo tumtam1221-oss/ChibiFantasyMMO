@@ -74,4 +74,4 @@ MonoBehaviour:
     _value: stat.matk
   _magicDefenceStat:
     _value: stat.mdef
-  _walkMetresPerSecond: 4
+  _walkMetresPerSecond: 1.3
