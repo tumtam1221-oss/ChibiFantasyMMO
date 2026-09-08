@@ -48,7 +48,7 @@ MonoBehaviour:
       _flatAmount: 40
       _scaling:
       - _source:
-          _value: stat.mat
+          _value: stat.matk
         _numerator: 3
         _denominator: 2
       _statModifier:

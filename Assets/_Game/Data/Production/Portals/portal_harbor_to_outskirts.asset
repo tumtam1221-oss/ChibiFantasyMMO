@@ -1,0 +1,32 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2094d80c0cadeec448848c702f95db98, type: 3}
+  m_Name: portal_harbor_to_outskirts
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.PortalDefinition
+  _id:
+    _value: portal.harbor_to_outskirts
+  _nameKey:
+    _key: portal.harbor_to_outskirts.name
+  _sourceMap:
+    _value: map.harbor_town
+  _destinationMap:
+    _value: map.harbor_outskirts
+  _destinationSpawn:
+    _value: spawn.harbor_outskirts.entry
+  _entryX: 0
+  _entryY: 0
+  _entryZ: 20
+  _entryRadius: 2.5
+  _enabled: 1
+  _levelRequirement: 0
+  _requiredItem:
+    _value:

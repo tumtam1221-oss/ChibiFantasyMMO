@@ -38,8 +38,11 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 92ffde6fbd230464193d5f0f1cce45c8, type: 2}
   _maps:
   - {fileID: 11400000, guid: c4aa9260ebbf35a48b0420d4f18577d5, type: 2}
+  - {fileID: 11400000, guid: 012e4b115ef282358f594156f0c104b7, type: 2}
   _spawnPoints:
   - {fileID: 11400000, guid: 237e52f3c384d8e4a90c8951c316302a, type: 2}
+  - {fileID: 11400000, guid: 7b7ba348d579c1f2839033458d4c8ad1, type: 2}
+  - {fileID: 11400000, guid: deb817419ff3d6ddc13d2670abac6f94, type: 2}
   _monsters:
   - {fileID: 11400000, guid: 10930e6afcf62524da5ecbecfc81bc89, type: 2}
   - {fileID: 11400000, guid: 8e4f2727c5b17b34da76a9759e27ffd2, type: 2}
@@ -53,6 +56,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 516310861e8090f4bb9c61dd30185bd2, type: 2}
   - {fileID: 11400000, guid: 354b0e9efb8c22c41936eb54e301d86a, type: 2}
   - {fileID: 11400000, guid: 35a64e804dacd4849831eaea65823019, type: 2}
+  - {fileID: 11400000, guid: 4a02c07a651506234bb159502dcf9e75, type: 2}
   _devilFruits:
   - {fileID: 11400000, guid: 75728ea0d9df78547b3f5847722619e5, type: 2}
   _pets:
@@ -62,6 +66,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 52e26aac59e3096459a39f71baf1077c, type: 2}
   _dropTables:
   - {fileID: 11400000, guid: 189db9046827b1547b8a1a61d28c4a47, type: 2}
+  - {fileID: 11400000, guid: bd16a5fb52974adbb90706a798632d34, type: 2}
   _maxHealthStat:
     _value: stat.max_hp
   _maxManaStat:
