@@ -118,3 +118,5 @@ secrets.json
 # Asset Store; HarborTown.unity will not open until ToonScapes is present.
 /Assets/ToonScapes/
 /Assets/ToonScapes.meta
+/Assets/Kevin Iglesias/
+/Assets/Kevin Iglesias.meta
