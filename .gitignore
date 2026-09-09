@@ -112,3 +112,9 @@ secrets.json
 # Local database runtime data must never be committed.
 /backend/storage/
 /backend/logs/
+
+# Licensed Asset Store packages are NOT committed - 3.4 GB of uncompressed TGA
+# and FBX that Git LFS would carry forever. Install them per machine from the
+# Asset Store; HarborTown.unity will not open until ToonScapes is present.
+/Assets/ToonScapes/
+/Assets/ToonScapes.meta
