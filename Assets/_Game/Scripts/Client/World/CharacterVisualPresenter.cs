@@ -223,7 +223,11 @@ namespace ChibiFantasy.Client.World
             }
 
             _model = Instantiate(prefab, _visualRoot);
-            _model.transform.localPosition = Vector3.zero;
+
+            // Lifted by the rig's sole depth so the feet rest on the ground rather than in
+            // it. The object's own position is untouched: this moves the picture, not the
+            // character.
+            _model.transform.localPosition = new Vector3(0f, _catalogue.GroundOffsetFor(code), 0f);
             _model.transform.localRotation = Quaternion.identity;
 
             // The imported models carry a degenerate skinned-mesh bounding box (millimetres,
@@ -243,17 +247,51 @@ namespace ChibiFantasy.Client.World
             BuildNameplate();
         }
 
+        /// <summary>
+        /// Puts an animator into the state a networked character needs, whoever built it.
+        /// </summary>
+        /// <remarks>
+        /// <b>Animation never moves anybody.</b> The locomotion clips are the in-place
+        /// variants and root motion is off, so the authored forward travel is discarded
+        /// rather than applied: a clip that moved the transform would be the client writing
+        /// its own position, one frame at a time.
+        ///
+        /// <b>A character's legs must not depend on a bounding box.</b> Both production rigs
+        /// import with <c>CullUpdateTransforms</c>, which stops writing bone transforms the
+        /// moment the renderer is judged off-screen. The pose then freezes while the position
+        /// carries on, and resumes with a jump when the bounds come back -- measured as a
+        /// foot bone travelling exactly 0.0000 m over sixty frames off screen, against
+        /// 0.0733 m once this is applied.
+        ///
+        /// The box that decides it is barely half the character (0.29 x 0.82 x 0.63 m on a
+        /// 1 m rig), so it leaves the frustum while the character is still plainly in shot.
+        /// That is why the report was about running UP things: the camera position is
+        /// smoothed and its collision snaps inward the instant the rising ground behind
+        /// intrudes, so a climbing character leads the camera and drifts to the edge of the
+        /// frame -- and settles again once the climb ends, which is why it cleared up on its
+        /// own.
+        ///
+        /// Cost is bones, not meshes. The expensive part of animating an unseen character is
+        /// re-skinning it, and that is the renderer's business, not this.
+        ///
+        /// <b>Public and static so a test drives exactly what the game runs</b>, rather than
+        /// a second copy of the rule that can quietly drift from it.
+        /// </remarks>
+        public static void PrepareAnimator(Animator animator)
+        {
+            if (animator == null) return;
+
+            animator.applyRootMotion = false;
+            animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+        }
+
         private void BindAnimator(int genderCode)
         {
             _animator = _model.GetComponentInChildren<Animator>();
 
             if (_animator == null) return;
 
-            // Animation never moves anybody. The locomotion clips are the in-place variants
-            // and this is off, so the authored forward travel is discarded rather than
-            // applied: a clip that moved the transform would be the client writing its own
-            // position, one frame at a time.
-            _animator.applyRootMotion = false;
+            PrepareAnimator(_animator);
 
             RuntimeAnimatorController controller = _catalogue.LocomotionFor(genderCode);
 

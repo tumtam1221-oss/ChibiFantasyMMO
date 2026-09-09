@@ -158,9 +158,38 @@ namespace ChibiFantasy.Network
         /// </remarks>
         private readonly SyncVar<string> _activePet = new SyncVar<string>();
 
-        private readonly SyncVar<float> _x = new SyncVar<float>();
-        private readonly SyncVar<float> _y = new SyncVar<float>();
-        private readonly SyncVar<float> _z = new SyncVar<float>();
+        /// <summary>
+        /// How often a position may go out, in seconds.
+        /// </summary>
+        /// <remarks>
+        /// <b>Position is not like the other values here.</b> A level, a name or an equipped
+        /// item changes a few times an hour and FishNet's default rate of a tenth of a second
+        /// is generous for them. A walking character's position changes continuously, and at
+        /// that default it was measured arriving <b>7.7 times a second</b> while the server
+        /// was moving the character fifty times a second. The client then had to bridge gaps
+        /// of about 130 ms, across which the distance travelled varied by <b>5.4x</b> from one
+        /// update to the next -- so the ground surged and stalled under a run cycle that plays
+        /// at a fixed rate, and the feet slipped and caught. That is the running stutter.
+        ///
+        /// A rate below the tick interval means "every tick", which is as often as the
+        /// network runs and no more. It cannot be zero: zero is the sentinel for "no settings
+        /// were given", and FishNet then substitutes the project-wide default, which is the
+        /// tenth of a second this exists to escape.
+        ///
+        /// <b>Still server-authored, still reliable.</b> Only the cadence changes. The write
+        /// permission, the read permission and the channel stay exactly as every other value
+        /// on this object.
+        /// </remarks>
+        private const float PositionSendRate = 1f / 60f;
+
+        private readonly SyncVar<float> _x =
+            new SyncVar<float>(new SyncTypeSettings(PositionSendRate));
+
+        private readonly SyncVar<float> _y =
+            new SyncVar<float>(new SyncTypeSettings(PositionSendRate));
+
+        private readonly SyncVar<float> _z =
+            new SyncVar<float>(new SyncTypeSettings(PositionSendRate));
 
         /// <summary>
         /// Where a request goes. Server-side only, and never sent anywhere.
@@ -669,6 +698,49 @@ namespace ChibiFantasy.Network
             if (connectionId < 0) return;
 
             _movement.Submit(connectionId, inputX, inputZ, sequence);
+        }
+
+        /// <summary>
+        /// Raised on a client when the server says this character swung.
+        /// </summary>
+        /// <remarks>
+        /// <b>The presentation seam, and only that.</b> It carries no damage, no target and
+        /// no outcome, because a client needs none of those to draw a swing and every one of
+        /// them is already replicated as state a client cannot forge. What it means is
+        /// exactly "the server accepted an attack from this character" -- so an animation
+        /// downstream of it cannot appear for an attack that was refused.
+        /// </remarks>
+        public event System.Action AttackPerformed;
+
+        /// <summary>
+        /// Tells every observer that this character's attack was accepted.
+        /// </summary>
+        /// <remarks>
+        /// <b>Server-only, like every other publish on this class.</b> A client calling it
+        /// would be a client animating somebody else's swing; there is no path by which one
+        /// can, because the method that sends is private and this one is only reached from
+        /// the replication service the server owns.
+        ///
+        /// <b>Observers rather than the owner.</b> Everybody who can see the character sees
+        /// the swing, which is what makes a second client's view of a fight correct.
+        /// </remarks>
+        [Server]
+        public void ServerPublishAttack()
+        {
+            if (!IsServerStarted) return;
+
+            ObserversAttackPerformed();
+        }
+
+        /// <summary>
+        /// Draws a swing on every client that can see this character.
+        /// </summary>
+        /// <remarks>Buffered deliberately not: a swing is a moment, and an observer who
+        /// arrives afterwards should not be shown one that already finished.</remarks>
+        [ObserversRpc]
+        private void ObserversAttackPerformed()
+        {
+            AttackPerformed?.Invoke();
         }
 
         [ServerRpc]
