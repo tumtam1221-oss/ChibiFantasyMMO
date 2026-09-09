@@ -17,7 +17,7 @@ MonoBehaviour:
   _map:
     _value: map.harbor_town
   _spawnType: 2
-  _x: 3
-  _y: 0
-  _z: 4
+  _x: 4
+  _y: -0.25050354
+  _z: -7
   _facingDegrees: 180

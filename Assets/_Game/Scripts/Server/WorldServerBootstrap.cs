@@ -374,10 +374,16 @@ namespace ChibiFantasy.Server
             // A command handled between ticks settles the world immediately, so a second
             // command in the same frame is never resolved against state the first one
             // invalidated. The lambda closes over the simulation assembled just below.
-            var requests = new CharacterCombatRequestHandler(combat,
-                () => Simulation?.Settle());
+            // Declared before the handler so the handler can publish through it, and
+            // assigned just below. The replication service takes the handler, so one of the
+            // two has to be named before it exists; a closure is what unties the knot.
+            CharacterReplicationService replication = null;
 
-            var replication = new CharacterReplicationService(_networkManager, players,
+            var requests = new CharacterCombatRequestHandler(combat,
+                () => Simulation?.Settle(),
+                connectionId => replication?.PublishAttack(connectionId));
+
+            replication = new CharacterReplicationService(_networkManager, players,
                 _characterPrefab, requests, movement);
 
             var status = new CharacterStatusAuthority(players, effects, replication);
@@ -393,8 +399,12 @@ namespace ChibiFantasy.Server
 
             replication.UsePets(PetAuthority);
 
-            replication.UseInventory(new CharacterInventoryAuthority(players, _ => true,
-                items, replication, fruits, effects, skills, maps, _spawnPoints, cards));
+            // Kept, because the world loop also has to publish bags that changed for a
+            // reason other than a request -- loot taken off the ground, and arriving at all.
+            InventoryAuthority = new CharacterInventoryAuthority(players, _ => true,
+                items, replication, fruits, effects, skills, maps, _spawnPoints, cards);
+
+            replication.UseInventory(InventoryAuthority);
 
             // How a player asks for what a boss left behind. The registry above already
             // decides every rule; this is the identity a client can name and the distance
@@ -415,7 +425,8 @@ namespace ChibiFantasy.Server
                 : new MonsterReplicationService(_networkManager, monsters, _monsterPrefab);
 
             Simulation = new WorldSimulation(players, replication, status, stat, movement,
-                combat, monsters, loot, MonsterReplication, rewards, LootAuthority);
+                combat, monsters, loot, MonsterReplication, rewards, LootAuthority,
+                InventoryAuthority);
 
             Loot = loot;
             Rewards = rewards;
@@ -434,6 +445,41 @@ namespace ChibiFantasy.Server
             IsWorldReady = true;
         }
 
+        /// <summary>
+        /// Reads a map's monster nests, once.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this closes.</b> <see cref="MonsterConfigurationLoader"/> was
+        /// composed by <see cref="ComposeWorld"/> and never asked for anything: nothing in
+        /// production called <c>Load</c>. A dedicated server therefore ran a world with no
+        /// nests at all -- a player arrived, stood in an empty map, and there was nothing to
+        /// fight, no loot to drop and no experience to earn. The in-process tests never saw
+        /// it because they register spawn points directly against the registry.
+        ///
+        /// <b>On arrival, not at boot.</b> A world server does not know which maps it will
+        /// serve until somebody is admitted to one, and reading every map's nests up front
+        /// would be work for maps nobody is standing on.
+        ///
+        /// <b>Once per map.</b> Re-reading on every arrival would re-seed nests under the
+        /// players already fighting there.
+        /// </remarks>
+        private void LoadNests(DefinitionId map)
+        {
+            if (MonsterConfiguration == null || !map.IsValid) return;
+
+            if (!_loadedNests.Add(map.Value)) return;
+
+            int nests = MonsterConfiguration.Load(map);
+
+            Debug.Log("[world] monster nests for " + map.Value + ": " + nests
+                + (MonsterConfiguration.LastReadSucceeded
+                    ? string.Empty
+                    : " (the configuration source could not be read)"));
+        }
+
+        /// <summary>Maps whose nests have already been read.</summary>
+        private readonly HashSet<string> _loadedNests = new HashSet<string>();
+
         /// <summary>Records why the world will not start, and says so once.</summary>
         private void Refuse(string fault)
         {
@@ -449,6 +495,9 @@ namespace ChibiFantasy.Server
 
         /// <summary>The live characters this world holds, or null when unready.</summary>
         public WorldCharacterRegistry Characters { get; private set; }
+
+        /// <summary>Who answers for what characters are carrying. Null when unready.</summary>
+        public CharacterInventoryAuthority InventoryAuthority { get; private set; }
 
         /// <summary>What is lying on the ground in this world. Null when unready.</summary>
         public MonsterLootRegistry Loot { get; private set; }
@@ -579,6 +628,12 @@ namespace ChibiFantasy.Server
 
             Announce();
 
+            // Where this server will go to find out who a connecting player is. An address
+            // is not a secret and carries no credential, and a server pointed at the wrong
+            // one refuses every player with no clue as to why -- which is what happened.
+            Debug.Log("[world] account authority at "
+                + (string.IsNullOrEmpty(_apiBaseAddress) ? "<unconfigured>" : _apiBaseAddress));
+
             return IsListening;
         }
 
@@ -692,6 +747,11 @@ namespace ChibiFantasy.Server
 
                 return;
             }
+
+            // The map this player is arriving on now has somebody to fight. Nests are
+            // runtime configuration and are read once per map, the first time anybody
+            // stands on it.
+            LoadNests(spawn.Map);
 
             _networkManager.ServerManager.Broadcast(connection, new WorldSpawnMessage
             {

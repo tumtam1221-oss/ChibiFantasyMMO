@@ -453,6 +453,78 @@ final class CharacterStateTest extends BackendTestCase
         self::assertSame(9, $loaded['items'][0]['quantity']);
     }
 
+    public function testACharacterThatHasNeverBeenSavedRemembersNoPosition(): void
+    {
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        // Null, not zero. Zero is a real place in the world; null is "we do not know",
+        // and it is what every row written before the position columns existed says.
+        self::assertNull($loaded['position_x']);
+        self::assertNull($loaded['position_y']);
+        self::assertNull($loaded['position_z']);
+    }
+
+    public function testWhereACharacterStoodIsRememberedAcrossASave(): void
+    {
+        $state = $this->sampleState();
+        $state['position_x'] = -5.75;
+        $state['position_y'] = 8.49;
+        $state['position_z'] = 35.25;
+
+        $this->states->save('acc-a', 'char-a1', $state, null);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertSame(-5.75, $loaded['position_x']);
+        self::assertSame(8.49, $loaded['position_y']);
+        self::assertSame(35.25, $loaded['position_z']);
+    }
+
+    public function testASaveCarryingNoPositionLeavesTheRememberedOneAlone(): void
+    {
+        $state = $this->sampleState();
+        $state['position_x'] = 1.5;
+        $state['position_y'] = 2.5;
+        $state['position_z'] = 3.5;
+
+        $first = $this->states->save('acc-a', 'char-a1', $state, null);
+
+        // A world composed without ever placing this character sends no position at all.
+        // That means "not reported", not "they are at the origin now".
+        $this->states->save('acc-a', 'char-a1', $this->sampleState(),
+            $first['save_revision']);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertSame(1.5, $loaded['position_x']);
+        self::assertSame(2.5, $loaded['position_y']);
+        self::assertSame(3.5, $loaded['position_z']);
+    }
+
+    public function testASaveCarryingRubbishForAPositionIsIgnoredRatherThanStored(): void
+    {
+        $state = $this->sampleState();
+        $state['position_x'] = 4.25;
+        $state['position_y'] = 4.25;
+        $state['position_z'] = 4.25;
+
+        $first = $this->states->save('acc-a', 'char-a1', $state, null);
+
+        $rubbish = $this->sampleState();
+        $rubbish['position_x'] = 'over there';
+        $rubbish['position_y'] = null;
+        $rubbish['position_z'] = '';
+
+        $this->states->save('acc-a', 'char-a1', $rubbish, $first['save_revision']);
+
+        $loaded = $this->states->load('acc-a', 'char-a1');
+
+        self::assertSame(4.25, $loaded['position_x'],
+            'a value that is not a number must not overwrite a real one');
+        self::assertSame(4.25, $loaded['position_y']);
+        self::assertSame(4.25, $loaded['position_z']);
+    }
+
     public function testASaveCarryingNoCapacityLeavesAnExistingBagAlone(): void
     {
         $first = $this->states->save('acc-a', 'char-a1', $this->stateWithBag([

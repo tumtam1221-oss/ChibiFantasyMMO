@@ -630,6 +630,13 @@ namespace ChibiFantasy.Tests.PlayMode
             _bootstrap.Simulation.Monsters().TryResolve(monster.Instance,
                 out ICombatant target);
 
+            // Stand next to it first. The map's player spawn is no longer on top of the
+            // origin these monsters are placed at, so a hero left where they arrived is four
+            // metres away and every swing is refused for range -- which says nothing about
+            // the loot and reward this is here to check. Walking into reach is what a player
+            // would do and what this used to get for free.
+            Move(hero, target.Position.X, target.Position.Y, target.Position.Z);
+
             for (var i = 0; i < 400 && target.CurrentHealth > 0; i++)
             {
                 _bootstrap.Simulation.Combat().Tick(10f);

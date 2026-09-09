@@ -93,7 +93,7 @@ namespace ChibiFantasy.Client.Prototype
                 _pitch -= look.y * settings.orbitSensitivityY;
 
                 // Zoom: positive scroll pulls the camera in.
-                _desiredDistance -= input.Zoom * settings.zoomSensitivity;
+                _desiredDistance -= NotchesFrom(input.Zoom) * settings.zoomMetresPerNotch;
             }
 
             // Clamp pitch so the camera can never flip over or pass under the feet.
@@ -135,6 +135,28 @@ namespace ChibiFantasy.Client.Prototype
             transform.position = Vector3.SmoothDamp(transform.position, desiredPosition,
                 ref _positionVelocity, settings.positionSmoothTime);
             transform.rotation = rotation;
+        }
+
+        /// <summary>
+        /// Turns a raw wheel value into notches.
+        /// </summary>
+        /// <remarks>
+        /// <b>Because the backends disagree.</b> The Input System reports about 1.0 per
+        /// notch; the legacy manager and some drivers report 120, the Windows WHEEL_DELTA.
+        /// A sensitivity tuned for one is unusable on the other -- which is the defect this
+        /// exists for -- so the raw value is converted here and the setting is expressed in
+        /// metres per notch, which means the same thing everywhere.
+        ///
+        /// <b>A trackpad still works.</b> Small fractional values pass through unscaled, so
+        /// a continuous two-finger scroll zooms continuously rather than in steps.
+        /// </remarks>
+        public static float NotchesFrom(float rawScroll)
+        {
+            const float WheelDelta = 120f;
+
+            // Nothing reports a notch between 10 and 120, so anything that large is a
+            // backend counting in WHEEL_DELTA rather than in notches.
+            return Mathf.Abs(rawScroll) >= 10f ? rawScroll / WheelDelta : rawScroll;
         }
 
         /// <summary>Returns the largest distance from the pivot that stays clear of solid geometry.</summary>

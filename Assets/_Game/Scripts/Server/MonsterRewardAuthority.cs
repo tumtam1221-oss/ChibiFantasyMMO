@@ -1601,6 +1601,11 @@ namespace ChibiFantasy.Server
         {
             if (pile == null) return null;
 
+            // A world with no pile registry has nowhere to put it. That was unreachable
+            // while no shipped monster had a drop table -- a pile was never built, so this
+            // was never called -- and became reachable the moment one did.
+            if (_loot == null) return null;
+
             return _loot.Add(pile, map) ? pile : null;
         }
 

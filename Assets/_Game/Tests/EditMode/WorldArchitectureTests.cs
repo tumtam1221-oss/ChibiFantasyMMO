@@ -126,19 +126,61 @@ namespace ChibiFantasy.Tests.EditMode
             }
         }
 
+        /// <summary>
+        /// The authenticator may say why it refused, and nothing about who was refused.
+        /// </summary>
+        /// <remarks>
+        /// <b>This rule used to be "no logging call at all".</b> That was a blunt way of
+        /// guaranteeing the real invariant -- the join message carries a session token, so
+        /// the surest way not to log one was to log nothing. It cost more than it protected:
+        /// a dedicated server pointed at the wrong account API refused every player in
+        /// silence, and the reason was only recoverable by attaching a debugger to a shipped
+        /// build. A server that cannot say <c>reason=UnknownCharacter</c> is a server nobody
+        /// can operate.
+        ///
+        /// <b>What is enforced instead is the property that actually mattered.</b> A log line
+        /// here may name a <see cref="SessionRejection"/> and a connection id -- neither is a
+        /// credential, and both are already visible to the connection being refused. It may
+        /// not touch the message, the claim, or anything called a token: those are where a
+        /// secret would come from. That is a stronger statement than the old one, because it
+        /// keeps holding when a second log line is added.
+        ///
+        /// The blanket check on every other file in the server and network layers
+        /// (<see cref="Nothing_in_the_network_or_server_layer_logs_a_secret"/>) is unchanged.
+        /// </remarks>
         [Test]
-        public void The_authenticator_contains_no_logging_call_at_all()
+        public void The_authenticator_logs_a_reason_and_never_a_credential()
         {
-            // It handles the join message, which carries a session token. The surest way not
-            // to log a secret is to have nowhere that logs anything.
+            string[] forbidden = { "token", "password", "bearer", "message.", "claim." };
+
+            var logged = 0;
+
             foreach (string raw in File.ReadAllLines(Server + "/WorldAuthenticator.cs"))
             {
                 string line = raw.Trim();
 
-                if (line.StartsWith("//") || line.StartsWith("*")) continue;
+                if (line.StartsWith("//") || line.StartsWith("*") || line.StartsWith("///"))
+                {
+                    continue;
+                }
 
-                Assert.That(line, Does.Not.Contain("Debug.Log"), line);
+                if (!line.Contains("Debug.")) continue;
+
+                logged++;
+
+                string lower = line.ToLowerInvariant();
+
+                for (var i = 0; i < forbidden.Length; i++)
+                {
+                    Assert.That(lower, Does.Not.Contain(forbidden[i]),
+                        "the authenticator logs something derived from the join message, "
+                        + "which carries a session token: " + line);
+                }
             }
+
+            Assert.That(logged, Is.GreaterThan(0),
+                "the authenticator no longer reports why it refused a connection, which is "
+                + "the only thing that makes a dedicated server's refusals diagnosable");
         }
 
         // ---- client authority ------------------------------------------------------------------

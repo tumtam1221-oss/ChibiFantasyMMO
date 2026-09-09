@@ -60,6 +60,11 @@ namespace ChibiFantasy.Editor
             ClientFolder + "ChannelSelect.unity",
             ClientFolder + "CharacterSelect.unity",
             ClientFolder + "GameWorld.unity",
+            // Map environment scenes, loaded additively on top of GameWorld. They are client
+            // presentation only, so they are not in the server list: the dedicated server
+            // decides positions with maths, not Unity geometry, and never loads them.
+            "Assets/_Game/Scenes/World/HarborTown.unity",
+            "Assets/_Game/Scenes/World/HarborOutskirts.unity",
         };
 
         /// <summary>Every scene a dedicated server needs. Just the world.</summary>

@@ -160,6 +160,13 @@ namespace ChibiFantasy.Backend
 
             string activePet = json.String("active_pet_instance_id");
 
+            // Where they were standing when they last left. Null or absent for a character
+            // that has never been saved from the world, and for every row written before
+            // the columns existed; those fall back to the authored spawn.
+            bool hasPosition = TryCoordinate(json, "position_x", out float px)
+                & TryCoordinate(json, "position_y", out float py)
+                & TryCoordinate(json, "position_z", out float pz);
+
             var persisted = new PersistedCharacter(
                 character,
                 new AccountId(json.String("account_id")),
@@ -184,7 +191,8 @@ namespace ChibiFantasy.Backend
                 json.String("devil_fruit_source"),
                 pets,
                 string.IsNullOrEmpty(activePet) ? default : new InstanceId(activePet),
-                applications);
+                applications,
+                hasPosition, px, py, pz);
 
             return CharacterPersistenceResult.Loaded(persisted);
         }
@@ -247,6 +255,7 @@ namespace ChibiFantasy.Backend
                 .Add("job_id", character.Job.Value)
                 .Add("map_id", character.Map.Value)
                 .Add("spawn_id", character.Spawn.Value)
+
                 // Zero means "this server carries no inventory", which the API reads as
                 // "leave the bag alone" rather than as "the bag is now empty". A world
                 // composed without an item registry must not delete anybody's belongings.
@@ -255,6 +264,16 @@ namespace ChibiFantasy.Backend
                 // "this character owns none", which is what the API deletes the row for.
                 .Add("devil_fruit", character.DevilFruit.Value ?? string.Empty)
                 .Add("devil_fruit_source", character.DevilFruitSource ?? string.Empty);
+
+            // Where they were standing, and only when the world actually knows. The API
+            // leaves the stored position alone when these are absent, so a save from a
+            // world that never placed this character cannot erase where they had walked to.
+            if (character.HasPosition)
+            {
+                state.Add("position_x", character.PositionX)
+                    .Add("position_y", character.PositionY)
+                    .Add("position_z", character.PositionZ);
+            }
 
             var body = new System.Text.StringBuilder();
 
@@ -458,6 +477,36 @@ namespace ChibiFantasy.Backend
             // just lost its last card was sent as an ordinary item, so the server never ran
             // the equipment write and never deleted the socket that had been taken out.
             return item.IsEquipment || item.IsEquipped;
+        }
+
+        /// <summary>
+        /// One coordinate out of a loaded row, if it carries one.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="JsonReader.Raw"/> hands back the bare token precisely so the caller
+        /// picks the culture; this machine's own locale writes a decimal comma and would
+        /// read 8.49 as 849. Invariant, always. A missing key, an explicit null and a
+        /// non-number all mean "no position recorded", which is not an error.
+        /// </remarks>
+        private static bool TryCoordinate(JsonReader json, string key, out float value)
+        {
+            value = 0f;
+
+            string raw = json.Raw(key);
+
+            if (string.IsNullOrEmpty(raw)) return false;
+
+            if (!float.TryParse(raw, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out float parsed))
+            {
+                return false;
+            }
+
+            if (float.IsNaN(parsed) || float.IsInfinity(parsed)) return false;
+
+            value = parsed;
+
+            return true;
         }
 
         private static int SaveRevisionOf(JsonReader json)

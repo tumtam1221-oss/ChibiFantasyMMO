@@ -73,6 +73,17 @@ namespace ChibiFantasy.Client.World
         /// <summary>The map currently brought up. Invalid before the first load.</summary>
         public DefinitionId LoadedMap { get; private set; }
 
+        /// <summary>
+        /// The environment scene currently loaded additively on top of GameWorld, or null.
+        /// </summary>
+        /// <remarks>Exactly one map environment is ever additive at a time: the next load
+        /// unloads this before bringing up its own, so no old ground, lighting or props are
+        /// left behind. GameWorld itself is never in here and is never unloaded.</remarks>
+        private string _activeEnvScene;
+
+        /// <summary>The environment scene loaded additively, for tests and diagnostics.</summary>
+        public string ActiveEnvironmentScene => _activeEnvScene;
+
         /// <summary>Why the last attempt failed, or <see cref="MapLoadFailure.None"/>.</summary>
         public MapLoadFailure LastFailure { get; private set; }
 
@@ -157,27 +168,55 @@ namespace ChibiFantasy.Client.World
 
             IsLoading = true;
 
+            // Additive, not Single: GameWorld carries the HUD, camera, network and this
+            // loader, and must stay loaded. The old environment is unloaded first so that at
+            // most one map environment -- its ground, lighting and props -- is ever live.
+            if (!string.IsNullOrEmpty(_activeEnvScene) && _activeEnvScene != scene)
+            {
+                Scene previous = SceneManager.GetSceneByName(_activeEnvScene);
+
+                if (previous.IsValid() && previous.isLoaded)
+                {
+                    AsyncOperation unload = SceneManager.UnloadSceneAsync(previous);
+
+                    while (unload != null && !unload.isDone) yield return null;
+                }
+
+                _activeEnvScene = null;
+            }
+
             AsyncOperation operation = null;
 
-            try
+            if (_activeEnvScene != scene)
             {
-                operation = SceneManager.LoadSceneAsync(scene, LoadSceneMode.Single);
-            }
-            catch (System.Exception)
-            {
-                // A scene missing from the build settings throws rather than returning null.
-                operation = null;
-            }
+                try
+                {
+                    operation = SceneManager.LoadSceneAsync(scene, LoadSceneMode.Additive);
+                }
+                catch (System.Exception)
+                {
+                    // A scene missing from the build settings throws rather than returning null.
+                    operation = null;
+                }
 
-            if (operation == null)
-            {
-                IsLoading = false;
-                LastFailure = MapLoadFailure.SceneLoadFailed;
-                Report(LastFailure);
-                yield break;
-            }
+                if (operation == null)
+                {
+                    IsLoading = false;
+                    LastFailure = MapLoadFailure.SceneLoadFailed;
+                    Report(LastFailure);
+                    yield break;
+                }
 
-            while (!operation.isDone) yield return null;
+                while (!operation.isDone) yield return null;
+
+                _activeEnvScene = scene;
+
+                // The environment owns the lighting and skybox for where the player stands,
+                // so it becomes the active scene; GameWorld remains loaded underneath.
+                Scene loaded = SceneManager.GetSceneByName(scene);
+
+                if (loaded.IsValid() && loaded.isLoaded) SceneManager.SetActiveScene(loaded);
+            }
 
             IsLoading = false;
 
@@ -191,6 +230,76 @@ namespace ChibiFantasy.Client.World
             }
 
             LoadedMap = travel.DestinationMap;
+
+            var handler = Arrived;
+            if (handler != null) handler(LoadedMap);
+        }
+
+        /// <summary>
+        /// Brings up the environment for the map the player is already standing in.
+        /// </summary>
+        /// <remarks>
+        /// The first half of arriving, for the arrival that has no journey: entering the
+        /// world. The server has already decided where the character is, so this loads the
+        /// environment additively and does not move anyone -- placement is the server's, and
+        /// re-homing the player to a spawn here would fight it. Travel between maps goes
+        /// through <see cref="LoadAsync"/>, which does place, because the destination is new.
+        /// </remarks>
+        public IEnumerator EnterAsync(DefinitionId map)
+        {
+            if (_maps == null) { LastFailure = MapLoadFailure.MissingContext; Report(LastFailure); yield break; }
+            if (IsLoading) { LastFailure = MapLoadFailure.AlreadyLoading; Report(LastFailure); yield break; }
+
+            string scene = ResolveScene(map);
+
+            if (string.IsNullOrEmpty(scene))
+            {
+                LastFailure = MapLoadFailure.NoScene;
+                Report(LastFailure);
+                yield break;
+            }
+
+            if (_activeEnvScene == scene) { LoadedMap = map; yield break; }
+
+            IsLoading = true;
+
+            if (!string.IsNullOrEmpty(_activeEnvScene))
+            {
+                Scene previous = SceneManager.GetSceneByName(_activeEnvScene);
+
+                if (previous.IsValid() && previous.isLoaded)
+                {
+                    AsyncOperation unload = SceneManager.UnloadSceneAsync(previous);
+
+                    while (unload != null && !unload.isDone) yield return null;
+                }
+
+                _activeEnvScene = null;
+            }
+
+            AsyncOperation operation = null;
+
+            try { operation = SceneManager.LoadSceneAsync(scene, LoadSceneMode.Additive); }
+            catch (System.Exception) { operation = null; }
+
+            if (operation == null)
+            {
+                IsLoading = false;
+                LastFailure = MapLoadFailure.SceneLoadFailed;
+                Report(LastFailure);
+                yield break;
+            }
+
+            while (!operation.isDone) yield return null;
+
+            _activeEnvScene = scene;
+
+            Scene loaded = SceneManager.GetSceneByName(scene);
+            if (loaded.IsValid() && loaded.isLoaded) SceneManager.SetActiveScene(loaded);
+
+            IsLoading = false;
+            LoadedMap = map;
+            LastFailure = MapLoadFailure.None;
 
             var handler = Arrived;
             if (handler != null) handler(LoadedMap);
@@ -219,6 +328,29 @@ namespace ChibiFantasy.Client.World
         {
             var handler = Failed;
             if (handler != null) handler(failure);
+        }
+
+        /// <summary>
+        /// Takes the environment down when the loader goes.
+        /// </summary>
+        /// <remarks>The loader lives on the world connection, so leaving the world destroys
+        /// it; without this the additive environment it brought up would be left loaded on
+        /// top of GameWorld with nothing owning it, and the next entry would load a second
+        /// one beside it. GameWorld is never the scene unloaded here -- it is not the active
+        /// environment -- and the count guard refuses to unload the last scene, which Unity
+        /// forbids and which only happens on the way out anyway.</remarks>
+        private void OnDestroy()
+        {
+            if (string.IsNullOrEmpty(_activeEnvScene)) return;
+
+            Scene env = SceneManager.GetSceneByName(_activeEnvScene);
+
+            if (env.IsValid() && env.isLoaded && SceneManager.sceneCount > 1)
+            {
+                SceneManager.UnloadSceneAsync(env);
+            }
+
+            _activeEnvScene = null;
         }
     }
 }

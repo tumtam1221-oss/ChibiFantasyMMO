@@ -1256,6 +1256,12 @@ namespace ChibiFantasy.Tests.PlayMode
             _bootstrap.Simulation.Monsters().TryResolve(monster.Instance,
                 out ICombatant target);
 
+            // Melee reach is authored and enforced, and the map's player spawn is no longer
+            // on top of the origin these monsters are placed at. A hero left where they
+            // arrived swings from four metres away and every blow is refused for range,
+            // which says nothing about the reward this is here to check.
+            hero.Combatant.Position = monster.State.Position;
+
             for (var i = 0; i < 400 && target.CurrentHealth > 0; i++)
             {
                 _bootstrap.Simulation.Combat().Tick(10f);

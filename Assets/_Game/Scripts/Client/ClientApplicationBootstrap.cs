@@ -128,6 +128,8 @@ namespace ChibiFantasy.Client
         private SessionDirectory _sessions;
         private System.IDisposable _transportLifetime;
         private DefinitionRegistry<ItemDefinition> _items;
+        private DefinitionRegistry<MapDefinition> _maps;
+        private DefinitionRegistry<SpawnPointDefinition> _spawns;
 
         private void Awake()
         {
@@ -236,6 +238,17 @@ namespace ChibiFantasy.Client
             _items = _content == null
                 ? new DefinitionRegistry<ItemDefinition>()
                 : _content.BuildItems();
+
+            // The map and spawn registries the environment presenter resolves an
+            // authoritative map id to a scene through. Built from the same catalogue as the
+            // items, so a client resolves content locally and the wire carries only ids.
+            _maps = _content == null
+                ? new DefinitionRegistry<MapDefinition>()
+                : _content.BuildMaps();
+
+            _spawns = _content == null
+                ? new DefinitionRegistry<SpawnPointDefinition>()
+                : _content.BuildSpawnPoints();
         }
 
         // ---- scenes ----------------------------------------------------------------------
@@ -592,8 +605,51 @@ namespace ChibiFantasy.Client
 
             binder.Compose(NetworkManager, hud, bag, _items, camera);
 
+            ComposeEnvironment(binder);
+
             ComposeInteraction(hud, camera);
         }
+
+        /// <summary>
+        /// Makes the additive environment follow the map the server has the owner on.
+        /// </summary>
+        /// <remarks>
+        /// <b>One loader, one presenter, on the world connection.</b> Both live on the
+        /// network manager's object, beside the other things that exist only while a world
+        /// does, so leaving the world takes them -- and the environment they brought up --
+        /// with it. There is exactly one of each: the presenter drives the single
+        /// <see cref="MapSceneLoader"/> and nothing else loads a map scene.
+        ///
+        /// <b>The authority is read, never chosen.</b> The presenter is handed a delegate
+        /// that returns the owned character's replicated map, so the environment it shows is
+        /// whatever the server put the player on. When the binder holds no character yet --
+        /// before the owner spawns, or between a disconnect and a reconnect -- the delegate
+        /// returns <see cref="DefinitionId.None"/> and the presenter waits.
+        /// </remarks>
+        private void ComposeEnvironment(WorldPresentationBinder binder)
+        {
+            GameObject host = NetworkManager.gameObject;
+
+            MapSceneLoader loader = host.GetComponent<MapSceneLoader>();
+
+            if (loader == null) loader = host.AddComponent<MapSceneLoader>();
+
+            WorldEnvironmentPresenter presenter = host.GetComponent<WorldEnvironmentPresenter>();
+
+            if (presenter == null) presenter = host.AddComponent<WorldEnvironmentPresenter>();
+
+            presenter.Compose(loader, _maps, _spawns,
+                () => binder != null && binder.Bound != null
+                    ? binder.Bound.Map
+                    : DefinitionId.None);
+
+            // GameWorld's flat placeholder floor. Found by name because it is authored scene
+            // content with no script of its own; a test pins the name to the scene file.
+            presenter.UseFallbackGround(GameObject.Find(FallbackGroundName));
+        }
+
+        /// <summary>The name of GameWorld's placeholder floor, as authored in the scene.</summary>
+        public const string FallbackGroundName = "World Ground";
 
         /// <summary>
         /// The interactions a person needs: choosing a monster, hitting it, taking what it left.
@@ -633,6 +689,10 @@ namespace ChibiFantasy.Client
 
             Pointer.Compose(NetworkManager, camera == null ? null : camera.Camera, Combat,
                 Loot);
+
+            // Clicks route around obstacles over the map's baked ground -- the same data
+            // the server walks the character on, so the route and the authority agree.
+            Pointer.UsePathfinding(_maps);
 
             // Orbiting now needs the right button held. Without this the camera would spin
             // whenever the player moved the mouse to point at something, which is exactly

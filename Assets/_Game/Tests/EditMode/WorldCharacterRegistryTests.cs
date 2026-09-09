@@ -132,7 +132,8 @@ namespace ChibiFantasy.Tests.EditMode
 
         private static PersistedCharacter Row(string character = "char-1",
             string map = "map.town", string spawn = "spawn.town.plaza", int level = 12,
-            int saveRevision = 3, IReadOnlyList<PersistedStat> stats = null)
+            int saveRevision = 3, IReadOnlyList<PersistedStat> stats = null,
+            bool hasPosition = false, float x = 0f, float y = 0f, float z = 0f)
         {
             return new PersistedCharacter(
                 new CharacterId(character), new AccountId("acc-1"), new ServerId("srv-1"),
@@ -141,7 +142,8 @@ namespace ChibiFantasy.Tests.EditMode
                 stats ?? new[] { new PersistedStat(new DefinitionId("stat.strength"), 14) },
                 null,
                 new[] { new PersistedSkill(new DefinitionId("skill.slash"), 3) },
-                saveRevision);
+                saveRevision,
+                hasPosition: hasPosition, positionX: x, positionY: y, positionZ: z);
         }
 
         private LivingCharacter SpawnOne(string session = "s1", string character = "char-1")
@@ -176,6 +178,184 @@ namespace ChibiFantasy.Tests.EditMode
 
             Assert.That(living.Location.CurrentSpawnPoint.Value, Is.EqualTo("spawn.town.gate"));
             Assert.That(living.Location.Position.X, Is.EqualTo(9f));
+        }
+
+        /// <summary>
+        /// Where a character was standing goes into the save, and comes back on the next login.
+        /// </summary>
+        /// <remarks>
+        /// <b>The behaviour this pins.</b> Arriving places a character on the authored spawn,
+        /// which is right the first time and wrong every time after: a player who walked
+        /// somewhere and logged out expects to still be there. The row now carries a position
+        /// and the registry prefers it, so this checks both halves of that on the real save
+        /// and load path rather than on a model of it.
+        /// </remarks>
+        [Test]
+        public void WhereACharacterWasStandingIsWrittenIntoTheSave()
+        {
+            _store.Holds("s1", Row());
+
+            LivingCharacter living = _registry.Spawn(1, Admission(), Limits).Character;
+
+            living.Location.Position = new CombatPosition(-5.75f, 8.49f, 35.25f);
+
+            Assert.That(_registry.Save(living, true).IsOk, Is.True);
+
+            Assert.That(_store.LastSaved, Is.Not.Null);
+            Assert.That(_store.LastSaved.HasPosition, Is.True,
+                "the save reported no position, so the next login has nothing to return to");
+            Assert.That(_store.LastSaved.PositionX, Is.EqualTo(-5.75f).Within(0.001f));
+            Assert.That(_store.LastSaved.PositionY, Is.EqualTo(8.49f).Within(0.001f));
+            Assert.That(_store.LastSaved.PositionZ, Is.EqualTo(35.25f).Within(0.001f));
+        }
+
+        [Test]
+        public void ACharacterComesBackWhereTheyLeftRatherThanOnTheSpawn()
+        {
+            // A row that remembers a position on the map it belongs to.
+            _store.Holds("s1", Row(map: "map.town", spawn: "spawn.town.plaza",
+                hasPosition: true, x: -5.75f, y: 8.49f, z: 35.25f));
+
+            LivingCharacter living = _registry.Spawn(1, Admission(), Limits).Character;
+
+            Assert.That(living.Location.Position.X, Is.EqualTo(-5.75f).Within(0.001f),
+                "the character was put back on the spawn instead of where they logged out");
+            Assert.That(living.Location.Position.Y, Is.EqualTo(8.49f).Within(0.001f));
+            Assert.That(living.Location.Position.Z, Is.EqualTo(35.25f).Within(0.001f));
+
+            // The spawn is still the one they belong to, for a respawn or a reconnect.
+            Assert.That(living.Location.CurrentSpawnPoint.Value, Is.EqualTo("spawn.town.plaza"));
+        }
+
+        [Test]
+        public void ARowWithNoRememberedPositionStillStartsOnTheSpawn()
+        {
+            _store.Holds("s1", Row(map: "map.town", spawn: "spawn.town.plaza"));
+
+            LivingCharacter living = _registry.Spawn(1, Admission(), Limits).Character;
+
+            // The plaza spawn this fixture registers is at (4, 0, 2).
+            Assert.That(living.Location.Position.X, Is.EqualTo(4f).Within(0.001f));
+            Assert.That(living.Location.Position.Z, Is.EqualTo(2f).Within(0.001f));
+        }
+
+        /// <summary>
+        /// A player who only walked is still written down when they leave.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this pins.</b> Departure used to save only a dirty character, and
+        /// nothing marks a character dirty for moving -- a save per step is exactly what the
+        /// dirty flag exists to prevent. So a player who walked somewhere and logged out was
+        /// never saved at all, and the next login put them back on the spawn. That is the
+        /// whole reason the position looked like it was not being stored.
+        /// </remarks>
+        [Test]
+        public void LeavingSavesACharacterThatOnlyWalked()
+        {
+            _store.Holds("s1", Row());
+
+            LivingCharacter living = _registry.Spawn(1, Admission(), Limits).Character;
+
+            int savesAfterSpawn = _store.Saves;
+
+            // Walking, and nothing else. No level, no bag, no pet: the character is clean.
+            living.Location.Position = new CombatPosition(-5.75f, 8.49f, 35.25f);
+
+            Assert.That(living.IsDirty, Is.False,
+                "this test is only meaningful while walking leaves a character clean");
+
+            _registry.Despawn(1);
+
+            Assert.That(_store.Saves, Is.GreaterThan(savesAfterSpawn),
+                "leaving wrote nothing, so where the player stood is lost");
+            Assert.That(_store.LastSaved.HasPosition, Is.True);
+            Assert.That(_store.LastSaved.PositionX, Is.EqualTo(-5.75f).Within(0.001f));
+            Assert.That(_store.LastSaved.PositionZ, Is.EqualTo(35.25f).Within(0.001f));
+        }
+
+        [Test]
+        public void ShuttingDownAlsoWritesDownWhereEverybodyStood()
+        {
+            _store.Holds("s1", Row());
+
+            LivingCharacter living = _registry.Spawn(1, Admission(), Limits).Character;
+
+            living.Location.Position = new CombatPosition(1.5f, 2.5f, 3.5f);
+
+            Assert.That(_registry.SaveAllAndClear(), Is.EqualTo(1));
+            Assert.That(_store.LastSaved.HasPosition, Is.True);
+            Assert.That(_store.LastSaved.PositionZ, Is.EqualTo(3.5f).Within(0.001f));
+        }
+
+        /// <summary>
+        /// Walking is written down on its own, without waiting for the player to leave.
+        /// </summary>
+        /// <remarks>
+        /// <b>The case this is for.</b> Walk a long way, stand still waiting for a party,
+        /// lose the connection. Nothing about that is an event any other save hangs off, so
+        /// before this the whole walk was lost and the next login started over.
+        /// </remarks>
+        [Test]
+        public void WalkingIsSavedOnItsOwnWithoutWaitingForThePlayerToLeave()
+        {
+            _store.Holds("s1", Row());
+
+            LivingCharacter living = _registry.Spawn(1, Admission(), Limits).Character;
+
+            int before = _store.Saves;
+
+            living.Location.Position = new CombatPosition(-40f, 8f, 55f);
+
+            // Not yet: the sweep is bounded so a busy world is not writing every tick.
+            Assert.That(_registry.TickAutosave(5f), Is.EqualTo(0));
+
+            Assert.That(_registry.TickAutosave(11f), Is.EqualTo(1),
+                "a character who walked was not written down");
+
+            Assert.That(_store.Saves, Is.GreaterThan(before));
+            Assert.That(_store.LastSaved.HasPosition, Is.True);
+            Assert.That(_store.LastSaved.PositionX, Is.EqualTo(-40f).Within(0.001f));
+            Assert.That(_store.LastSaved.PositionZ, Is.EqualTo(55f).Within(0.001f));
+        }
+
+        [Test]
+        public void StandingStillCostsNoWrites()
+        {
+            _store.Holds("s1", Row());
+
+            LivingCharacter living = _registry.Spawn(1, Admission(), Limits).Character;
+
+            living.Location.Position = new CombatPosition(-40f, 8f, 55f);
+
+            Assert.That(_registry.TickAutosave(20f), Is.EqualTo(1));
+
+            int after = _store.Saves;
+
+            // Two more sweeps with nobody moving.
+            Assert.That(_registry.TickAutosave(20f), Is.EqualTo(0));
+            Assert.That(_registry.TickAutosave(20f), Is.EqualTo(0));
+
+            Assert.That(_store.Saves, Is.EqualTo(after),
+                "a world standing still was still writing to the database");
+        }
+
+        [Test]
+        public void ASmallShuffleIsNotWorthAWrite()
+        {
+            _store.Holds("s1", Row());
+
+            LivingCharacter living = _registry.Spawn(1, Admission(), Limits).Character;
+
+            _registry.TickAutosave(20f);
+
+            int after = _store.Saves;
+
+            // Well inside the one-metre threshold.
+            CombatPosition where = living.Location.Position;
+            living.Location.Position = new CombatPosition(where.X + 0.2f, where.Y, where.Z);
+
+            Assert.That(_registry.TickAutosave(20f), Is.EqualTo(0));
+            Assert.That(_store.Saves, Is.EqualTo(after));
         }
 
         [Test]

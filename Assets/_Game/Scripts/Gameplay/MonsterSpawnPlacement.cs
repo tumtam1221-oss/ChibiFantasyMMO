@@ -56,6 +56,65 @@ namespace ChibiFantasy.Gameplay
         /// <remarks>An empty restriction list means unrestricted, and a point that names no
         /// map cannot be judged, so both are allowed. Anything stricter would refuse content
         /// that predates maps carrying an id at all.</remarks>
+        /// <summary>
+        /// Whether a map admits monsters at all.
+        /// </summary>
+        /// <remarks>
+        /// <b>The town rule, in one place.</b> A town is where players stand about, trade and
+        /// take quests; a monster inside one is a bug, not content. This answers that question
+        /// from authored map data alone -- no monster id is named anywhere, so marking a new
+        /// map safe is a content edit rather than a code change.
+        ///
+        /// <b>It reuses the flags that already exist.</b> <see cref="MapDefinition.IsTown"/>
+        /// and <see cref="MapDefinition.IsSafeZone"/> were already authored and already drive
+        /// PvP policy and warp destinations; this is the same vocabulary answering a third
+        /// question rather than a second parallel map-rule system.
+        ///
+        /// <b>An unknown map is allowed.</b> Null means the caller could not resolve the map,
+        /// and refusing every unresolved map would silently empty a world whose registry was
+        /// wired late. Content validation is what catches a map that does not exist.
+        /// </remarks>
+        public static bool AllowsMonsters(MapDefinition map)
+        {
+            if (map == null) return true;
+
+            // Safe as a whole: closed, full stop.
+            if (map.IsSafeZone) return false;
+
+            // A town with no authored zones is the old kind of town -- the whole map is
+            // the town. A town that authors zones is a walled town in open country: the
+            // safety stops at the zones and the map stays open beyond them.
+            if (map.IsTown && map.SafeZones.Length == 0) return false;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Whether a monster may stand at a particular spot on a map.
+        /// </summary>
+        /// <remarks>
+        /// <b>The zone rule, in one place.</b> Everything the server refuses about monsters
+        /// and safe ground -- a nest, a configured row, a step, a target -- asks this, so a
+        /// spot the spawn validator accepts can never be walked into by a monster for a
+        /// different reason, and no second copy of the geometry can drift.
+        /// </remarks>
+        public static bool AllowsMonstersAt(MapDefinition map, float x, float z)
+        {
+            if (!AllowsMonsters(map)) return false;
+
+            return map == null || !map.IsInsideSafeZone(x, z);
+        }
+
+        /// <summary>
+        /// Whether a player standing at a spot may be chosen as a monster's target.
+        /// </summary>
+        /// <remarks>Standing inside a safe zone means unreachable and untargetable at once:
+        /// a monster stopped at the wall must not keep swinging at somebody just inside it.</remarks>
+        public static bool MayBeTargeted(MapDefinition map, float x, float z)
+        {
+            return map == null || !map.IsInsideSafeZone(x, z);
+        }
+
         public static bool IsMapAllowed(MonsterDefinition definition, DefinitionId map)
         {
             if (definition == null) return false;

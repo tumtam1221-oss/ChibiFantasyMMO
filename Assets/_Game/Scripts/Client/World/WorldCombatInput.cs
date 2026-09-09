@@ -33,6 +33,10 @@ namespace ChibiFantasy.Client.World
         [Tooltip("Seconds between attack requests while the key is held.")]
         [SerializeField] private float _attackInterval = 0.6f;
 
+        [Tooltip("Development only: also attack on Space. Off in normal play, where the "
+            + "mouse is the only control.")]
+        [SerializeField] private bool _developmentKeyboard;
+
         private NetworkManager _networkManager;
         private Camera _camera;
         private long _sequence;
@@ -58,20 +62,24 @@ namespace ChibiFantasy.Client.World
         {
             if (_networkManager == null || !_networkManager.ClientManager.Started) return;
 
-            Mouse mouse = Mouse.current;
-
-            if (mouse != null && mouse.leftButton.wasPressedThisFrame) SelectUnderCursor();
-
-            Keyboard keyboard = Keyboard.current;
-
-            bool wants = keyboard != null && keyboard.spaceKey.isPressed;
-
-            if (wants && Time.time >= _nextAttack)
+            // Selecting and attacking are the pointer's, not this component's. A click is
+            // one gesture that can mean four things, and only one place can decide which --
+            // see WorldPointerInput. What stays here is the pair of verbs it calls.
+#if DEVELOPMENT_BUILD || UNITY_EDITOR
+            if (_developmentKeyboard)
             {
-                _nextAttack = Time.time + _attackInterval;
+                Keyboard keyboard = Keyboard.current;
 
-                RequestAttack();
+                bool wants = keyboard != null && keyboard.spaceKey.isPressed;
+
+                if (wants && Time.time >= _nextAttack)
+                {
+                    _nextAttack = Time.time + _attackInterval;
+
+                    RequestAttack();
+                }
             }
+#endif
 
             // A target the server has taken away stops being a target.
             if (Target != null && !Target.IsAlive) Target = null;

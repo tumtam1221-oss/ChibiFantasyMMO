@@ -1,0 +1,94 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1c6f512db864a454593eca429521c43b, type: 3}
+  m_Name: PreWorldUiSkin
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.UI.PreWorldUiSkin
+  _panelLarge: {fileID: 0}
+  _panelMedium: {fileID: 0}
+  _panelSmall: {fileID: 0}
+  _panelDark: {fileID: 0}
+  _primaryNormal: {fileID: 21300000, guid: cbfc51c664957f840a0bde1b9beca0e8, type: 3}
+  _primaryHover: {fileID: 21300000, guid: ada6ca046788d744d8d9ba12954104e4, type: 3}
+  _primaryPressed: {fileID: 21300000, guid: 8257293a05978184a9db0227d658bab0, type: 3}
+  _secondaryNormal: {fileID: 21300000, guid: 2cf68a4d616f0e4428ecaa7f892d8bf7, type: 3}
+  _secondaryHover: {fileID: 21300000, guid: 456344e5c6da2f3428b5e1c1b6848125, type: 3}
+  _secondaryPressed: {fileID: 21300000, guid: bf7d12c6ade65cc4282fd3b2f00c3dc0, type: 3}
+  _inputNormal: {fileID: 21300000, guid: 2a3c830756f139342b16905a52a85951, type: 3}
+  _inputFocus: {fileID: 21300000, guid: 277db51a1db44b3498fc038aacb8f851, type: 3}
+  _logo: {fileID: 21300000, guid: 746d4c4f14a078847aeb176b76885cd0, type: 3}
+  _divider: {fileID: 21300000, guid: 2398deee9a8e8b64fbeaee35aa482840, type: 3}
+  _loginBackground: {fileID: 21300000, guid: ade51e09b5d422843a89980cdbad346e, type: 3}
+  _loginPanel: {fileID: 21300000, guid: 1031c0426875f7743a73a87ef669ee2e, type: 3}
+  _loginLogo: {fileID: 21300000, guid: c3e1633a9b760444692e1a422fb3aad2, type: 3}
+  _loginFieldId: {fileID: 21300000, guid: 190cf6b7216d863458eac1fb8286bfc2, type: 3}
+  _loginFieldPassword: {fileID: 21300000, guid: bb8bf437a6377c345b5b9441599c2acb,
+    type: 3}
+  _loginButtonNormal: {fileID: 21300000, guid: 434590eff1d392f428049a22e53e9686, type: 3}
+  _loginButtonHover: {fileID: 21300000, guid: 6d8d07e94bff3384cbfcce756045054e, type: 3}
+  _loginButtonDisabled: {fileID: 21300000, guid: 7710fc55dcab8ed46b86db4191e5bb05,
+    type: 3}
+  _checkboxOff: {fileID: 21300000, guid: 8aabe4144195e8e48a211e9ea8adc3c4, type: 3}
+  _checkboxOn: {fileID: 21300000, guid: 180e398b25f826e419282c1860aa2793, type: 3}
+  _serverBackground: {fileID: 21300000, guid: 78ea6c2bf6c361641ab264c62bb46dcd, type: 3}
+  _serverPanel: {fileID: 21300000, guid: 4c5f2cb53c2001947b938ef0e3aba271, type: 3}
+  _serverTitle: {fileID: 21300000, guid: c5c4106a0da7a054583217669b401c92, type: 3}
+  _serverCompass: {fileID: 21300000, guid: 4fcc3dc375c71c64da17a0c9fe72b4d2, type: 3}
+  _serverRowNormal: {fileID: 21300000, guid: ee1d18a2c4e94b742b90726057f09940, type: 3}
+  _serverRowSelected: {fileID: 21300000, guid: c66ad03b126b3984aa8dde29a21cdee1, type: 3}
+  _serverStatusOnline: {fileID: 21300000, guid: dfb86dc59f724c446a248687fe878163,
+    type: 3}
+  _serverStatusMaintenance: {fileID: 21300000, guid: fadfb0a3c3fd1dd4ab405a8bcec565da,
+    type: 3}
+  _serverButtonBack: {fileID: 21300000, guid: 976dcc2d6fab9494399a79e6b7cf353f, type: 3}
+  _serverButtonEnter: {fileID: 21300000, guid: 4c880c00eb1c9bc4dbce228e9e00c389, type: 3}
+  _channelBackground: {fileID: 21300000, guid: a1e0339295d46af4b85454d71d159c1d, type: 3}
+  _channelPanel: {fileID: 21300000, guid: c1a21ea391b963c438ef7a5f512b2eac, type: 3}
+  _channelTitle: {fileID: 21300000, guid: 5a71514ed2184644dbef593241b5efde, type: 3}
+  _channelRowNormal: {fileID: 21300000, guid: c9800cf915ef7c84e81b6022c4d6ef9f, type: 3}
+  _channelRowSelected: {fileID: 21300000, guid: 56fac82ac5c2db740a61925f30792404,
+    type: 3}
+  _channelStatusOnline: {fileID: 21300000, guid: 7c946b50d0bd45c41954ac0d975c9887,
+    type: 3}
+  _channelStatusBusy: {fileID: 21300000, guid: 15c9ad8991eaa4047a791636f9b38df4, type: 3}
+  _channelStatusMaintenance: {fileID: 21300000, guid: 0387aa0eed321eb4ab6f589fb8df0cc8,
+    type: 3}
+  _channelButtonBack: {fileID: 21300000, guid: c6b7c16e8dcf6e7449dfba3825bf2f99, type: 3}
+  _channelButtonEnter: {fileID: 21300000, guid: 8d9133c89fd8f5c4aaf0f83ff27aa5e2,
+    type: 3}
+  _characterBackground: {fileID: -7701355948183844392, guid: ec009efd99b0dca468dbc561723d19eb,
+    type: 3}
+  _characterListPanel: {fileID: -1841505985818781941, guid: 3f7d266d23663e3469430b47e727db78,
+    type: 3}
+  _characterInfoPanel: {fileID: -7892380863357736900, guid: 8b29d1baada27d843b3252e2eee1cedb,
+    type: 3}
+  _characterSlotNormal: {fileID: -7355759836615402780, guid: 309e415374bd2084a807694f7c7e8daf,
+    type: 3}
+  _characterSlotSelected: {fileID: 833977452386040209, guid: 7cfdd8076a6b95349ad906a724b0bf50,
+    type: 3}
+  _characterSlotCreate: {fileID: -4442673292119774803, guid: 03353f3158a8e5e4f8ae05f3540044bf,
+    type: 3}
+  _characterCompass: {fileID: 5902324055130556592, guid: 34be3a5e01f987c4e8ed70998b71bf33,
+    type: 3}
+  _characterPortrait: {fileID: -1577475163753592375, guid: 5d0779a783be5fd4995d5984f1773f28,
+    type: 3}
+  _characterButtonBack: {fileID: 1371943157121963248, guid: 3b26c4ac7e831bc44b4c56bba2cbe1ef,
+    type: 3}
+  _characterButtonEnter: {fileID: -2994596392586529999, guid: 996042bd9af673446b0a724e0f4b870f,
+    type: 3}
+  _iconServer: {fileID: 21300000, guid: c3eab8c55df2f704b89611c0821abdb9, type: 3}
+  _iconChannel: {fileID: 21300000, guid: d3a35c68225bfbc49bf1deec347bbf02, type: 3}
+  _iconUser: {fileID: 21300000, guid: 59cd00a46ae3dde428778e26dc0a2b68, type: 3}
+  _iconOnline: {fileID: 21300000, guid: b22bd8c60cce4b2489f7a1089e0fafb1, type: 3}
+  _iconBusy: {fileID: 21300000, guid: fa69c9031b09a164d8a7cdce3caa1eee, type: 3}
+  _iconFull: {fileID: 21300000, guid: 60525bb5914b196409637c270149a1e0, type: 3}
+  _iconLock: {fileID: 21300000, guid: 7a4ffbbc86527ff4b99af511e749a5c7, type: 3}
+  _iconMaintenance: {fileID: 21300000, guid: daffb996a54d9df43b1f4fb75de13f1b, type: 3}

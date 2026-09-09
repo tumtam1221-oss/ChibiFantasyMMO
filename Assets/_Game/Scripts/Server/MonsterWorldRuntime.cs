@@ -286,9 +286,38 @@ namespace ChibiFantasy.Server
         {
             if (!point.IsValid || !point.Map.IsValid) return false;
 
+            // A town admits no monsters, and neither does the ground inside a town wall.
+            // Refused here rather than filtered later, because this is the one door every
+            // nest comes through: a nest that never exists cannot spawn, cannot respawn and
+            // cannot be chased out of. The rule is read from authored map data, so no
+            // monster or map id is named in code.
+            if (!AllowsMonstersAt(point.Map, point.Position.X, point.Position.Z)) return false;
+
             _spawners.Add(new MonsterSpawnService(point, _maxHealthStat));
 
             return true;
+        }
+
+        /// <summary>
+        /// Whether a nest may stand at a spot on a map, as the authored map data says.
+        /// </summary>
+        /// <remarks>Delegated to <see cref="MonsterSpawnPlacement.AllowsMonstersAt"/> so the
+        /// runtime and the content validator cannot disagree about what a safe town is. With
+        /// no map registry wired the answer is yes, which is the behaviour every server had
+        /// before this existed.</remarks>
+        private bool AllowsMonstersAt(DefinitionId map, float x, float z)
+        {
+            MapDefinition definition = DefinitionOf(map);
+
+            return definition == null || MonsterSpawnPlacement.AllowsMonstersAt(definition, x, z);
+        }
+
+        /// <summary>The authored map, or null when there is no registry or it is unknown.</summary>
+        private MapDefinition DefinitionOf(DefinitionId map)
+        {
+            if (_maps == null || !map.IsValid) return null;
+
+            return _maps.TryGet(map, out MapDefinition definition) ? definition : null;
         }
 
         /// <summary>
@@ -420,6 +449,17 @@ namespace ChibiFantasy.Server
 
             if (state == null) return false;
 
+            // A nest is authored as X/Z; on a map with ground the monster appears standing
+            // on it rather than at the flat-world height the row happens to carry.
+            MapDefinition definition = DefinitionOf(spawner.Point.Map);
+
+            if (definition != null && definition.HeightField != null
+                && definition.HeightField.TrySample(state.Position.X, state.Position.Z,
+                    out float groundY))
+            {
+                state.Position = new CombatPosition(state.Position.X, groundY, state.Position.Z);
+            }
+
             var living = new LivingMonster(state, new MonsterAiController(state),
                 new MonsterCombatant(state), spawner.Point.Map);
 
@@ -450,6 +490,11 @@ namespace ChibiFantasy.Server
 
                 float radius = RadiusOf(map);
 
+                // The map's own geometry: its safe zones stop a chase at the town wall, and
+                // its ground puts a walking monster on the hill the player is standing on.
+                MapDefinition definition = DefinitionOf(map);
+                IGroundHeight ground = definition != null ? definition.HeightField : null;
+
                 foreach (MonsterRuntimeState state in _spawners[i].Alive)
                 {
                     if (!_byInstance.TryGetValue(state.InstanceId.Value, out LivingMonster living))
@@ -464,7 +509,7 @@ namespace ChibiFantasy.Server
                     if (living.Ai.WantsToAttack) _attacking.Add(living.Instance);
 
                     if (MonsterMovement.Step(state, living.Ai.State,
-                        DestinationFor(living, map), deltaSeconds, radius).Moved)
+                        DestinationFor(living, map), deltaSeconds, radius, definition, ground).Moved)
                     {
                         moved++;
                     }
@@ -543,10 +588,18 @@ namespace ChibiFantasy.Server
 
             if (_players == null || !map.IsValid) return;
 
+            MapDefinition definition = DefinitionOf(map);
+
             foreach (LivingCharacter player in _players.All())
             {
                 if (player.Location == null || !player.Location.IsOn(map)) continue;
                 if (player.Combatant == null || !player.Combatant.IsAlive()) continue;
+
+                // Inside the town wall nobody is a target. Without this a monster stopped
+                // at the wall would keep swinging at a player standing just behind it.
+                CombatPosition where = player.Combatant.Position;
+
+                if (!MonsterSpawnPlacement.MayBeTargeted(definition, where.X, where.Z)) continue;
 
                 _candidates.Add(player.Combatant);
             }
@@ -699,6 +752,19 @@ namespace ChibiFantasy.Server
                 // spawn a second nest every time somebody pressed reload.
                 if (string.IsNullOrEmpty(row.SpawnPointId)
                     || !SpawnConfigurationValidator.Validate(row, maps, _definitions).IsAccepted)
+                {
+                    rejected++;
+
+                    continue;
+                }
+
+                // A nest configured onto a safe town is refused the same way a malformed row
+                // is. Database configuration is not permitted to put monsters somewhere the
+                // authored map says they may not stand.
+                MapDefinition rowMap;
+
+                if (maps != null && maps.TryGet(row.Map, out rowMap)
+                    && !MonsterSpawnPlacement.AllowsMonstersAt(rowMap, row.X, row.Z))
                 {
                     rejected++;
 

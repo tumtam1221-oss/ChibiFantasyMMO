@@ -18,7 +18,7 @@ MonoBehaviour:
     _key: map.harbor_outskirts.name
   _category: 0
   _scene:
-    _address:
+    _address: HarborOutskirts
   _recommendedLevelMin: 1
   _recommendedLevelMax: 10
   _pkAllowed: 0

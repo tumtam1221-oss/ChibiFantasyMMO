@@ -150,11 +150,54 @@ namespace ChibiFantasy.Client
             if (!string.IsNullOrEmpty(content)) _contentVersion = content;
         }
 
+        /// <summary>
+        /// What the socket last did.
+        /// </summary>
+        /// <remarks>Recorded because it used to be discarded. Every state except Started was
+        /// dropped on the floor, so a client that could not reach the world server loaded the
+        /// world scene, drew the sky, and waited forever with nothing in it and nothing said
+        /// -- which is exactly how an empty GameWorld reached a manual test.</remarks>
+        public LocalConnectionState ConnectionState { get; private set; }
+            = LocalConnectionState.Stopped;
+
+        /// <summary>
+        /// Whether the socket stopped without ever reaching the world.
+        /// </summary>
+        /// <remarks>True after a failed connect, false again once one succeeds. This is the
+        /// difference between "the world is empty because nothing spawned yet" and "the world
+        /// is empty because this client is not connected to anything", which a player and a
+        /// test both need to be able to tell apart.</remarks>
+        public bool ConnectionFailed { get; private set; }
+
+        /// <summary>Raised on every change of socket state.</summary>
+        public event System.Action<LocalConnectionState> ConnectionChanged;
+
         private void OnConnectionState(ClientConnectionStateArgs args)
         {
-            if (args.ConnectionState != LocalConnectionState.Started) return;
+            ConnectionState = args.ConnectionState;
 
-            SendJoinRequest();
+            if (args.ConnectionState == LocalConnectionState.Started)
+            {
+                ConnectionFailed = false;
+
+                ConnectionChanged?.Invoke(args.ConnectionState);
+
+                SendJoinRequest();
+
+                return;
+            }
+
+            if (args.ConnectionState == LocalConnectionState.Stopped)
+            {
+                ConnectionFailed = true;
+
+                // Loud, because the alternative is a world that renders correctly and is
+                // simply empty. There is nothing else on screen to say why.
+                Debug.LogError("[client] not connected to the world server at " + _address
+                    + ":" + _port + " -- the world will be empty until it is reachable", this);
+            }
+
+            ConnectionChanged?.Invoke(args.ConnectionState);
         }
 
         /// <summary>

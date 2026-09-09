@@ -419,6 +419,12 @@ namespace ChibiFantasy.Tests.PlayMode
             Assert.That(Monsters.TryResolve(slime.Instance,
                 out ICombatant target), Is.True);
 
+            // Within casting reach. The map's player spawn is no longer on top of the origin
+            // this slime is placed at, so a caster left where they arrived is refused for
+            // range -- which says nothing about magic defence, which is what this checks.
+            caster.Combatant.Position = new CombatPosition(target.Position.X,
+                target.Position.Y, target.Position.Z);
+
             Assert.That(target.TryGetCombatStat(Mdef, out int mdef), Is.True,
                 "the production monster carries no magic defence");
             Assert.That(target.TryGetCombatStat(Def, out int def), Is.True);

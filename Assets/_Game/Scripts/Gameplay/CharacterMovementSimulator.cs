@@ -92,10 +92,15 @@ namespace ChibiFantasy.Gameplay
         /// that no time has passed and moves once, not a hundred times.
         /// </param>
         /// <param name="isAlive">Whether the character may move at all.</param>
+        /// <param name="ground">
+        /// The map's ground, or null for a flat map. When present, the step's Y is the ground
+        /// height at its destination and a destination with no walkable ground is refused --
+        /// this is the only place the server ever changes a walking character's height.
+        /// </param>
         public static MovementResult Advance(in CharacterMovementIntent intent,
             CharacterLocationState location, in MovementBudget budget, long lastSequence,
             long lastTimestampMilliseconds, long serverTimestampMilliseconds,
-            bool isAlive = true)
+            bool isAlive = true, IGroundHeight ground = null)
         {
             if (location == null || !budget.IsUsable)
             {
@@ -135,10 +140,50 @@ namespace ChibiFantasy.Gameplay
             float seconds = elapsed / 1000f;
             float distance = budget.MetresPerSecond * seconds;
 
-            CombatPosition destination = new CombatPosition(
-                authoritative.X + (intent.X * distance),
-                authoritative.Y,
-                authoritative.Z + (intent.Z * distance));
+            float destinationX = authoritative.X + (intent.X * distance);
+            float destinationZ = authoritative.Z + (intent.Z * distance);
+            float destinationY = authoritative.Y;
+
+            // A flat map carries Y through untouched, exactly as before. A map that authors
+            // ground puts the character on it.
+            if (ground != null)
+            {
+                if (!ground.TrySample(destinationX, destinationZ, out destinationY))
+                {
+                    // <b>Slide, do not stop.</b> Refusing the whole step freezes a character
+                    // the instant it touches anything -- a pond rim, a wall, a rock at the
+                    // roadside -- and holding the same input then refuses every following
+                    // step too, so it stands there until the player clicks elsewhere. What a
+                    // player expects is to scrape along the obstacle and keep going, so each
+                    // axis is tried on its own and the first one that has ground is taken.
+                    // Both are shorter than the step already checked, so nothing here can
+                    // buy distance, and each still lands on real ground.
+                    // A slide must actually go somewhere. Walking straight at a wall leaves
+                    // nothing to slide along, and "moving" to where the character already
+                    // stands would spend a sequence number on standing still.
+                    bool movesAlongX = destinationX != authoritative.X;
+                    bool movesAlongZ = destinationZ != authoritative.Z;
+
+                    if (movesAlongX && ground.TrySample(destinationX, authoritative.Z, out float alongX))
+                    {
+                        destinationZ = authoritative.Z;
+                        destinationY = alongX;
+                    }
+                    else if (movesAlongZ && ground.TrySample(authoritative.X, destinationZ, out float alongZ))
+                    {
+                        destinationX = authoritative.X;
+                        destinationY = alongZ;
+                    }
+                    else
+                    {
+                        // Cornered, or facing the wall head on. Now standing still is the truth.
+                        return MovementResult.Rejected(MovementRejection.Unwalkable, authoritative);
+                    }
+                }
+            }
+
+            CombatPosition destination = new CombatPosition(destinationX, destinationY,
+                destinationZ);
 
             // The map is the character's own, read from the location. A client has no field
             // to put one in and could not change it if it had.

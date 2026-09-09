@@ -18,7 +18,9 @@ MonoBehaviour:
     type: 3}
   _locomotion: {fileID: 9100000, guid: 39555be8cb9455a48b3b7653b13bdf46, type: 2}
   _femaleLocomotion: {fileID: 22100000, guid: 103b6b5efb48bb746907c25519bf1763, type: 2}
-  _referenceWalkSpeed: 1
+  _referenceWalkSpeed: 1.04
   _moveThreshold: 0.05
   _nameplateHeight: 1
+  _maleGroundOffset: 0.01
+  _femaleGroundOffset: 0.005
   _showOwnNameplate: 0

@@ -77,12 +77,23 @@ namespace ChibiFantasy.Client.UI
 
             BuildRows();
 
-            if (_rows.Count == 0) SetStatus(EmptyMessage);
-            else SetStatus(string.Empty);
+            if (HasContent) SetStatus(string.Empty);
+            else SetStatus(EmptyMessage);
         }
 
         /// <summary>What to say when the list is empty. Overridden per screen.</summary>
         protected virtual string EmptyMessage => "Nothing to show";
+
+        /// <summary>
+        /// Whether this screen actually put anything on itself.
+        /// </summary>
+        /// <remarks>
+        /// <b>Not simply the row count.</b> A screen that paints its own table never calls
+        /// <c>AddRow</c>, so the plain list stays empty however many rows are on screen --
+        /// and the status line underneath announced "no available servers" over a full one.
+        /// A screen that draws its own rows says so by overriding this.
+        /// </remarks>
+        protected virtual bool HasContent => _rows.Count > 0;
 
         protected void SetStatus(string message)
         {
@@ -212,6 +223,15 @@ namespace ChibiFantasy.Client.UI
 
             Content = UiFactory.CreateScrollList("List", root, out ScrollRect _);
             RectTransform frame = (RectTransform)Content.parent.parent;
+
+            // The list keeps the flat colour it has always had.
+            //
+            // The generic panel sprites in the UI pack are unusable: they were cut out of a
+            // contact sheet with their own filenames printed on them, so dressing a screen in
+            // Panel_Large draws the words "Panel_Large.png" across it. The login screen has
+            // its own authored art and uses that instead; the rest wait for panel art that
+            // is not a screenshot of a spritesheet.
+
             frame.anchorMin = new Vector2(0.5f, 0f);
             frame.anchorMax = new Vector2(0.5f, 1f);
             frame.pivot = new Vector2(0.5f, 0.5f);

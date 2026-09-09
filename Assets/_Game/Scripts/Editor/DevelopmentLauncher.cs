@@ -44,8 +44,11 @@ namespace ChibiFantasy.Editor
             var start = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
-                Arguments = "/k set DB_DATABASE=" + DevelopmentDatabase
-                    + " && php -S " + ApiHost + " -t public",
+                // Quoted, because cmd's `set X=value && ...` keeps the space before `&&`
+                // in the value; the API would then look for a database named
+                // "chibifantasy_integration " and answer 503 to everything.
+                Arguments = "/k set \"DB_DATABASE=" + DevelopmentDatabase
+                    + "\" && php -S " + ApiHost + " -t public",
                 WorkingDirectory = Path.Combine(root, "backend"),
                 UseShellExecute = true,
             };

@@ -279,6 +279,106 @@ namespace ChibiFantasy.Server
         /// cannot drift. Identity is carried through: the instance id in the snapshot is the
         /// one the server holds, never a new one minted for the wire.
         /// </remarks>
+        /// <summary>
+        /// Tells each player what is in their bag, but only when it has changed.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this closes.</b> A bag was published to a player only in answer to
+        /// an inventory request they themselves made -- moving a stack, using an item. Loot
+        /// picked up off the ground changes the same bag and goes through a different door
+        /// (<c>MonsterLootRegistry</c>), so a player could kill a monster, walk over, take
+        /// what it dropped, and watch nothing at all appear: the server had the item, the
+        /// client had never been told. Nothing published a bag on spawn either, so a bag was
+        /// empty from the moment a player arrived until the first time they rearranged it.
+        ///
+        /// <b>Changed, not every tick.</b> A signature of what a bag holds is compared with
+        /// the last one sent; identical means nothing is sent. A world where nobody is
+        /// looting costs one integer comparison per character per tick.
+        ///
+        /// <b>Separate from <see cref="LivingCharacter.IsDirty"/> on purpose.</b> That flag
+        /// belongs to persistence and is cleared when a character is saved. Consuming it here
+        /// would mean a save and a publish could each swallow the other's notification.
+        /// </remarks>
+        /// <returns>How many players were told.</returns>
+        public int PublishChanged()
+        {
+            // No characters, or nowhere to send: a world composed without a replication
+            // service has no network object to publish through, and Publish would dereference
+            // it. Request-driven publishing never reached that case because a world with no
+            // replication has no client to make a request.
+            if (_characters == null || _replication == null) return 0;
+
+            IReadOnlyList<LivingCharacter> living = _characters.All();
+
+            var told = 0;
+
+            for (var i = 0; i < living.Count; i++)
+            {
+                LivingCharacter character = living[i];
+
+                if (character == null) continue;
+
+                int signature = SignatureOf(character);
+
+                // Keyed by connection, not by character. A player who reconnects is a new
+                // connection that has been told nothing, and remembering what their previous
+                // socket had been sent would leave them staring at an empty bag -- which is
+                // exactly what happened the first time this was written.
+                int key = character.ConnectionId;
+
+                if (_publishedInventory.TryGetValue(key, out int last) && last == signature)
+                {
+                    continue;
+                }
+
+                // Recorded only once it has actually gone out. A publish can fail on the
+                // tick a character spawns -- the network object is not registered yet -- and
+                // remembering the signature anyway would mean never trying again, which is
+                // a bag that stays empty until the player happens to change it.
+                if (!Publish(character)) continue;
+
+                _publishedInventory[key] = signature;
+
+                told++;
+            }
+
+            return told;
+        }
+
+        /// <summary>
+        /// A cheap value that changes when a bag's contents change.
+        /// </summary>
+        /// <remarks>Capacity, the number of occupied slots, and each occupied slot's item
+        /// and quantity. Not a hash of the whole snapshot: building one would allocate the
+        /// snapshot this exists to avoid building.</remarks>
+        private static int SignatureOf(LivingCharacter character)
+        {
+            if (character == null || character.Inventory == null) return 0;
+
+            var signature = 17;
+
+            signature = (signature * 31) + character.Inventory.Capacity;
+
+            IReadOnlyList<ItemSlot> slots = character.Inventory.Slots;
+
+            for (var i = 0; i < slots.Count; i++)
+            {
+                if (slots[i].Content == null) continue;
+
+                signature = (signature * 31) + slots[i].Index;
+                signature = (signature * 31)
+                    + (slots[i].Content.DefinitionId.Value == null
+                        ? 0
+                        : slots[i].Content.DefinitionId.Value.GetHashCode());
+                signature = (signature * 31) + slots[i].Content.Revision.Value;
+            }
+
+            return signature;
+        }
+
+        /// <summary>What each connection was last told its bag holds.</summary>
+        private readonly Dictionary<int, int> _publishedInventory = new Dictionary<int, int>();
+
         public InventorySnapshot SnapshotOf(LivingCharacter character)
         {
             var snapshot = new InventorySnapshot

@@ -292,7 +292,14 @@ namespace ChibiFantasy.Server
                 companion == null || companion.Summoned == null
                     ? default
                     : companion.Summoned.InstanceId,
-                rewardApplications);
+                rewardApplications,
+                // Where they are standing right now. Saved so the next login resumes here
+                // rather than sending them back to the spawn, which is what a player who
+                // walked somewhere and logged out expects.
+                location != null && location.HasArrived,
+                location == null ? 0f : location.Position.X,
+                location == null ? 0f : location.Position.Y,
+                location == null ? 0f : location.Position.Z);
         }
 
         /// <summary>

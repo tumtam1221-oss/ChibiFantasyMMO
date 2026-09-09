@@ -1,0 +1,27 @@
+{
+  "target": "PC desktop 1920x1080",
+  "unity_path": "Assets/_Game/Art/UI/PreWorld/",
+  "important": "Files were separated from the generated UI asset sheet. Use TMP for all text. Background files marked REFERENCE are upscaled thumbnails and should not be treated as final production art.",
+  "recommended_import": {
+    "UI sprites": {
+      "Texture Type": "Sprite (2D and UI)",
+      "Sprite Mode": "Single",
+      "Wrap Mode": "Clamp",
+      "Filter Mode": "Bilinear"
+    },
+    "CanvasScaler": {
+      "UI Scale Mode": "Scale With Screen Size",
+      "Reference Resolution": "1920x1080",
+      "Match": 0.5
+    }
+  },
+  "folders": [
+    "Panels",
+    "Buttons",
+    "Inputs",
+    "Icons",
+    "Decorations",
+    "Screens",
+    "BackgroundReferences"
+  ]
+}

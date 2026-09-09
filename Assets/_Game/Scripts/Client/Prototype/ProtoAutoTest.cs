@@ -292,7 +292,7 @@ namespace ChibiFantasy.Client.Prototype
                 float diff = cameraRig.DesiredDistance - targetDistance;
                 if (Mathf.Abs(diff) < 0.02f) break;
 
-                float step = Mathf.Clamp(diff / cameraSettings.zoomSensitivity, -600f, 600f);
+                float step = Mathf.Clamp(diff / cameraSettings.zoomMetresPerNotch, -600f, 600f);
                 MouseScroll(step);
                 yield return null;
             }

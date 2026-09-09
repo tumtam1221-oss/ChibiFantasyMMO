@@ -18,14 +18,20 @@ MonoBehaviour:
     _key: map.harbor_town.name
   _category: 1
   _scene:
-    _address: 
+    _address: HarborTown
   _recommendedLevelMin: 1
   _recommendedLevelMax: 10
   _pkAllowed: 0
-  _isSafeZone: 1
+  _isSafeZone: 0
   _isTown: 1
   _isBossArea: 0
   _movementRadius: 250
+  _heightField: {fileID: 11400000, guid: 4890f47e13b2a6c4eb9a85139a31f4d6, type: 2}
+  _safeZones:
+  - _center: {x: 0, y: 0}
+    _radius: 30
+  - _center: {x: -8, y: 55}
+    _radius: 24
   _portals: []
   _monsterSpawnTable:
     _value: 

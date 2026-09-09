@@ -52,6 +52,12 @@ namespace ChibiFantasy.Server
         /// pick it up; it simply never volunteers that a pile is there, which is what the
         /// world did until 18.18B1.</remarks>
         private readonly CharacterLootAuthority _lootAuthority;
+
+        /// <summary>Who tells players what is in their bag. Optional.</summary>
+        /// <remarks>A world composed without one still grants items and still persists
+        /// them; it simply never tells the player they arrived, which is what the world did
+        /// until this gate.</remarks>
+        private readonly CharacterInventoryAuthority _inventoryAuthority;
         private readonly MonsterRewardAuthority _rewards;
         private readonly CharacterReplicationService _replication;
         private readonly MonsterReplicationService _monsterReplication;
@@ -66,9 +72,11 @@ namespace ChibiFantasy.Server
             MonsterLootRegistry loot = null,
             MonsterReplicationService monsterReplication = null,
             MonsterRewardAuthority rewards = null,
-            CharacterLootAuthority lootAuthority = null)
+            CharacterLootAuthority lootAuthority = null,
+            CharacterInventoryAuthority inventoryAuthority = null)
         {
             _lootAuthority = lootAuthority;
+            _inventoryAuthority = inventoryAuthority;
             _characters = characters;
             _replication = replication;
             _status = status;
@@ -178,6 +186,11 @@ namespace ChibiFantasy.Server
             _movement?.Tick(deltaSeconds);
             _combat?.Tick(deltaSeconds);
 
+            // 3b. Anybody who has walked since they were last written down. Nothing else
+            //     saves a walking character, so without this a player who moved and then
+            //     lost their connection comes back where they started.
+            _characters?.TickAutosave(deltaSeconds);
+
             // 4. Monsters: spawning, thinking, retiring, and the piles they left.
             _monsters?.Tick(deltaSeconds);
             _loot?.Tick(deltaSeconds);
@@ -185,6 +198,10 @@ namespace ChibiFantasy.Server
             // And anybody standing near a pile that has just appeared, gone, or been dipped
             // into is told. Nothing is sent when the ground has not changed.
             _lootAuthority?.PublishChanged();
+
+            // And anybody whose bag changed -- because they picked something up, or because
+            // they have just arrived and have never been told what they are carrying.
+            _inventoryAuthority?.PublishChanged();
 
             // A defeat whose party turn would not commit is decided but unpaid. Retried
             // here because this is already the step that owns monsters and their piles,

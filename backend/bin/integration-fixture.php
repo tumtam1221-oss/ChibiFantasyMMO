@@ -118,7 +118,7 @@ $pdo->prepare(
          class_definition_id, job_definition_id, map_definition_id,
          appearance_definition_id, availability, revision, created_at, updated_at)
      VALUES (:cid, :aid, :sid, :name, 2, 12, 100, 50, "class.novice", "job.none",
-             "map.town", "appearance.default", 1, 0, NOW(3), NOW(3))'
+             "map.harbor_town", "appearance.default", 1, 0, NOW(3), NOW(3))'
 )->execute([
     ':cid'  => $characterId,
     ':aid'  => $accountId,
@@ -145,14 +145,14 @@ $spawn = $pdo->prepare(
 );
 
 foreach ([
-    ['itest-spawn-a', 'monster.poring', 12.5, 0.0, -7.25, 4.0, 2, 5, 30.0, 1, 'itest-group'],
-    ['itest-spawn-b', 'monster.lunatic', -3.0, 1.5, 8.0, 0.0, 1, 1, 0.0, 1, null],
-    ['itest-spawn-over', 'monster.poring', 0.0, 0.0, 0.0, 0.0, 9, 2, 10.0, 1, null],
+    ['itest-spawn-a', 'monster.training_slime', 12.5, 0.0, -7.25, 4.0, 2, 5, 30.0, 1, 'itest-group'],
+    ['itest-spawn-b', 'monster.ancient_slime_king', -3.0, 1.5, 8.0, 0.0, 1, 1, 0.0, 1, null],
+    ['itest-spawn-over', 'monster.training_slime', 0.0, 0.0, 0.0, 0.0, 9, 2, 10.0, 1, null],
     ['itest-spawn-off', 'monster.hidden', 0.0, 0.0, 0.0, 0.0, 1, 1, 0.0, 0, null],
 ] as [$id, $monster, $x, $y, $z, $radius, $initial, $maxAlive, $respawn, $enabled, $group]) {
     $spawn->execute([
         ':id'        => $id,
-        ':map'       => 'map.town',
+        ':map'       => 'map.harbor_town',
         ':monster'   => $monster,
         ':x'         => $x,
         ':y'         => $y,
@@ -178,8 +178,8 @@ $ai = $pdo->prepare(
 );
 
 foreach ([
-    ['monster.poring', 0, 0.0, null, null, null, 1.5],
-    ['monster.lunatic', 1, 9.0, 18.0, 1.75, 2.5, 3.25],
+    ['monster.training_slime', 0, 0.0, null, null, null, 1.5],
+    ['monster.ancient_slime_king', 1, 9.0, 18.0, 1.75, 2.5, 3.25],
     ['monster.hidden', 2, 14.0, null, null, null, null],
 ] as [$monster, $aggression, $detection, $chase, $attackRange, $cooldown, $speed]) {
     $ai->execute([
@@ -208,7 +208,7 @@ $pdo->prepare(
          class_definition_id, job_definition_id, map_definition_id,
          appearance_definition_id, availability, revision, created_at, updated_at)
      VALUES (:cid, :aid, :sid, :name, 2, 5, 100, 50, "class.novice", "job.none",
-             "map.town", "appearance.default", 1, 0, NOW(3), NOW(3))'
+             "map.harbor_town", "appearance.default", 1, 0, NOW(3), NOW(3))'
 )->execute([
     ':cid'  => $rewardCharacterId,
     ':aid'  => $rewardAccountId,
@@ -234,7 +234,7 @@ $handoff = [
     'reward_password'         => $rewardPassword,
     'reward_account_id'       => $rewardAccountId,
     'reward_character_id'     => $rewardCharacterId,
-    'map_id'           => 'map.town',
+    'map_id'           => 'map.harbor_town',
     'database'         => $database,
 ];
 
@@ -252,6 +252,6 @@ echo "  channel   {$channelId}\n";
 echo "  character {$characterId}\n";
 echo "  account   {$rewardAccountId} (progression tests write to this one)\n";
 echo "  character {$rewardCharacterId}\n";
-echo "  spawns    4 rows on map.town (one invalid on purpose, one disabled)\n";
+echo "  spawns    4 rows on map.harbor_town (one invalid on purpose, one disabled)\n";
 echo "  ai        3 monster_ai_configuration rows\n";
 echo "  credential written to storage/integration-fixture.json (gitignored)\n";

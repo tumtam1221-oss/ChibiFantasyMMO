@@ -27,6 +27,7 @@ namespace ChibiFantasy.Server
     {
         private readonly ServerCombatPipeline _pipeline;
         private readonly System.Action _afterCombat;
+        private readonly System.Action<int> _onAccepted;
 
         /// <param name="pipeline">18.1's pipeline. The only thing that resolves a fight.</param>
         /// <param name="afterCombat">
@@ -34,11 +35,19 @@ namespace ChibiFantasy.Server
         /// the character and monster replication services, so what the server decided
         /// reaches the client that asked.
         /// </param>
+        /// <param name="onAccepted">
+        /// Run with the attacker's connection when, and only when, the pipeline accepted the
+        /// request. Normally a publish of the combat presentation, so that what a player sees
+        /// their character do corresponds to an attack the server actually performed. A
+        /// refusal never reaches it, which is the property that keeps a client from drawing
+        /// a swing it was not allowed.
+        /// </param>
         public CharacterCombatRequestHandler(ServerCombatPipeline pipeline,
-            System.Action afterCombat = null)
+            System.Action afterCombat = null, System.Action<int> onAccepted = null)
         {
             _pipeline = pipeline;
             _afterCombat = afterCombat;
+            _onAccepted = onAccepted;
         }
 
         /// <summary>How many requests have been handled. For diagnostics and tests.</summary>
@@ -67,6 +76,10 @@ namespace ChibiFantasy.Server
             // ClaimedAttacker is left empty on purpose. See the type remarks.
             LastResult = _pipeline.Execute(connectionId,
                 new CombatCommand(default, target, skill, rank, sequence));
+
+            // Presentation before synchronise, so the swing and the health it changed reach
+            // the client in that order. Only an accepted attack is drawn.
+            if (LastResult.IsAccepted) _onAccepted?.Invoke(connectionId);
 
             _afterCombat?.Invoke();
         }
