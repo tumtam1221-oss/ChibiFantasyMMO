@@ -186,6 +186,8 @@ namespace ChibiFantasy.Server
 
             ApplyLaunchOptions();
 
+            if (!AuthorityAddressIsAcceptable()) return;
+
             Compose();
 
             if (_startOnAwake) StartServer();
@@ -836,6 +838,62 @@ namespace ChibiFantasy.Server
                     : _apiBaseAddress));
         }
 
+        public const string InsecureOption = "allow-insecure-api";
+        public const string InsecureVariable = "CHIBI_ALLOW_INSECURE_API";
+
+        /// <summary>
+        /// Refuses to start when the account authority would be reached in the clear.
+        /// </summary>
+        /// <remarks>
+        /// <b>What is actually at stake.</b> Every request from this server to the authority
+        /// carries the thing that proves which player it is acting for. On one machine that
+        /// traffic never reaches a network card. Between two machines it is on a wire, and
+        /// anyone who can watch that wire can act as any player on this server. That is not a
+        /// hardening opportunity; it is the whole of a player's identity in plaintext.
+        ///
+        /// <b>Refused rather than warned.</b> A warning at startup is a line in a log nobody
+        /// reads until afterwards, and "afterwards" here means after somebody's account was
+        /// taken. A server that will not start gets fixed in the same minute.
+        ///
+        /// <b>With a door, because private networks are real.</b> A deployment whose two
+        /// machines share a link nobody else can reach may legitimately want plaintext, and a
+        /// rule with no way out gets worked around in worse ways -- usually by putting the
+        /// whole thing back on one machine. Saying so explicitly is the price.
+        ///
+        /// <b>Loopback is exempt by address, not by build type.</b> Tying this to
+        /// <c>Debug.isDebugBuild</c> would let a development build be deployed to two machines
+        /// and quietly do the unsafe thing.
+        /// </remarks>
+        private bool AuthorityAddressIsAcceptable()
+        {
+            var endpoint = new HttpEndpoint(_apiBaseAddress, _apiTimeoutSeconds);
+
+            if (!endpoint.IsUnencryptedOverNetwork) return true;
+
+            bool allowed = !string.IsNullOrEmpty(LaunchOptions.Resolve(
+                InsecureOption, InsecureVariable,
+                System.Environment.GetCommandLineArgs(),
+                System.Environment.GetEnvironmentVariable, null));
+
+            if (allowed)
+            {
+                Debug.LogWarning("[world] talking to the account authority at "
+                    + endpoint + " WITHOUT encryption, because " + InsecureVariable
+                    + " was set. Everything this server sends it, including what proves who "
+                    + "a player is, is readable by anything on that network.");
+
+                return true;
+            }
+
+            Debug.LogError("[world] refusing to start: the account authority is at "
+                + endpoint + ", which is not encrypted and is not this machine. What this "
+                + "server sends it would identify players to anyone watching the network. "
+                + "Use https, or set " + InsecureVariable + "=1 if that link really is "
+                + "private.");
+
+            return false;
+        }
+
         /// <summary>Where this world's calendar is written down. Null when nowhere.</summary>
         public IWorldClockStore ClockStore { get; private set; }
 
@@ -1156,9 +1214,35 @@ namespace ChibiFantasy.Server
                 // And the weather, so somebody arriving mid-downpour arrives wet rather
                 // than waiting for the next turn to find out it is raining.
                 Weather = Simulation != null ? (int)Simulation.Weather.Weather : 0,
-            });
+            }, requireAuthenticated: false);
 
             // Connecting becomes Ready, and the authority's session becomes Active.
+            // The hour, immediately, to this connection alone.
+            //
+            // The arrival message above already carries it, and relying on that turned out
+            // to be relying on one message arriving somewhere specific. The repeat that
+            // follows is every sixty seconds, which is a long time to stand in a world
+            // showing the wrong sky and then have it change while you watch. This costs two
+            // floats once per player and removes the window entirely.
+            _networkManager.ServerManager.Broadcast(connection, new WorldTimeMessage
+            {
+                TimeOfDay = Simulation != null ? Simulation.Clock.TimeOfDay : 0f,
+                SecondsPerDay = Simulation != null
+                    ? (float)Simulation.Clock.SecondsPerDay
+                    : (float)WorldClock.DefaultSecondsPerDay,
+            }, requireAuthenticated: false);
+
+            // And what the sky is doing, to this connection alone.
+            //
+            // WorldWeatherMessage is otherwise only sent when the weather turns, which is
+            // exactly right for everyone already here and useless to somebody who has just
+            // walked in during a downpour: they would stand in the sun until it next
+            // changed. Arriving in weather means arriving in it, not a minute later.
+            _networkManager.ServerManager.Broadcast(connection, new WorldWeatherMessage
+            {
+                Weather = Simulation != null ? (int)Simulation.Weather.Weather : 0,
+            }, requireAuthenticated: false);
+
             Coordinator.ConfirmArrival(connection.ClientId);
 
             // Nothing else to send about the sky: the arrival message above already carried

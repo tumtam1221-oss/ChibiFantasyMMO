@@ -209,6 +209,31 @@ namespace ChibiFantasy.Client
         }
 
         /// <summary>
+        /// Says so when a player's password would leave this machine unencrypted.
+        /// </summary>
+        /// <remarks>
+        /// <b>Warned here, not refused.</b> The world server refuses the same situation
+        /// because a server that will not start is fixed by the person who deployed it. A
+        /// client belongs to a player who cannot fix anything and would only be locked out of
+        /// a game somebody else misconfigured -- so this is loud in the log the developer
+        /// reads, and does not punish the player for it.
+        ///
+        /// <b>What it is about.</b> The very first request a client makes carries a password.
+        /// Over a plaintext connection to anywhere but this machine, so does anyone watching.
+        /// </remarks>
+        private void WarnIfTheAccountApiIsInTheClear()
+        {
+            var endpoint = new HttpEndpoint(_apiBaseAddress, _apiTimeoutSeconds);
+
+            if (!endpoint.IsUnencryptedOverNetwork) return;
+
+            Debug.LogError("[client] the account API is at " + endpoint + ", which is not "
+                + "encrypted and is not this machine. What a player types to sign in would "
+                + "be readable by anything on that network. Use https before this build "
+                + "reaches anybody.", this);
+        }
+
+        /// <summary>
         /// Builds the account stack and the session the screens submit through.
         /// </summary>
         /// <remarks>The existing pieces, in the order they depend on each other: a transport
@@ -217,6 +242,8 @@ namespace ChibiFantasy.Client
         /// of it into what a screen draws.</remarks>
         private void Compose()
         {
+            WarnIfTheAccountApiIsInTheClear();
+
             var transport = new UnityWebRequestTransport(_apiBaseAddress, _apiTimeoutSeconds);
 
             _transportLifetime = transport;
@@ -646,10 +673,25 @@ namespace ChibiFantasy.Client
             // GameWorld's flat placeholder floor. Found by name because it is authored scene
             // content with no script of its own; a test pins the name to the scene file.
             presenter.UseFallbackGround(GameObject.Find(FallbackGroundName));
+
+            // GameWorld's own sun, for the same reason as its own floor: it is there so a
+            // world with no environment yet is not black, and it has to step aside when one
+            // arrives. Left on, every environment was lit by two suns, and the second was
+            // one the day and night cycle could not reach -- so arriving in the world looked
+            // like daylight until the environment finished loading, whatever hour it was.
+            presenter.UseFallbackLight(GameObject.Find(FallbackLightName));
+
+            // And the question it waits on: has the world said what hour it is? Until it
+            // has, bringing the environment up would show its authored daylight and then
+            // correct it, which is exactly the flash this removes.
+            presenter.UseHourKnown(() => World != null && World.LastTime.SecondsPerDay > 0f);
         }
 
         /// <summary>The name of GameWorld's placeholder floor, as authored in the scene.</summary>
         public const string FallbackGroundName = "World Ground";
+
+        /// <summary>The name of GameWorld's stand-in sun, as authored in the scene.</summary>
+        public const string FallbackLightName = "Directional Light";
 
         /// <summary>
         /// The interactions a person needs: choosing a monster, hitting it, taking what it left.

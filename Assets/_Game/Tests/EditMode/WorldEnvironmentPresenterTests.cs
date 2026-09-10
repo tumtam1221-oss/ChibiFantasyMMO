@@ -1,3 +1,4 @@
+using UnityEngine;
 using ChibiFantasy.Client.World;
 using ChibiFantasy.Core;
 using NUnit.Framework;
@@ -141,6 +142,62 @@ namespace ChibiFantasy.Tests.EditMode
                 .Or.Contain("m_Name: " + ChibiFantasy.Client.ClientApplicationBootstrap.FallbackGroundName + "\r\n"),
                 "GameWorld must still contain an object named '"
                 + ChibiFantasy.Client.ClientApplicationBootstrap.FallbackGroundName + "'");
+        }
+    
+        // ---- nothing is shown before the world says what hour it is ------------------------
+
+        /// <summary>
+        /// Builds a presenter with a loader and an authoritative map, ready to load.
+        /// </summary>
+        private static WorldEnvironmentPresenter Ready(out GameObject host,
+            System.Func<bool> hourIsKnown)
+        {
+            host = new GameObject("presenter");
+
+            var loader = host.AddComponent<MapSceneLoader>();
+            var presenter = host.AddComponent<WorldEnvironmentPresenter>();
+
+            presenter.Compose(loader, null, null, () => new DefinitionId("map.harbor_town"));
+            presenter.UseHourKnown(hourIsKnown);
+
+            return presenter;
+        }
+
+        [Test]
+        public void With_no_question_supplied_the_hour_counts_as_known()
+        {
+            // A scene or a test with no connection behaves exactly as it always did.
+            WorldEnvironmentPresenter presenter = Ready(out GameObject host, null);
+
+            try
+            {
+                Assert.That(presenter.HourIsKnown, Is.True);
+            }
+            finally { Object.DestroyImmediate(host); }
+        }
+
+        [Test]
+        public void The_environment_is_not_requested_before_the_hour_is_known()
+        {
+            // The bug this pins: the environment is authored in daylight, so bringing it up
+            // before the world has said what hour it is shows a bright afternoon and then
+            // corrects it. Arriving faster never fixed that -- the wrong picture was already
+            // on screen. So it does not come up at all until the hour is in.
+            var known = false;
+
+            WorldEnvironmentPresenter presenter = Ready(out GameObject host, () => known);
+
+            try
+            {
+                Assert.That(presenter.HourIsKnown, Is.False);
+                Assert.That(presenter.RequestedMap.IsValid, Is.False,
+                    "a map was requested while the hour was still unknown");
+
+                known = true;
+
+                Assert.That(presenter.HourIsKnown, Is.True);
+            }
+            finally { Object.DestroyImmediate(host); }
         }
     }
 }

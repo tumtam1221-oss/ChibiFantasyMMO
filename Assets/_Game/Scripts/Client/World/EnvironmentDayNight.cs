@@ -79,9 +79,6 @@ namespace ChibiFantasy.Client.World
         [Range(0f, 1f)]
         [SerializeField] private float _overcastSkyLift = 0.60f;
 
-        [Tooltip("Distance fog goes this colour under cloud, so the hills grey out with the sky.")]
-        [SerializeField] private Color _overcastFogColour = new Color(0.63f, 0.67f, 0.72f);
-
         [Tooltip("How much cloud cover the skybox draws when fully overcast.")]
         [Range(0f, 1f)]
         [SerializeField] private float _overcastCloudCoverage = 0.35f;
@@ -102,9 +99,9 @@ namespace ChibiFantasy.Client.World
             + "an hour-long day is about a second.")]
         [SerializeField] private float _driftDeadband = 0.0002f;
 
-        [Tooltip("Drift larger than this, as a fraction of a day, is snapped rather than "
-            + "eased -- a machine that slept is not drift, it is a different hour.")]
-        [SerializeField] private float _driftSnapThreshold = 0.02f;
+        [Tooltip("How long a large correction takes to sweep through, in seconds. Never a "
+            + "cut: a sky that jumps reads as a bug, a sky that hurries reads as time.")]
+        [SerializeField] private float _largeCorrectionSeconds = 2f;
 
         [Tooltip("The most a correction may bend time, as a share of real time. 0.5 means the "
             + "clock runs between half speed and one and a half, never backwards.")]
@@ -117,6 +114,7 @@ namespace ChibiFantasy.Client.World
         private WorldClock _clock;
         private bool _seeded;
         private float _drift;
+        private double _driftRate;
         private WorldClientBootstrap _world;
         private float _overcast;
         private float _overcastTarget;
@@ -124,7 +122,6 @@ namespace ChibiFantasy.Client.World
         private bool _readAuthoredShadow;
         private Material _skyAuthored;
         private Material _skyRuntime;
-        private Color _fogAuthored;
         private bool _skySwapped;
 
         /// <summary>
@@ -208,14 +205,16 @@ namespace ChibiFantasy.Client.World
         /// The world repeated what time it is. Close the gap.
         /// </summary>
         /// <remarks>
-        /// <b>Eased, not snapped, when the gap is small.</b> A correction applied outright
-        /// moves the sun, and a sun that hops a little every minute is more noticeable than
-        /// the drift it is fixing. Anything under
-        /// <see cref="_driftSnapThreshold"/> is paid off gradually instead.
+        /// <b>Eased, never snapped.</b> A correction applied outright moves the sun, and a
+        /// sky that jumps is read as a bug by everyone who sees it. A small gap is nudged
+        /// away over a few seconds; a large one -- a machine that slept, a client that never
+        /// managed to ask what time it was -- sweeps through within
+        /// <see cref="_largeCorrectionSeconds"/>, which looks like time hurrying rather than
+        /// like a scene change.
         ///
-        /// <b>Snapped when it is large.</b> A laptop that was closed for an hour has not
-        /// drifted, it is simply in the wrong day; easing that would spend hours of wrong sky
-        /// being polite about it.
+        /// <b>The first answer is not a correction.</b> A client with no clock yet has
+        /// nothing to sweep from, so it is simply told; that is <see cref="Seed"/>, and it
+        /// happens as the world is being entered rather than a minute into it.
         ///
         /// <b>A changed day length is always a re-seed.</b> If an operator has changed how
         /// long a day is, the client's rate is wrong and no amount of nudging its position
@@ -243,19 +242,18 @@ namespace ChibiFantasy.Client.World
                 return;
             }
 
-            if (Mathf.Abs(difference) >= _driftSnapThreshold)
-            {
-                // Shifted rather than set, so a snap across midnight rolls the day over
-                // instead of wrapping the hour and leaving the date behind.
-                _clock.Shift(difference * perDay);
-                _drift = 0f;
-
-                Apply(TimeOfDay);
-
-                return;
-            }
-
+            // Everything is eased now, however big. What used to happen here was a snap
+            // for anything past a threshold, and a snapping sky is exactly the thing this is
+            // supposed to prevent -- the size of the gap changes how fast it closes, not
+            // whether the player sees a cut.
             _drift = difference;
+
+            // A constant rate, fixed when the gap is measured, so the correction finishes in
+            // a known time instead of approaching zero forever. Shrinking the step with the
+            // gap -- which is what a fraction-of-the-remainder does -- leaves a correction
+            // trailing a minute behind for half an hour.
+            _driftRate = System.Math.Abs(difference) * perDay
+                / System.Math.Max(0.01, _largeCorrectionSeconds);
         }
 
         private void OnEnable()
@@ -272,8 +270,26 @@ namespace ChibiFantasy.Client.World
 
             CaptureSky();
             Listen();
-            Apply(TimeOfDay);
+
+            // Only if there is something true to draw. See KnowsTheHour.
+            if (KnowsTheHour) Apply(TimeOfDay);
         }
+
+        /// <summary>
+        /// Whether this client actually knows what time the world is.
+        /// </summary>
+        /// <remarks>
+        /// <b>Out of play mode it always does.</b> There is no server to ask, and the whole
+        /// point of the authored hour is to let somebody light a scene while looking at it.
+        ///
+        /// <b>In play mode it must be told.</b> The authored hour is a guess, and a guess
+        /// that gets drawn is a lie the player watches being corrected: bright on arrival,
+        /// then dark the moment the world says otherwise. Nothing here would make that
+        /// correction smaller -- however fast the sky is asked, the wrong answer is already
+        /// on screen. So the sky is simply not touched until the hour arrives, and what the
+        /// scene was authored with stands in the meantime.
+        /// </remarks>
+        private bool KnowsTheHour => !Application.isPlaying || _seeded || _freezeForPreview;
 
         private void OnDisable()
         {
@@ -311,7 +327,6 @@ namespace ChibiFantasy.Client.World
             if (_skyAuthored == null) return;
 
             _skyRuntime = new Material(_skyAuthored) { hideFlags = HideFlags.DontSave };
-            _fogAuthored = RenderSettings.fogColor;
             RenderSettings.skybox = _skyRuntime;
             _skySwapped = true;
         }
@@ -322,7 +337,6 @@ namespace ChibiFantasy.Client.World
             if (!_skySwapped) return;
 
             RenderSettings.skybox = _skyAuthored;
-            RenderSettings.fogColor = _fogAuthored;
 
             if (_skyRuntime != null) DestroyImmediate(_skyRuntime);
 
@@ -351,22 +365,48 @@ namespace ChibiFantasy.Client.World
 
             if (_world == null) return;
 
+
             _world.OnSpawnReceived -= OnSpawn;
             _world.OnSpawnReceived += OnSpawn;
 
             _world.OnTimeReceived -= OnTime;
             _world.OnTimeReceived += OnTime;
 
-            // Whatever already arrived before this scene finished loading.
-            if (_world.LastSpawn.SecondsPerDay > 0f)
-            {
-                Seed(_world.LastSpawn.TimeOfDay, _world.LastSpawn.SecondsPerDay);
-            }
+            TakeWhateverHasArrived();
         }
 
         private void OnSpawn(ChibiFantasy.Network.WorldSpawnMessage message)
         {
             Seed(message.TimeOfDay, message.SecondsPerDay);
+        }
+
+        /// <summary>
+        /// Seeds from anything the client has already been told, if it has been told anything.
+        /// </summary>
+        /// <remarks>
+        /// <b>Asked every frame until it works, not once.</b> Checking on the way past was
+        /// the bug: this component subscribes the moment it finds the connection, and if
+        /// nothing had arrived in that particular frame it settled down to wait for the next
+        /// message -- which is the world's minute-long repeat. So the sky sat at the authored
+        /// hour, in daylight, and changed to the real one about a minute after arriving. The
+        /// check is cheap, it stops the first time it succeeds, and it no longer depends on
+        /// which of two asynchronous things happened first.
+        /// </remarks>
+        private void TakeWhateverHasArrived()
+        {
+            if (_seeded || _world == null) return;
+
+            if (_world.LastSpawn.SecondsPerDay > 0f)
+            {
+                Seed(_world.LastSpawn.TimeOfDay, _world.LastSpawn.SecondsPerDay);
+
+                return;
+            }
+
+            if (_world.LastTime.SecondsPerDay > 0f)
+            {
+                Seed(_world.LastTime.TimeOfDay, _world.LastTime.SecondsPerDay);
+            }
         }
 
         /// <summary>The world repeated the hour; close whatever gap has opened up.</summary>
@@ -375,6 +415,19 @@ namespace ChibiFantasy.Client.World
 
         private void Update()
         {
+            // Keep looking until it is found. Listening once and giving up was the bug: this
+            // scene streams in around the client connecting, and on the losing order the sky
+            // never subscribed to anything, sat at the authored hour looking like a bright
+            // morning, and then jumped to the real hour the first time the world happened to
+            // mention it -- a minute later, as a cut.
+            if (Application.isPlaying && _world == null) Listen();
+
+            // Until the hour is known, keep asking. One missed frame used to cost a minute.
+            if (Application.isPlaying && !_seeded) TakeWhateverHasArrived();
+
+            // Guessing is what caused the jump. Wait to be told instead.
+            if (!KnowsTheHour) return;
+
             if (Application.isPlaying && _clock != null)
             {
                 _clock.Advance(Time.deltaTime);
@@ -411,7 +464,18 @@ namespace ChibiFantasy.Client.World
 
             double perDay = _clock.SecondsPerDay;
             double owed = _drift * perDay;
-            double step = WorldClock.CatchUpStep(owed, deltaSeconds, _driftCatchUpFraction);
+
+            // Two speeds, and the faster one wins. A second or two out is nudged away
+            // gently; an hour out would take an hour at that rate, so a large gap is also
+            // allowed to close within _largeCorrectionSeconds. Both are sweeps.
+            double gentle = WorldClock.CatchUpStep(owed, deltaSeconds, _driftCatchUpFraction);
+
+            double sweep = System.Math.Sign(owed) * _driftRate * deltaSeconds;
+
+            double step = System.Math.Abs(sweep) > System.Math.Abs(gentle) ? sweep : gentle;
+
+            // Never past the world: overshooting would send the sky beyond the hour and back.
+            if (System.Math.Abs(step) > System.Math.Abs(owed)) step = owed;
 
             if (step == 0.0) return;
 
@@ -467,7 +531,17 @@ namespace ChibiFantasy.Client.World
         {
             if (!_skySwapped || _skyRuntime == null || _skyAuthored == null) return;
 
-            RenderSettings.fogColor = Color.Lerp(_fogAuthored, _overcastFogColour, _overcast);
+            // A clear sky is not this component's business.
+            //
+            // It used to write every value back on every frame even at zero cloud, on the
+            // grounds that lerping to zero returns the original. That is only true if the
+            // original was read correctly, and it was not: an additively loaded scene applies
+            // its lighting settings after its objects wake, so what got captured was whatever
+            // the previous scene left behind and that was then painted over a perfectly good
+            // afternoon forever. Now nothing is touched until there is actually cloud, so a
+            // clear day is exactly what the scene was authored to look like -- byte for byte,
+            // because nothing wrote to it at all.
+            if (_overcast <= 0f) return;
 
             GreyOut("_ZenithColorDay");
             GreyOut("_EquatorColorDay");

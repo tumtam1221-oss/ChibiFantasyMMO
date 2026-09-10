@@ -79668,7 +79668,7 @@ Light:
   serializedVersion: 12
   m_Type: 1
   m_Color: {r: 1, g: 0.97, b: 0.9, a: 1}
-  m_Intensity: 0.8
+  m_Intensity: 1.45
   m_Range: 10
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -79754,12 +79754,12 @@ MonoBehaviour:
   _sun: {fileID: 527089986}
   _dayVolume: {fileID: 1989778972}
   _nightVolume: {fileID: 851722231}
-  _sunIntensityDay: 0.8
+  _sunIntensityDay: 1.45
   _sunIntensityNight: 0.38
   _sunColourDay: {r: 1, g: 0.97, b: 0.9, a: 1}
   _sunColourHorizon: {r: 1, g: 0.78, b: 0.55, a: 1}
   _sunColourNight: {r: 0.55, g: 0.68, b: 1, a: 1}
-  _ambientDay: 1.28
+  _ambientDay: 1.55
   _ambientNight: 1.45
   _overcastSunScale: 0.55
   _overcastSunTint: {r: 0.82, g: 0.85, b: 0.9, a: 1}
@@ -79768,11 +79768,13 @@ MonoBehaviour:
   _overcastFadeSeconds: 4
   _overcastSkyTint: {r: 0.86, g: 0.89, b: 0.94, a: 1}
   _overcastSkyLift: 0.6
-  _overcastFogColour: {r: 0.63, g: 0.67, b: 0.72, a: 1}
   _overcastCloudCoverage: 0.35
   _editorTimeOfDay: 0.35
   _freezeForPreview: 0
   _previewTimeOfDay: 0.05
+  _driftDeadband: 0.0002
+  _largeCorrectionSeconds: 2
+  _driftCatchUpFraction: 0.5
 --- !u!114 &527089989
 MonoBehaviour:
   m_ObjectHideFlags: 0

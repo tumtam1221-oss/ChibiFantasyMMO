@@ -46,7 +46,13 @@ namespace ChibiFantasy.Client.World
     {
         private MapSceneLoader _loader;
         private System.Func<DefinitionId> _authoritativeMap;
+        private System.Func<bool> _hourIsKnown;
+        private float _waitedForHour;
+
+        /// <summary>How long the environment will wait to be told the hour before opening anyway.</summary>
+        private const float HourPatienceSeconds = 3f;
         private GameObject _fallbackGround;
+        private GameObject _fallbackLight;
 
         private DefinitionId _requested;
         private Coroutine _running;
@@ -68,6 +74,57 @@ namespace ChibiFantasy.Client.World
         public void UseFallbackGround(GameObject fallbackGround)
         {
             _fallbackGround = fallbackGround;
+            ApplyFallbackGround();
+        }
+
+        /// <summary>The stand-in sun this shows and hides, or null when there is none.</summary>
+        public GameObject FallbackLight => _fallbackLight;
+
+        /// <summary>Whether the world has told this client what hour it is.</summary>
+        /// <remarks>True when nobody supplied the question, so a test or a scene with no
+        /// connection behaves as it always did.</remarks>
+        public bool HourIsKnown => _hourIsKnown == null || _hourIsKnown();
+
+        /// <summary>
+        /// Supplies the "do we know what time it is" question this waits on.
+        /// </summary>
+        /// <remarks>
+        /// <b>Why the environment waits for the clock.</b> The environment scene is authored
+        /// in daylight -- something has to be saved in it -- and its sky only becomes the
+        /// world's sky once the hour arrives. Bringing it up before then shows the player a
+        /// bright afternoon and then corrects it, which is the whole of the "why is it bright
+        /// and then suddenly night" problem, and no amount of arriving-faster removes it:
+        /// whatever the gap is, the wrong picture was already on screen.
+        ///
+        /// <b>The same rule this class already lives by.</b> It refuses to present a map
+        /// until the server says which map. This is the second half of the same sentence:
+        /// and until the world says what hour. Readiness, not delays -- so there is no timer
+        /// here and nothing to tune.
+        /// </remarks>
+        public void UseHourKnown(System.Func<bool> hourIsKnown)
+        {
+            _hourIsKnown = hourIsKnown;
+        }
+
+        /// <summary>
+        /// Hands over GameWorld's own sun so it can step aside for a real environment.
+        /// </summary>
+        /// <remarks>
+        /// <b>The floor was given this treatment and the light was not.</b> GameWorld carries
+        /// a directional light so that a world with no environment yet is not pitch black.
+        /// It was left switched on afterwards, which meant every environment was lit by its
+        /// own sun and by a second one at full strength that nothing could reach: the day and
+        /// night cycle would dim its sun to a quarter and the scene would barely change,
+        /// and arriving in the world looked like bright daylight until the environment
+        /// finished loading and then abruptly changed.
+        ///
+        /// <b>Same rule as the floor, deliberately.</b> Both are stand-ins for something the
+        /// environment brings, both are wanted only while it is absent, and both come back
+        /// when it goes. One rule, one place.
+        /// </remarks>
+        public void UseFallbackLight(GameObject fallbackLight)
+        {
+            _fallbackLight = fallbackLight;
             ApplyFallbackGround();
         }
 
@@ -137,6 +194,17 @@ namespace ChibiFantasy.Client.World
             // new authoritative map is not blocked by the last load's ghost.
             if (_running != null && !_loader.IsLoading) _running = null;
 
+            // Waited for, but never indefinitely. The hour arrives with the admission, so
+            // this is a frame or two in practice -- and if it somehow does not arrive, a
+            // world with the wrong sky for a moment beats a player standing on an empty
+            // plain forever, which is what a hard gate here actually produced.
+            if (!HourIsKnown && _waitedForHour < HourPatienceSeconds)
+            {
+                _waitedForHour += Time.deltaTime;
+
+                return;
+            }
+
             DefinitionId map = _authoritativeMap();
 
             if (!Decide(map, _loader.LoadedMap, _requested, _loader.IsLoading, _running != null))
@@ -161,17 +229,26 @@ namespace ChibiFantasy.Client.World
 
         private void ApplyFallbackGround()
         {
-            if (_fallbackGround == null) return;
-
             bool show = ShowFallbackGround(_loader != null ? _loader.LoadedMap : DefinitionId.None);
 
-            if (_fallbackGround.activeSelf != show) _fallbackGround.SetActive(show);
+            if (_fallbackGround != null && _fallbackGround.activeSelf != show)
+            {
+                _fallbackGround.SetActive(show);
+            }
+
+            if (_fallbackLight != null && _fallbackLight.activeSelf != show)
+            {
+                _fallbackLight.SetActive(show);
+            }
         }
 
         private void OnDestroy()
         {
-            // Leaving the world takes the environment with it; the floor must not stay hidden.
+            // Leaving the world takes the environment with it; neither stand-in may stay
+            // hidden, or the next world with no environment is a black screen with no floor.
             if (_fallbackGround != null && !_fallbackGround.activeSelf) _fallbackGround.SetActive(true);
+
+            if (_fallbackLight != null && !_fallbackLight.activeSelf) _fallbackLight.SetActive(true);
         }
     }
 }

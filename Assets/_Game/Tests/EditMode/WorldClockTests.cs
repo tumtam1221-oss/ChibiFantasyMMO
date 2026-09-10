@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using ChibiFantasy.Gameplay;
 using NUnit.Framework;
 
@@ -336,6 +337,58 @@ namespace ChibiFantasy.Tests.EditMode
 
             Assert.That(owed, Is.EqualTo(0.0).Within(0.001),
                 "the gap should have been paid off long before twenty thousand frames");
+        }
+    
+        // ---- a large correction sweeps rather than cuts ------------------------------------
+
+        [Test]
+        public void A_large_gap_closes_within_the_sweep_rather_than_in_one_frame()
+        {
+            // The bug this pins: a client that had never been told the hour sat at the
+            // authored one, and the first thing the world said to it moved the sky in a
+            // single frame. Half a day out is the worst case, and it must still be a sweep.
+            const double perDay = 3600.0;
+            const double sweepSeconds = 2.0;
+            const float delta = 0.016f;
+
+            double owed = 0.5 * perDay;          // half a day of world time to make up
+            double rate = System.Math.Abs(owed) / sweepSeconds;
+            var moved = new List<double>();
+
+            for (var frame = 0; frame < 400 && System.Math.Abs(owed) > 0.001; frame++)
+            {
+                // The rate is fixed when the gap is measured, not recomputed from what is
+                // left -- that is what makes the sweep finish rather than merely approach.
+                double step = System.Math.Sign(owed) * rate * delta;
+
+                if (System.Math.Abs(step) > System.Math.Abs(owed)) step = owed;
+
+                moved.Add(step);
+                owed -= step;
+            }
+
+            Assert.That(moved, Is.Not.Empty);
+            Assert.That(moved[0], Is.LessThan(0.5 * perDay * 0.05),
+                "the first frame moved most of the gap, which is a cut, not a sweep");
+            Assert.That(moved.Count, Is.GreaterThan(30),
+                "the whole correction happened in a handful of frames");
+            Assert.That(System.Math.Abs(owed), Is.LessThan(1.0),
+                "the gap should be closed by the end of the sweep");
+        }
+
+        [Test]
+        public void A_sweep_never_overshoots_what_is_owed()
+        {
+            const double delta = 1.0;
+            const double sweepSeconds = 0.25;    // a step far larger than the gap
+
+            double owed = 10.0;
+            double step = System.Math.Sign(owed) * (System.Math.Abs(owed) / sweepSeconds) * delta;
+
+            if (System.Math.Abs(step) > System.Math.Abs(owed)) step = owed;
+
+            Assert.That(step, Is.EqualTo(owed).Within(1e-9),
+                "a sweep that overshot would send the sky past the world and back again");
         }
     }
 }

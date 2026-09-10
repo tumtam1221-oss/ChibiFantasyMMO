@@ -38,6 +38,29 @@ namespace ChibiFantasy.Backend
 
         public bool IsConfigured => !string.IsNullOrEmpty(BaseAddress);
 
+        /// <summary>Whether this address carries its traffic in the clear.</summary>
+        public bool IsPlaintext => ChibiFantasy.Core.NetworkAddress.IsPlaintext(BaseAddress);
+
+        /// <summary>Whether this address never leaves the machine.</summary>
+        public bool IsLoopback => ChibiFantasy.Core.NetworkAddress.IsLoopback(BaseAddress);
+
+        /// <summary>
+        /// Whether using this address would put the traffic on a network in the clear.
+        /// </summary>
+        /// <remarks>
+        /// <b>Asked here, answered in Core.</b> The reasoning lives in
+        /// <see cref="ChibiFantasy.Core.NetworkAddress"/> rather than in this file, because
+        /// the backend seam is deliberately kept free of protocol literals -- exactly one
+        /// file in it may name a transport, so that nothing else quietly becomes one. Whether
+        /// an address is encrypted is a fact about the address, not about HTTP.
+        ///
+        /// <b>Reported, not enforced.</b> A value type is the wrong place to decide whether a
+        /// process may run; it is the right place to know the answer. Whoever composes the
+        /// process refuses, and can be told to allow it deliberately.
+        /// </remarks>
+        public bool IsUnencryptedOverNetwork =>
+            ChibiFantasy.Core.NetworkAddress.IsUnencryptedOverNetwork(BaseAddress);
+
         /// <summary>
         /// Joins the base address to a path.
         /// </summary>

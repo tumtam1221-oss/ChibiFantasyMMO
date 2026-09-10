@@ -307,9 +307,50 @@ namespace ChibiFantasy.Tests.EditMode
 
             Assert.That(endpoint.ToString(), Is.EqualTo("http://127.0.0.1:8080"));
 
-            // The type has exactly two members. A password could not be stored on it if
-            // somebody tried.
-            Assert.That(typeof(HttpEndpoint).GetProperties().Length, Is.EqualTo(3));
+            // Named rather than counted. A count says "six things", which the next honest
+            // addition changes and which never said what the six were; this says exactly
+            // which six, so a seventh called Password fails and so does a rename.
+            var properties = new System.Collections.Generic.List<string>();
+
+            foreach (System.Reflection.PropertyInfo property in
+                typeof(HttpEndpoint).GetProperties())
+            {
+                properties.Add(property.Name);
+            }
+
+            properties.Sort(System.StringComparer.Ordinal);
+
+            Assert.That(properties, Is.EqualTo(new[]
+            {
+                "BaseAddress",
+                "IsConfigured",
+                "IsLoopback",
+                "IsPlaintext",
+                "IsUnencryptedOverNetwork",
+                "TimeoutSeconds",
+            }));
+
+            // A property count would never have caught a field: `public string Password;`
+            // is not a property and would have slipped straight past it.
+            //
+            // An instance field is where a credential would live, so there must be none. A
+            // compile-time constant is not somewhere a runtime secret can be put -- but a
+            // constant *string* is exactly how a hardcoded one would look, so those are
+            // refused too, and an int timeout is left alone.
+            foreach (System.Reflection.FieldInfo field in typeof(HttpEndpoint).GetFields(
+                System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.Static))
+            {
+                Assert.That(field.IsStatic, Is.True,
+                    "instance field " + field.Name + " is somewhere a credential could live");
+
+                Assert.That(field.IsLiteral, Is.True,
+                    "static field " + field.Name + " is writable at runtime");
+
+                Assert.That(field.FieldType, Is.Not.EqualTo(typeof(string)),
+                    "constant string " + field.Name + " is how a hardcoded secret looks");
+            }
         }
     }
 }

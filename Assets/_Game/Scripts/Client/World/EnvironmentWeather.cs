@@ -69,6 +69,7 @@ namespace ChibiFantasy.Client.World
         private Transform _follow;
         private WorldWeather _showing = WorldWeather.Clear;
         private WorldWeather _falling = WorldWeather.Clear;
+        private bool _toldBySky;
         private float _dropsIn;
         private bool _waitingForCloud;
 
@@ -112,13 +113,22 @@ namespace ChibiFantasy.Client.World
 
         private void Update()
         {
+            // Same reason the sky keeps looking for it: this scene streams in around the
+            // client connecting, and listening once and giving up leaves the weather deaf.
+            if (Application.isPlaying && _world == null) Listen();
+
             Follow();
 
             WorldWeather wanted = _freezeForPreview ? _previewWeather : Current();
 
             // A preview flip is somebody looking at the art; make them wait eight seconds for
             // it and they will think the switch is broken.
-            if (wanted != _showing) Show(wanted, immediate: _freezeForPreview);
+            //
+            // The world's first answer is not a change either. Walking into a downpour and
+            // standing in sunshine while the clouds politely gather is not weather arriving,
+            // it is the wrong weather being corrected -- so the first one is worn at once and
+            // only what happens afterwards is led up to.
+            if (wanted != _showing) Show(wanted, immediate: _freezeForPreview || !_toldBySky);
 
             if (!_waitingForCloud) return;
 
@@ -158,14 +168,25 @@ namespace ChibiFantasy.Client.World
             _world.OnSpawnReceived -= OnSpawn;
             _world.OnSpawnReceived += OnSpawn;
 
-            // Already spawned before this component woke up: catch up without a build-up.
+            // Already told before this component woke up: wear it now, without a build-up.
+            _toldBySky = true;
+
             if (_world.LastWeather != (int)_showing) Show((WorldWeather)_world.LastWeather, true);
         }
 
         /// <summary>
         /// The weather turned while this client was watching, so let the cloud arrive first.
         /// </summary>
-        private void OnWeather(int weather) => Show((WorldWeather)weather, immediate: false);
+        private void OnWeather(int weather)
+        {
+            // The first thing the world says is what it is already doing; only the ones
+            // after it are a change worth announcing with cloud first.
+            bool arriving = !_toldBySky;
+
+            _toldBySky = true;
+
+            Show((WorldWeather)weather, immediate: arriving);
+        }
 
         /// <summary>
         /// Arriving in the world. Whatever it is doing here, it has been doing for a while.
@@ -174,7 +195,11 @@ namespace ChibiFantasy.Client.World
         /// seconds in the dry for it to start would look like the rain was broken, not like
         /// weather approaching.</remarks>
         private void OnSpawn(ChibiFantasy.Network.WorldSpawnMessage message)
-            => Show((WorldWeather)message.Weather, immediate: true);
+        {
+            _toldBySky = true;
+
+            Show((WorldWeather)message.Weather, immediate: true);
+        }
 
         /// <summary>Keeps the emitters over whoever is looking.</summary>
         private void Follow()
@@ -327,6 +352,16 @@ namespace ChibiFantasy.Client.World
             main.simulationSpace = ParticleSystemSimulationSpace.World;
             main.gravityModifier = 0f;
             main.playOnAwake = false;
+
+            // Always simulated, never culled.
+            //
+            // The default culling mode pauses a looping system whose bounds are off screen,
+            // and this one's bounds start as an empty box nine metres above the camera --
+            // which is off screen. So it was paused before it made a single drop, and with no
+            // drops its bounds never grew, so it stayed off screen, so it stayed paused. The
+            // system reported itself playing and emitting the whole time and produced nothing
+            // at all: rain that could only ever fall if it were already falling.
+            main.cullingMode = ParticleSystemCullingMode.AlwaysSimulate;
 
             ParticleSystem.EmissionModule emission = system.emission;
             emission.rateOverTime = count / lifetime;
