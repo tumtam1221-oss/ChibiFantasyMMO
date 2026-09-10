@@ -591,7 +591,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cbb4002b7498d48408d32bf45230100a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.UI.WeatherDevPanel
-  _show: 1
+  _show: 0
 --- !u!4 &1369343781
 Transform:
   m_ObjectHideFlags: 0
