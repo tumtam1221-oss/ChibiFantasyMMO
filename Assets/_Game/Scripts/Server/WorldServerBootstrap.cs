@@ -61,6 +61,10 @@ namespace ChibiFantasy.Server
             + "is set to -- see RegisterWeatherCommands.")]
         [SerializeField] private bool _allowWeatherCommands = true;
 
+        [Tooltip("How often the world repeats what time it is, in seconds. Zero never repeats "
+            + "it, which leaves clients to drift.")]
+        [SerializeField] private float _timeBroadcastSeconds = 60f;
+
         [Tooltip("Start listening as soon as this component wakes.")]
         [SerializeField] private bool _startOnAwake = true;
 
@@ -702,7 +706,86 @@ namespace ChibiFantasy.Server
         {
             if (!IsListening || Simulation == null) return;
 
-            Simulation.Tick(Time.deltaTime);
+            float calendar = MeasureRealSeconds();
+
+            Simulation.Tick(Time.deltaTime, calendar);
+
+            BroadcastTimeOnSchedule(calendar);
+        }
+
+        /// <summary>
+        /// How much real time has passed since the last tick, whatever the engine reported.
+        /// </summary>
+        /// <remarks>
+        /// <b>A stopwatch, not the frame delta.</b> Unity clamps the delta it reports to the
+        /// project's Maximum Allowed Timestep -- a third of a second here -- so a stall longer
+        /// than that is simply not counted. For movement that clamp is protective. For the
+        /// calendar it is a leak: every hitch loses world time permanently, and a server left
+        /// up for days would drift a long way from the hour it claims a day takes.
+        ///
+        /// <b>Monotonic on purpose.</b> A stopwatch cannot be moved by an operator setting the
+        /// machine's clock or by daylight saving, both of which would otherwise jump or
+        /// reverse the world's calendar.
+        ///
+        /// <b>The first tick reports nothing.</b> There is no previous reading to subtract, so
+        /// it starts the measurement rather than guessing at one.
+        /// </remarks>
+        private float MeasureRealSeconds()
+        {
+            if (!_realTime.IsRunning)
+            {
+                _realTime.Start();
+                _lastRealSeconds = 0.0;
+
+                return 0f;
+            }
+
+            double now = _realTime.Elapsed.TotalSeconds;
+            double elapsed = now - _lastRealSeconds;
+
+            _lastRealSeconds = now;
+
+            // A stall long enough to matter is real time that genuinely passed, so it is not
+            // clamped -- but a wildly large step is more likely a suspended process than a
+            // world that should leap forward, so it is capped at a minute.
+            if (elapsed < 0.0) return 0f;
+
+            return (float)System.Math.Min(elapsed, 60.0);
+        }
+
+        private readonly System.Diagnostics.Stopwatch _realTime = new System.Diagnostics.Stopwatch();
+        private double _lastRealSeconds;
+
+        private float _sinceTimeBroadcast;
+
+        /// <summary>
+        /// Repeats the world's time to everyone, every so often.
+        /// </summary>
+        /// <remarks>
+        /// <b>Not every tick.</b> The clock is arithmetic a client can run itself, so this is
+        /// a correction rather than a feed -- sending it sixty times a second would spend
+        /// bandwidth to replace a calculation that was already right.
+        ///
+        /// <b>Not once, either.</b> That was the previous behaviour, and independent clocks
+        /// drift: whatever a client's frame rate does to its own counting is permanent until
+        /// it logs in again.
+        /// </remarks>
+        private void BroadcastTimeOnSchedule(float deltaSeconds)
+        {
+            if (_timeBroadcastSeconds <= 0f) return;
+            if (_networkManager == null || !_networkManager.ServerManager.Started) return;
+
+            _sinceTimeBroadcast += deltaSeconds;
+
+            if (_sinceTimeBroadcast < _timeBroadcastSeconds) return;
+
+            _sinceTimeBroadcast = 0f;
+
+            _networkManager.ServerManager.Broadcast(new WorldTimeMessage
+            {
+                TimeOfDay = Simulation.Clock.TimeOfDay,
+                SecondsPerDay = (float)Simulation.Clock.SecondsPerDay,
+            });
         }
 
         /// <summary>Supplies the authored content this server places arrivals against.</summary>

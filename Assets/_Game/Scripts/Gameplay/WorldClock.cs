@@ -108,6 +108,68 @@ namespace ChibiFantasy.Gameplay
         }
 
         /// <summary>
+        /// Moves the clock by a signed number of seconds.
+        /// </summary>
+        /// <remarks>
+        /// <b>Why this exists rather than reusing SetTimeOfDay.</b> That method keeps the day
+        /// and replaces the hour, which is right for "put the world at dawn" and wrong for
+        /// "nudge the world forward two seconds": a nudge from 23:59 to 00:01 would wrap the
+        /// hour while keeping yesterday's day number, sending the clock back a whole day and
+        /// leaving the day counter stuck. Adding to the elapsed total instead gets midnight
+        /// right for free, because the day is derived from it rather than patched alongside.
+        ///
+        /// <b>It refuses to go before the first day.</b> Not a real case with a bounded
+        /// correction, but a negative elapsed would make the day count negative and every
+        /// wrap wrong, which is not a failure worth leaving reachable.
+        /// </remarks>
+        public void Shift(double seconds)
+        {
+            if (double.IsNaN(seconds) || double.IsInfinity(seconds)) return;
+
+            _elapsed += seconds;
+
+            if (_elapsed < 0.0) _elapsed = 0.0;
+        }
+
+        /// <summary>
+        /// How far to move the clock this frame while closing a gap, in seconds.
+        /// </summary>
+        /// <remarks>
+        /// <b>The correction is capped by the time that actually passed.</b> A client running
+        /// ahead of the world has to be slowed down, and the obvious way -- subtract the whole
+        /// error -- runs the clock backwards, which is a worse thing to look at than the drift
+        /// it fixes: the sun visibly reverses. Capping the step at a fraction of the frame's
+        /// own time means the clock is only ever sped up or slowed down, between
+        /// <c>1 - fraction</c> and <c>1 + fraction</c> of normal speed, and never stops or
+        /// reverses.
+        ///
+        /// <paramref name="fraction"/> is held below one for that last guarantee: at exactly
+        /// one, a client running ahead would freeze until the world caught up with it.
+        /// </remarks>
+        public static double CatchUpStep(double owedSeconds, double deltaSeconds,
+            double fraction)
+        {
+            if (deltaSeconds <= 0.0 || double.IsNaN(deltaSeconds)
+                || double.IsInfinity(deltaSeconds)) return 0.0;
+
+            if (double.IsNaN(owedSeconds) || double.IsInfinity(owedSeconds)) return 0.0;
+
+            double limit = deltaSeconds * Clamp(fraction, 0.0, 0.9);
+
+            if (owedSeconds > limit) return limit;
+            if (owedSeconds < -limit) return -limit;
+
+            return owedSeconds;
+        }
+
+        private static double Clamp(double value, double low, double high)
+        {
+            if (double.IsNaN(value)) return low;
+
+            return value < low ? low : (value > high ? high : value);
+        }
+
+        /// <summary>
         /// Which phase a given 0..1 time falls in.
         /// </summary>
         /// <remarks>
@@ -163,6 +225,28 @@ namespace ChibiFantasy.Gameplay
         /// Returned as a plain number because this assembly may not name a Quaternion; the
         /// presenter decides which axis it turns.
         /// </remarks>
+        /// <summary>
+        /// How far apart two moments in the day are, taking the short way round.
+        /// </summary>
+        /// <remarks>
+        /// <b>Midnight is the trap.</b> A client sitting at 0.99 and a server at 0.01 are two
+        /// minutes apart, not twenty-three hours and fifty-eight. Subtracting them plainly
+        /// gives -0.98, and a re-sync built on that would decide the client was most of a day
+        /// wrong and yank the sun across the sky every time the world passed midnight.
+        ///
+        /// The result is signed and never more than half a day in either direction: positive
+        /// when <paramref name="to"/> is ahead of <paramref name="from"/>.
+        /// </remarks>
+        public static float ShortestDifference(float from, float to)
+        {
+            double difference = Wrap01(to) - Wrap01(from);
+
+            if (difference > 0.5) difference -= 1.0;
+            else if (difference < -0.5) difference += 1.0;
+
+            return (float)difference;
+        }
+
         public static float SunDegreesAt(float timeOfDay) => (float)(Wrap01(timeOfDay) * 360.0);
 
         private static double Wrap01(double value)

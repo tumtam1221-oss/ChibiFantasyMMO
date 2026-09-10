@@ -35,18 +35,43 @@ namespace ChibiFantasy.Gameplay
     /// </remarks>
     public sealed class WeatherDirector
     {
-        /// <summary>How long a spell of weather lasts, before the next roll.</summary>
-        public const float DefaultMinimumSeconds = 180f;
+        /// <summary>The shortest spell of clear sky before the weather is rolled again.</summary>
+        public const float DefaultClearMinimumSeconds = 1200f;
 
-        /// <summary>The longest a single spell runs before the sky is rolled again.</summary>
-        public const float DefaultMaximumSeconds = 480f;
+        /// <summary>The longest spell of clear sky before the next roll.</summary>
+        public const float DefaultClearMaximumSeconds = 2700f;
 
-        /// <summary>How often a roll comes up rain rather than clear.</summary>
+        /// <summary>
+        /// The shortest a shower runs. Fifteen minutes, and deliberately not three.
+        /// </summary>
+        /// <remarks>
+        /// <b>Rain gets its own length because it is not the same event as clear sky.</b>
+        /// Rolling one duration for both meant a shower ran for a clear-sky spell and then
+        /// took its chances -- three minutes of rain that could stop as abruptly as it
+        /// started, which reads as a bug in the weather rather than as weather. A day here is
+        /// one real hour, so this is a wet afternoon rather than a passing cloud.
+        /// </remarks>
+        public const float DefaultRainMinimumSeconds = 900f;
+
+        /// <summary>The longest a shower runs before the sky is rolled again.</summary>
+        public const float DefaultRainMaximumSeconds = 1800f;
+
+        /// <summary>
+        /// How often a roll comes up rain rather than clear.
+        /// </summary>
+        /// <remarks>
+        /// <b>This is a chance per roll, not a share of the day.</b> Because a shower lasts
+        /// far longer than a clear spell, the share of time spent wet is much higher than this
+        /// number: with the defaults above it works out around a fifth of the time. Raising
+        /// the rain length without lowering this is what turns a harbour town into a swamp.
+        /// </remarks>
         public const float DefaultRainChance = 0.25f;
 
         private readonly Random _random;
-        private readonly float _minimumSeconds;
-        private readonly float _maximumSeconds;
+        private readonly float _clearMinimumSeconds;
+        private readonly float _clearMaximumSeconds;
+        private readonly float _rainMinimumSeconds;
+        private readonly float _rainMaximumSeconds;
         private readonly float _rainChance;
 
         private WorldWeather _weather;
@@ -55,18 +80,24 @@ namespace ChibiFantasy.Gameplay
 
         /// <param name="random">Injected so the sequence is reproducible in a test.</param>
         /// <param name="rainChance">0 disables rain entirely, which is what a desert map wants.</param>
+        /// <param name="clearMinimumSeconds">How long dry weather lasts, at the shortest.</param>
+        /// <param name="rainMinimumSeconds">How long a shower lasts, at the shortest.</param>
         public WeatherDirector(Random random = null,
             float rainChance = DefaultRainChance,
-            float minimumSeconds = DefaultMinimumSeconds,
-            float maximumSeconds = DefaultMaximumSeconds,
+            float clearMinimumSeconds = DefaultClearMinimumSeconds,
+            float clearMaximumSeconds = DefaultClearMaximumSeconds,
+            float rainMinimumSeconds = DefaultRainMinimumSeconds,
+            float rainMaximumSeconds = DefaultRainMaximumSeconds,
             WorldWeather starting = WorldWeather.Clear)
         {
             _random = random ?? new Random();
             _rainChance = Clamp01(rainChance);
-            _minimumSeconds = Math.Max(1f, minimumSeconds);
-            _maximumSeconds = Math.Max(_minimumSeconds, maximumSeconds);
+            _clearMinimumSeconds = Math.Max(1f, clearMinimumSeconds);
+            _clearMaximumSeconds = Math.Max(_clearMinimumSeconds, clearMaximumSeconds);
+            _rainMinimumSeconds = Math.Max(1f, rainMinimumSeconds);
+            _rainMaximumSeconds = Math.Max(_rainMinimumSeconds, rainMaximumSeconds);
             _weather = starting;
-            _remaining = RollDuration();
+            _remaining = RollDuration(_weather);
         }
 
         /// <summary>What the sky is doing now.</summary>
@@ -100,9 +131,16 @@ namespace ChibiFantasy.Gameplay
 
             if (_remaining > 0f) return;
 
-            _remaining = RollDuration();
+            // The weather is chosen before its length, because the length depends on which
+            // weather it turned out to be. Rolling the duration first -- as this used to --
+            // handed a shower whatever spell a clear sky would have got.
+            WorldWeather next = _random.NextDouble() < _rainChance
+                ? WorldWeather.Rain
+                : WorldWeather.Clear;
 
-            Set(_random.NextDouble() < _rainChance ? WorldWeather.Rain : WorldWeather.Clear);
+            _remaining = RollDuration(next);
+
+            Set(next);
         }
 
         /// <summary>
@@ -124,7 +162,7 @@ namespace ChibiFantasy.Gameplay
         public void Release()
         {
             _held = false;
-            _remaining = RollDuration();
+            _remaining = RollDuration(_weather);
         }
 
         private void Set(WorldWeather weather)
@@ -136,10 +174,24 @@ namespace ChibiFantasy.Gameplay
             Changed?.Invoke(weather);
         }
 
-        private float RollDuration()
+        /// <summary>
+        /// How long this weather gets before the sky is rolled again.
+        /// </summary>
+        /// <remarks>Snow takes the clear spell rather than the rain one. It is normally held
+        /// by a festival and never counting down at all; the only time this is asked about
+        /// snow is the moment after a festival is released, and a released festival should
+        /// hand the world back promptly rather than half an hour later.</remarks>
+        private float RollDuration(WorldWeather weather)
         {
-            return _minimumSeconds
-                + ((float)_random.NextDouble() * (_maximumSeconds - _minimumSeconds));
+            float minimum = weather == WorldWeather.Rain
+                ? _rainMinimumSeconds
+                : _clearMinimumSeconds;
+
+            float maximum = weather == WorldWeather.Rain
+                ? _rainMaximumSeconds
+                : _clearMaximumSeconds;
+
+            return minimum + ((float)_random.NextDouble() * (maximum - minimum));
         }
 
         private static float Clamp01(float value)

@@ -192,7 +192,26 @@ namespace ChibiFantasy.Server
         /// <remarks>Time arrives as an argument, matching every authority underneath. The
         /// checks are cheap -- a revision comparison per character -- and the work behind
         /// them happens only when something actually moved.</remarks>
-        public void Tick(float deltaSeconds)
+        public void Tick(float deltaSeconds) => Tick(deltaSeconds, deltaSeconds);
+
+        /// <summary>
+        /// One tick, where the calendar is allowed to run on a different measure of time to
+        /// the simulation.
+        /// </summary>
+        /// <remarks>
+        /// <b>Why the sky gets its own number.</b> The engine clamps a frame's reported delta
+        /// -- a third of a second in this project -- so a server that stalls for two seconds
+        /// is told a third of one went by. That is the right answer for movement and combat,
+        /// which must not resolve two seconds of the world in a single step, and the wrong
+        /// answer for a calendar, which has just lost time it can never get back. Left alone,
+        /// every hitch permanently lengthens the day, and "one real hour is one game day"
+        /// slowly stops being true on a long-running server.
+        ///
+        /// <b>Still an argument, not a clock read.</b> This does not reach for the wall clock
+        /// itself; whoever drives the server measures it and passes it in, so a test can still
+        /// run a week of world time in a millisecond.
+        /// </remarks>
+        public void Tick(float deltaSeconds, float calendarSeconds)
         {
             Ticks++;
 
@@ -200,11 +219,11 @@ namespace ChibiFantasy.Server
 
             // 0. The sky. First because it is the cheapest thing here and because every
             //    other system is entitled to ask what time it is during its own tick.
-            _clock.Advance(deltaSeconds);
+            _clock.Advance(calendarSeconds);
 
             // 0b. And the weather, which announces itself when it turns rather than being
             //     polled. Nothing downstream reads it, so its place in the order is free.
-            _weather.Tick(deltaSeconds);
+            _weather.Tick(calendarSeconds);
 
             // 1. Status first: an effect that expires this tick must be gone before
             //    anything asks what modifiers are in force.

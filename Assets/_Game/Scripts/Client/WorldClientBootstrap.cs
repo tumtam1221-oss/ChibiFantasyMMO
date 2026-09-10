@@ -87,6 +87,12 @@ namespace ChibiFantasy.Client
         /// <summary>Raised when the server says the sky turned.</summary>
         public event Action<int> OnWeatherReceived;
 
+        /// <summary>The last time the world reported, or a default before it has said anything.</summary>
+        public WorldTimeMessage LastTime { get; private set; }
+
+        /// <summary>Raised when the world repeats what time it is.</summary>
+        public event Action<WorldTimeMessage> OnTimeReceived;
+
         private void Awake()
         {
             _networkManager = GetComponent<NetworkManager>();
@@ -116,6 +122,7 @@ namespace ChibiFantasy.Client
             _networkManager.ClientManager.RegisterBroadcast<WorldJoinResponseMessage>(OnJoinResponse);
             _networkManager.ClientManager.RegisterBroadcast<WorldSpawnMessage>(OnSpawn);
             _networkManager.ClientManager.RegisterBroadcast<WorldWeatherMessage>(OnWeather);
+            _networkManager.ClientManager.RegisterBroadcast<WorldTimeMessage>(OnTime);
             _networkManager.ClientManager.OnClientConnectionState += OnConnectionState;
 
             _registered = true;
@@ -286,6 +293,19 @@ namespace ChibiFantasy.Client
             LastWeather = message.Weather;
 
             OnWeatherReceived?.Invoke(message.Weather);
+        }
+
+        /// <summary>
+        /// The world said what time it is.
+        /// </summary>
+        /// <remarks>Kept as well as raised, for the same reason the weather is: a presenter
+        /// that loads between two of these can read the last one rather than run on a stale
+        /// clock until the next minute comes round.</remarks>
+        private void OnTime(WorldTimeMessage message, Channel channel)
+        {
+            LastTime = message;
+
+            OnTimeReceived?.Invoke(message);
         }
 
         private void OnDestroy()

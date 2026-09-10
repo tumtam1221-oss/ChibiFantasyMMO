@@ -28,6 +28,27 @@ namespace ChibiFantasy.Tests.EditMode
 
         private const string ServerScene = "Assets/_Game/Scenes/World/World_Server.unity";
 
+        /// <summary>
+        /// Asset Store packages the world uses that this repository deliberately does not carry.
+        /// </summary>
+        /// <remarks>
+        /// <b>These are licensed, not missing.</b> Redistributing them through this repository
+        /// is not something the licence allows, so each machine installs them from the Asset
+        /// Store instead. That is a real cost -- a fresh clone will not open the town until
+        /// somebody does it -- and listing them here is what makes that cost visible rather
+        /// than a mystery about broken pink materials.
+        ///
+        /// <b>This is not a way to excuse an untracked file.</b> A path being under one of
+        /// these roots is not enough on its own: git has to actually be ignoring it, which is
+        /// checked. A project-owned asset that was simply never added still fails, which is the
+        /// thing this test exists to catch.
+        /// </remarks>
+        private static readonly string[] LicensedPackages =
+        {
+            "Assets/ToonScapes/",
+            "Assets/Kevin Iglesias/",
+        };
+
         private readonly List<Object> _created = new List<Object>();
 
         [TearDown]
@@ -467,21 +488,59 @@ namespace ChibiFantasy.Tests.EditMode
         public void EveryAssetTheShippedWorldNeedsIsTracked()
         {
             // The check that "works on this machine" cannot make: git, not the file system.
-            var untracked = new List<string>();
+            var missing = new List<string>();
 
             foreach (string dependency in Dependencies())
             {
                 if (!dependency.StartsWith("Assets/")) continue;
 
-                if (!IsTracked(dependency)) untracked.Add(dependency);
-
-                string meta = dependency + ".meta";
-
-                if (!IsTracked(meta)) untracked.Add(meta);
+                Account(dependency, missing);
+                Account(dependency + ".meta", missing);
             }
 
-            Assert.That(untracked, Is.Empty,
-                "a fresh clone would be missing: " + string.Join(", ", untracked));
+            Assert.That(missing, Is.Empty,
+                "a fresh clone would be missing: " + string.Join(", ", missing));
+        }
+
+        /// <summary>
+        /// Records a dependency a fresh clone would not have.
+        /// </summary>
+        /// <remarks>Tracked is the normal answer. The only other acceptable one is a file
+        /// under a declared licensed package that git is genuinely ignoring -- both halves,
+        /// so that neither a stale entry in <see cref="LicensedPackages"/> nor a file that
+        /// merely happens to sit in that folder can hide a real omission.</remarks>
+        private static void Account(string path, List<string> missing)
+        {
+            if (IsTracked(path)) return;
+
+            if (IsUnderLicensedPackage(path) && IsIgnored(path)) return;
+
+            missing.Add(path);
+        }
+
+        private static bool IsUnderLicensedPackage(string path)
+        {
+            foreach (string root in LicensedPackages)
+            {
+                if (path.StartsWith(root, System.StringComparison.Ordinal)) return true;
+            }
+
+            return false;
+        }
+
+        [Test]
+        public void TheLicensedPackagesAreReallyExcludedRatherThanForgotten()
+        {
+            foreach (string root in LicensedPackages)
+            {
+                Assert.That(System.IO.Directory.Exists(root), Is.True,
+                    root + " is declared as a licensed package but is not installed on this "
+                        + "machine -- install it from the Asset Store");
+
+                Assert.That(IsIgnored(root), Is.True,
+                    root + " is declared as a licensed package but git is not ignoring it, so "
+                        + "the declaration is excusing files that ought to be committed");
+            }
         }
 
         // ---- helpers ------------------------------------------------------------------------------------
@@ -493,12 +552,18 @@ namespace ChibiFantasy.Tests.EditMode
                 new[] { ServerScene, CataloguePath }, true);
         }
 
+        /// <summary>Whether git is deliberately ignoring this path.</summary>
+        private static bool IsIgnored(string path) => Git("check-ignore -q \"" + path + "\"");
+
         private static bool IsTracked(string path)
+            => Git("ls-files --error-unmatch \"" + path + "\"");
+
+        /// <summary>Runs a git query and reports whether it said yes.</summary>
+        private static bool Git(string arguments)
         {
             var process = new System.Diagnostics.Process
             {
-                StartInfo = new System.Diagnostics.ProcessStartInfo("git",
-                    "ls-files --error-unmatch \"" + path + "\"")
+                StartInfo = new System.Diagnostics.ProcessStartInfo("git", arguments)
                 {
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,

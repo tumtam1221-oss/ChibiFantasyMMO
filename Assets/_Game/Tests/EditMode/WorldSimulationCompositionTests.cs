@@ -94,9 +94,16 @@ namespace ChibiFantasy.Tests.EditMode
             string bootstrap = Code(
                 "Assets/_Game/Scripts/Server/WorldServerBootstrap.cs");
 
-            Assert.That(bootstrap, Does.Contain("Simulation.Tick(Time.deltaTime)"),
-                "the composition root drives the world");
+            Assert.That(bootstrap, Does.Contain("Simulation.Tick(Time.deltaTime,"),
+                "the composition root drives the world from the engine's frame delta");
             Assert.That(bootstrap, Does.Contain("public void UseWorld("));
+
+            // The calendar is the one thing that must NOT come from the frame delta: the
+            // engine clamps that, so every server hitch would quietly lengthen the day.
+            Assert.That(bootstrap, Does.Contain("MeasureRealSeconds()"),
+                "the calendar must be measured against real time, not the clamped delta");
+            Assert.That(bootstrap, Does.Contain("Stopwatch"),
+                "and measured with a monotonic clock, so the machine's date cannot move it");
 
             // And exactly one thing in the project ticks a world.
             string[] files = System.IO.Directory.GetFiles("Assets/_Game/Scripts", "*.cs",
@@ -467,6 +474,52 @@ namespace ChibiFantasy.Tests.EditMode
                 + ",\"_x\":0,\"_y\":0,\"_z\":0}", spawn);
 
             return spawn;
+        }
+    
+        // ---- the calendar may run on a different measure of time to the simulation ---------
+
+        [Test]
+        public void The_calendar_advances_with_the_tick_by_default()
+        {
+            var clock = new WorldClock(3600.0, 0.0);
+            var world = new WorldSimulation(null, clock: clock);
+
+            world.Tick(36f);   // a hundredth of a day
+
+            Assert.That(clock.TimeOfDay, Is.EqualTo(0.01f).Within(0.0001f));
+        }
+
+        [Test]
+        public void A_stalled_server_does_not_lose_calendar_time()
+        {
+            // The engine clamps a reported frame delta to the project's maximum timestep, so
+            // a two second stall arrives as a third of a second. Movement wants that clamp;
+            // the calendar must be told what really happened or the day silently lengthens.
+            var clock = new WorldClock(3600.0, 0.0);
+            var world = new WorldSimulation(null, clock: clock);
+
+            const float clamped = 0.3333f;
+            const float actually = 2.0f;
+
+            world.Tick(clamped, actually);
+
+            Assert.That(clock.TimeOfDay * 3600f, Is.EqualTo(actually).Within(0.01f),
+                "the calendar took the clamped delta and lost most of the stall");
+            Assert.That(world.Elapsed, Is.EqualTo(clamped).Within(0.0001f),
+                "the simulation must still see the clamped delta, not the real one");
+        }
+
+        [Test]
+        public void A_long_run_of_stalls_does_not_stretch_the_day()
+        {
+            var clock = new WorldClock(3600.0, 0.0);
+            var world = new WorldSimulation(null, clock: clock);
+
+            // an hour of real time delivered as frames the engine under-reported by half
+            for (int i = 0; i < 3600; i++) world.Tick(0.5f, 1.0f);
+
+            Assert.That(clock.Day, Is.EqualTo(1),
+                "an hour of real time is one day, however badly the frames were reported");
         }
     }
 }

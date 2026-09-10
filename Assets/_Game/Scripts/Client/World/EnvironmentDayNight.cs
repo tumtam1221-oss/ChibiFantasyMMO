@@ -97,8 +97,26 @@ namespace ChibiFantasy.Client.World
         [Range(0f, 1f)]
         [SerializeField] private float _previewTimeOfDay = 0.0f;
 
+        [Header("Re-sync")]
+        [Tooltip("Drift smaller than this, as a fraction of a day, is left alone. 0.0002 of "
+            + "an hour-long day is about a second.")]
+        [SerializeField] private float _driftDeadband = 0.0002f;
+
+        [Tooltip("Drift larger than this, as a fraction of a day, is snapped rather than "
+            + "eased -- a machine that slept is not drift, it is a different hour.")]
+        [SerializeField] private float _driftSnapThreshold = 0.02f;
+
+        [Tooltip("The most a correction may bend time, as a share of real time. 0.5 means the "
+            + "clock runs between half speed and one and a half, never backwards.")]
+        [Range(0f, 0.9f)]
+        [SerializeField] private float _driftCatchUpFraction = 0.5f;
+
+        /// <summary>Below this much world time still owed, the correction is finished.</summary>
+        private const double SettledSeconds = 0.001;
+
         private WorldClock _clock;
         private bool _seeded;
+        private float _drift;
         private WorldClientBootstrap _world;
         private float _overcast;
         private float _overcastTarget;
@@ -181,6 +199,65 @@ namespace ChibiFantasy.Client.World
             Apply(_clock.TimeOfDay);
         }
 
+        /// <summary>How far this client last found itself from the world, in real seconds.</summary>
+        /// <remarks>Reported rather than only corrected, so "is the sky drifting?" is a
+        /// question with an answer instead of an argument.</remarks>
+        public float DriftSeconds { get; private set; }
+
+        /// <summary>
+        /// The world repeated what time it is. Close the gap.
+        /// </summary>
+        /// <remarks>
+        /// <b>Eased, not snapped, when the gap is small.</b> A correction applied outright
+        /// moves the sun, and a sun that hops a little every minute is more noticeable than
+        /// the drift it is fixing. Anything under
+        /// <see cref="_driftSnapThreshold"/> is paid off gradually instead.
+        ///
+        /// <b>Snapped when it is large.</b> A laptop that was closed for an hour has not
+        /// drifted, it is simply in the wrong day; easing that would spend hours of wrong sky
+        /// being polite about it.
+        ///
+        /// <b>A changed day length is always a re-seed.</b> If an operator has changed how
+        /// long a day is, the client's rate is wrong and no amount of nudging its position
+        /// fixes that.
+        /// </remarks>
+        public void Resync(float timeOfDay, float secondsPerDay)
+        {
+            double perDay = secondsPerDay > 0f ? secondsPerDay : WorldClock.DefaultSecondsPerDay;
+
+            if (_clock == null || System.Math.Abs(_clock.SecondsPerDay - perDay) > 0.001)
+            {
+                Seed(timeOfDay, secondsPerDay);
+
+                return;
+            }
+
+            float difference = WorldClock.ShortestDifference(_clock.TimeOfDay, timeOfDay);
+
+            DriftSeconds = difference * (float)perDay;
+
+            if (Mathf.Abs(difference) < _driftDeadband)
+            {
+                _drift = 0f;
+
+                return;
+            }
+
+            if (Mathf.Abs(difference) >= _driftSnapThreshold)
+            {
+                // Shifted rather than set, so a snap across midnight rolls the day over
+                // instead of wrapping the hour and leaving the date behind.
+                _clock.Shift(difference * perDay);
+                _drift = 0f;
+
+                Apply(TimeOfDay);
+
+                return;
+            }
+
+            _drift = difference;
+        }
+
         private void OnEnable()
         {
             if (_sun == null) _sun = FindSun();
@@ -200,7 +277,11 @@ namespace ChibiFantasy.Client.World
 
         private void OnDisable()
         {
-            if (_world != null) _world.OnSpawnReceived -= OnSpawn;
+            if (_world != null)
+            {
+                _world.OnSpawnReceived -= OnSpawn;
+                _world.OnTimeReceived -= OnTime;
+            }
 
             ReleaseSky();
 
@@ -273,6 +354,9 @@ namespace ChibiFantasy.Client.World
             _world.OnSpawnReceived -= OnSpawn;
             _world.OnSpawnReceived += OnSpawn;
 
+            _world.OnTimeReceived -= OnTime;
+            _world.OnTimeReceived += OnTime;
+
             // Whatever already arrived before this scene finished loading.
             if (_world.LastSpawn.SecondsPerDay > 0f)
             {
@@ -285,11 +369,17 @@ namespace ChibiFantasy.Client.World
             Seed(message.TimeOfDay, message.SecondsPerDay);
         }
 
+        /// <summary>The world repeated the hour; close whatever gap has opened up.</summary>
+        private void OnTime(ChibiFantasy.Network.WorldTimeMessage message)
+            => Resync(message.TimeOfDay, message.SecondsPerDay);
+
         private void Update()
         {
             if (Application.isPlaying && _clock != null)
             {
                 _clock.Advance(Time.deltaTime);
+
+                PayOffDrift(Time.deltaTime);
             }
 
             if (Application.isPlaying && !Mathf.Approximately(_overcast, _overcastTarget))
@@ -302,6 +392,37 @@ namespace ChibiFantasy.Client.World
             }
 
             Apply(TimeOfDay);
+        }
+
+        /// <summary>
+        /// Closes a small gap with the world a little at a time.
+        /// </summary>
+        /// <remarks>
+        /// <b>The clock is bent, not moved.</b> The step is capped at a share of the frame's
+        /// own elapsed time by <see cref="WorldClock.CatchUpStep"/>, so a client that is ahead
+        /// of the world is slowed down rather than wound back. Subtracting the error outright
+        /// -- which this did first -- ran the clock at seventeen times reverse for a few
+        /// seconds, and a sun that goes backwards is far more noticeable than a sun that is
+        /// half a minute out.
+        /// </remarks>
+        private void PayOffDrift(float deltaSeconds)
+        {
+            if (_drift == 0f || _clock == null) return;
+
+            double perDay = _clock.SecondsPerDay;
+            double owed = _drift * perDay;
+            double step = WorldClock.CatchUpStep(owed, deltaSeconds, _driftCatchUpFraction);
+
+            if (step == 0.0) return;
+
+            _clock.Shift(step);
+
+            _drift -= (float)(step / perDay);
+
+            // Settled once the remainder is under a millisecond of world time. Measured in
+            // seconds rather than in fractions of a day because a fraction that reads as
+            // "small" depends entirely on how long a day is.
+            if (System.Math.Abs(_drift) * perDay < SettledSeconds) _drift = 0f;
         }
 
         /// <summary>Puts the whole look at one moment in the day.</summary>

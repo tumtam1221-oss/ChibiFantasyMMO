@@ -158,6 +158,33 @@ namespace ChibiFantasy.Network
     }
 
     /// <summary>
+    /// What time the world thinks it is, repeated so clients cannot drift away from it.
+    /// </summary>
+    /// <remarks>
+    /// <b>Why a seed is not enough on its own.</b> The arrival message hands out a start
+    /// point and a rate, and every client then counts real seconds itself. Two clocks counting
+    /// independently do not stay together forever: a frame spike, a stall, a machine that
+    /// slept, and the client's idea of the hour is its own. That is invisible for a few
+    /// minutes and obvious after an evening, when one player is watching sunset and the player
+    /// beside them is not.
+    ///
+    /// <b>It is cheap enough not to think about.</b> Two floats every minute is nothing beside
+    /// what a single moving character costs per second, and it removes an entire class of
+    /// "the sky is wrong on my machine" that is otherwise very hard to reproduce.
+    ///
+    /// <b>Correcting is the client's business.</b> This says where the world is; how gently
+    /// to arrive there belongs to whatever is drawing the sky.
+    /// </remarks>
+    public struct WorldTimeMessage : IBroadcast
+    {
+        /// <summary>The world's time of day, 0 and 1 being midnight.</summary>
+        public float TimeOfDay;
+
+        /// <summary>Real seconds in one in-game day, repeated so a changed day length lands.</summary>
+        public float SecondsPerDay;
+    }
+
+    /// <summary>
     /// A request to pin the world's weather, or to let it roll again.
     /// </summary>
     /// <remarks>
