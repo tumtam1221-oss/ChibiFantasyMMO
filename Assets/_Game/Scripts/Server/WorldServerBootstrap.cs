@@ -57,6 +57,10 @@ namespace ChibiFantasy.Server
         [Header("Listen")]
         [SerializeField] private ushort _port = 7770;
 
+        [Tooltip("Let clients ask for a sky. Has no effect on a release build, whatever it "
+            + "is set to -- see RegisterWeatherCommands.")]
+        [SerializeField] private bool _allowWeatherCommands = true;
+
         [Tooltip("Start listening as soon as this component wakes.")]
         [SerializeField] private bool _startOnAwake = true;
 
@@ -428,6 +432,11 @@ namespace ChibiFantasy.Server
                 combat, monsters, loot, MonsterReplication, rewards, LootAuthority,
                 InventoryAuthority);
 
+            // The sky tells everybody at once. Subscribed here rather than polled in the
+            // tick so a change costs one broadcast at the moment it happens and nothing at
+            // all the rest of the time.
+            Simulation.Weather.Changed += BroadcastWeather;
+
             Loot = loot;
             Rewards = rewards;
 
@@ -464,6 +473,91 @@ namespace ChibiFantasy.Server
         /// players already fighting there.
         /// </remarks>
         private void LoadNests(DefinitionId map)
+        {
+            LoadNestsCore(map);
+        }
+
+        /// <summary>
+        /// Tells every connected client the sky has turned.
+        /// </summary>
+        /// <remarks>
+        /// <b>To everyone, not per map.</b> The weather is a property of the world in this
+        /// build, so a per-map broadcast would draw a distinction the simulation does not yet
+        /// make. When maps get their own skies, this is the one place that has to learn it.
+        ///
+        /// <b>Guarded rather than assumed.</b> The director keeps ticking while a server is
+        /// shutting down, and a broadcast into a stopped ServerManager is an exception in a
+        /// log that tells nobody anything useful.
+        /// </remarks>
+        private void BroadcastWeather(WorldWeather weather)
+        {
+            if (_networkManager == null || !_networkManager.ServerManager.Started) return;
+
+            _networkManager.ServerManager.Broadcast(new WorldWeatherMessage
+            {
+                Weather = (int)weather,
+            });
+        }
+
+        /// <summary>
+        /// Opens the door a client can ask for weather through, on builds that may have one.
+        /// </summary>
+        /// <remarks>
+        /// <b>Two locks, and only one of them can be picked.</b> A serialized switch says
+        /// whether this server wants the door at all, and <see cref="Debug.isDebugBuild"/>
+        /// says whether this build is allowed one. The second is decided when the server is
+        /// compiled, so no scene edit, configuration file or connecting client can turn it on
+        /// in a release build -- which matters, because the message has no sender check beyond
+        /// this: anyone who can reach the port could otherwise make it snow on everybody.
+        ///
+        /// <b>Not registered at all when refused.</b> Registering it and then ignoring the
+        /// message would leave a handler on a production server whose only protection is an
+        /// if-statement inside it.
+        /// </remarks>
+        private void RegisterWeatherCommands()
+        {
+            if (!WeatherCommandsAllowed || _networkManager == null) return;
+
+            _networkManager.ServerManager.RegisterBroadcast<WorldWeatherCommandMessage>(
+                OnWeatherCommand);
+
+            Debug.Log("[world] weather commands are ENABLED on this server (development build)");
+        }
+
+        /// <summary>Whether this server will take weather requests from clients.</summary>
+        private bool WeatherCommandsAllowed => _allowWeatherCommands && Debug.isDebugBuild;
+
+        /// <summary>
+        /// A client asked for a sky.
+        /// </summary>
+        /// <remarks>The change is not answered to the sender: it is handed to the director,
+        /// which announces it to everyone through the same event an ordinary turn of the
+        /// weather uses. That is what keeps one player's festival from being a private one.
+        /// </remarks>
+        private void OnWeatherCommand(NetworkConnection connection,
+            WorldWeatherCommandMessage message, Channel channel)
+        {
+            if (Simulation == null) return;
+
+            if (message.Automatic)
+            {
+                Simulation.Weather.Release();
+
+                Debug.Log("[world] weather released; the sky rolls on its own again");
+
+                return;
+            }
+
+            var weather = (WorldWeather)message.Weather;
+
+            if (!System.Enum.IsDefined(typeof(WorldWeather), weather)) return;
+
+            Simulation.Weather.Hold(weather);
+
+            Debug.Log("[world] weather held at " + weather);
+        }
+
+        private void LoadNestsCore(DefinitionId map)
         {
             if (MonsterConfiguration == null || !map.IsValid) return;
 
@@ -626,6 +720,8 @@ namespace ChibiFantasy.Server
 
             IsListening = _networkManager.ServerManager.StartConnection(_port);
 
+            RegisterWeatherCommands();
+
             Announce();
 
             // Where this server will go to find out who a connecting player is. An address
@@ -762,10 +858,25 @@ namespace ChibiFantasy.Server
                 Y = spawn.Y,
                 Z = spawn.Z,
                 CharacterRevision = outcome.Admission.CharacterRevision.Value,
+
+                // The sky this player is arriving under. Read from the simulation's clock so
+                // there is one time of day in the world and the client is told it rather
+                // than starting its own day from zero.
+                TimeOfDay = Simulation != null ? Simulation.Clock.TimeOfDay : 0f,
+                SecondsPerDay = Simulation != null
+                    ? (float)Simulation.Clock.SecondsPerDay
+                    : (float)WorldClock.DefaultSecondsPerDay,
+
+                // And the weather, so somebody arriving mid-downpour arrives wet rather
+                // than waiting for the next turn to find out it is raining.
+                Weather = Simulation != null ? (int)Simulation.Weather.Weather : 0,
             });
 
             // Connecting becomes Ready, and the authority's session becomes Active.
             Coordinator.ConfirmArrival(connection.ClientId);
+
+            // Nothing else to send about the sky: the arrival message above already carried
+            // both the time of day and the weather.
 
             // And into the simulation, which computes their stats before anything is
             // published -- so the first state a client receives is already correct.

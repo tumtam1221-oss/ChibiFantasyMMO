@@ -23,7 +23,7 @@ RenderSettings:
   m_AmbientSkyColor: {r: 0.62, g: 0.72, b: 0.86, a: 1}
   m_AmbientEquatorColor: {r: 0.58, g: 0.6, b: 0.56, a: 1}
   m_AmbientGroundColor: {r: 0.42, g: 0.4, b: 0.36, a: 1}
-  m_AmbientIntensity: 1.15
+  m_AmbientIntensity: 1.28
   m_AmbientMode: 0
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
   m_SkyboxMaterial: {fileID: 2100000, guid: 30438304e2efa6e4f96c0459a9a111d8, type: 2}
@@ -79648,6 +79648,8 @@ GameObject:
   m_Component:
   - component: {fileID: 527089987}
   - component: {fileID: 527089986}
+  - component: {fileID: 527089988}
+  - component: {fileID: 527089989}
   m_Layer: 0
   m_Name: Environment Light
   m_TagString: Untagged
@@ -79666,7 +79668,7 @@ Light:
   serializedVersion: 12
   m_Type: 1
   m_Color: {r: 1, g: 0.97, b: 0.9, a: 1}
-  m_Intensity: 1.15
+  m_Intensity: 0.8
   m_Range: 10
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -79675,7 +79677,7 @@ Light:
     m_Type: 2
     m_Resolution: -1
     m_CustomResolution: -1
-    m_Strength: 0.55
+    m_Strength: 0.85
     m_Bias: 0.05
     m_NormalBias: 0.4
     m_NearPlane: 0.2
@@ -79728,14 +79730,75 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 527089985}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.38457704, y: 0.2974213, z: -0.1324205, w: 0.86377424}
+  m_LocalRotation: {x: 0.3477051, y: 0.30275515, z: -0.11972443, w: 0.8792648}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1989778971}
+  - {fileID: 851722232}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &527089988
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 527089985}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b568275969de85b428b7c988fbadb611, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.World.EnvironmentDayNight
+  _sun: {fileID: 527089986}
+  _dayVolume: {fileID: 1989778972}
+  _nightVolume: {fileID: 851722231}
+  _sunIntensityDay: 0.8
+  _sunIntensityNight: 0.38
+  _sunColourDay: {r: 1, g: 0.97, b: 0.9, a: 1}
+  _sunColourHorizon: {r: 1, g: 0.78, b: 0.55, a: 1}
+  _sunColourNight: {r: 0.55, g: 0.68, b: 1, a: 1}
+  _ambientDay: 1.28
+  _ambientNight: 1.45
+  _overcastSunScale: 0.55
+  _overcastSunTint: {r: 0.82, g: 0.85, b: 0.9, a: 1}
+  _overcastAmbientScale: 0.88
+  _overcastShadowScale: 0.45
+  _overcastFadeSeconds: 4
+  _overcastSkyTint: {r: 0.86, g: 0.89, b: 0.94, a: 1}
+  _overcastSkyLift: 0.6
+  _overcastFogColour: {r: 0.63, g: 0.67, b: 0.72, a: 1}
+  _overcastCloudCoverage: 0.35
+  _editorTimeOfDay: 0.35
+  _freezeForPreview: 0
+  _previewTimeOfDay: 0.05
+--- !u!114 &527089989
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 527089985}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 203300ee387a6df45a638b0756b08128, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.World.EnvironmentWeather
+  _freezeForPreview: 0
+  _previewWeather: 0
+  _rainParticles: 650
+  _rainSpeed: 14
+  _rainColour: {r: 0.8, g: 0.88, b: 0.98, a: 0.42}
+  _snowParticles: 320
+  _snowSpeed: 1.6
+  _snowColour: {r: 1, g: 1, b: 1, a: 0.85}
+  _overcastRain: 1
+  _overcastSnow: 0.8
+  _leadSeconds: 8
+  _height: 9
+  _width: 12
+  _lead: 0.4
 --- !u!1001 &527352230
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -125069,6 +125132,55 @@ Transform:
     type: 3}
   m_PrefabInstance: {fileID: 850045154}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &851722230
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 851722232}
+  - component: {fileID: 851722231}
+  m_Layer: 0
+  m_Name: Volume Night
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &851722231
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 851722230}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 172515602e62fb746b5d573b38a5fe58, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.RenderPipelines.Core.Runtime::UnityEngine.Rendering.Volume
+  m_IsGlobal: 1
+  priority: 1
+  blendDistance: 0
+  weight: 0
+  sharedProfile: {fileID: 11400000, guid: f93d138b90c007e4d8b5ee73f4d6ae6a, type: 2}
+--- !u!4 &851722232
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 851722230}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 527089987}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1001 &851971958
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -309766,7 +309878,7 @@ GameObject:
   - component: {fileID: 1989778971}
   - component: {fileID: 1989778972}
   m_Layer: 0
-  m_Name: Post Volume
+  m_Name: Volume Day
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -309800,7 +309912,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Unity.RenderPipelines.Core.Runtime::UnityEngine.Rendering.Volume
   m_IsGlobal: 1
-  priority: 1
+  priority: 0
   blendDistance: 0
   weight: 1
   sharedProfile: {fileID: 11400000, guid: c4fd37de03a9a5147bbcf313a36642bf, type: 2}

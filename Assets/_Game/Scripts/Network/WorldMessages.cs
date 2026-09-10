@@ -112,6 +112,72 @@ namespace ChibiFantasy.Network
 
         /// <summary>The character's revision when the server spawned it.</summary>
         public int CharacterRevision;
+
+        /// <summary>
+        /// The world's time of day at the moment of arrival, 0 and 1 being midnight.
+        /// </summary>
+        /// <remarks>
+        /// <b>Sent once, not streamed.</b> The clock is arithmetic -- a start point and a
+        /// fixed rate -- so a client that is told where the world is can run the same sum
+        /// itself and stay in step. Streaming a number that changes by 0.0003 a second would
+        /// spend bandwidth to tell every client something it could already work out.
+        ///
+        /// <b>Why it must be sent at all.</b> Without a seed each client would start its own
+        /// day from zero and two players standing together would see different skies, which
+        /// reads as a rendering bug long before anyone suspects a clock.
+        /// </remarks>
+        public float TimeOfDay;
+
+        /// <summary>Real seconds in one in-game day, so the client advances at the server's rate.</summary>
+        /// <remarks>Sent rather than shared as a constant because an operator who changes the
+        /// day length on the server must not have to ship a client to match.</remarks>
+        public float SecondsPerDay;
+
+        /// <summary>What the sky is doing on arrival, as <c>WorldWeather</c>.</summary>
+        /// <remarks>An int rather than the enum so the wire format does not move when a new
+        /// weather is added to the end of that enum.</remarks>
+        public int Weather;
+    }
+
+    /// <summary>
+    /// The weather turned.
+    /// </summary>
+    /// <remarks>
+    /// <b>Why weather needs a message where the clock did not.</b> The time of day is a start
+    /// point and a rate, so a client told once can work out the rest. A change of weather
+    /// happens at a moment nobody can compute in advance, so it has to be said out loud.
+    ///
+    /// <b>Sent only when it actually turns.</b> The director raises its event on a real
+    /// change, never on a re-roll that landed on the same sky, so this does not carry
+    /// "still raining" to every client every few minutes.
+    /// </remarks>
+    public struct WorldWeatherMessage : IBroadcast
+    {
+        /// <summary>The new weather, as <c>WorldWeather</c>.</summary>
+        public int Weather;
+    }
+
+    /// <summary>
+    /// A request to pin the world's weather, or to let it roll again.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is a request, not an instruction.</b> It travels client to server, and the
+    /// server is free to ignore it -- and does, on any build that is not a development one.
+    /// The weather that comes back is still <see cref="WorldWeatherMessage"/> from the
+    /// authority, so a client that sent this and a client that did not are told the same
+    /// thing in the same way. Nothing here changes what the sender sees on its own.
+    ///
+    /// <b>Why it exists at all.</b> Snow is a festival rather than something that happens,
+    /// so somebody has to be able to switch it on; and weather that turns every few minutes
+    /// cannot be tested by waiting for it. Both of those want the same door.
+    /// </remarks>
+    public struct WorldWeatherCommandMessage : IBroadcast
+    {
+        /// <summary>The weather to hold, as <c>WorldWeather</c>. Ignored when Automatic.</summary>
+        public int Weather;
+
+        /// <summary>Stop holding and let the sky roll on its own again.</summary>
+        public bool Automatic;
     }
 
     /// <summary>Why a connection is ending, sent before the socket closes where possible.</summary>

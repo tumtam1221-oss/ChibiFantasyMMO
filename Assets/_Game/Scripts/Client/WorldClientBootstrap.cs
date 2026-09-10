@@ -81,6 +81,12 @@ namespace ChibiFantasy.Client
         /// <summary>Raised when the server says where the character stands.</summary>
         public event Action<WorldSpawnMessage> OnSpawnReceived;
 
+        /// <summary>The last weather this client was told about, as <c>WorldWeather</c>.</summary>
+        public int LastWeather { get; private set; }
+
+        /// <summary>Raised when the server says the sky turned.</summary>
+        public event Action<int> OnWeatherReceived;
+
         private void Awake()
         {
             _networkManager = GetComponent<NetworkManager>();
@@ -109,6 +115,7 @@ namespace ChibiFantasy.Client
 
             _networkManager.ClientManager.RegisterBroadcast<WorldJoinResponseMessage>(OnJoinResponse);
             _networkManager.ClientManager.RegisterBroadcast<WorldSpawnMessage>(OnSpawn);
+            _networkManager.ClientManager.RegisterBroadcast<WorldWeatherMessage>(OnWeather);
             _networkManager.ClientManager.OnClientConnectionState += OnConnectionState;
 
             _registered = true;
@@ -222,6 +229,34 @@ namespace ChibiFantasy.Client
             });
         }
 
+        /// <summary>
+        /// Asks the server to hold the sky at one weather.
+        /// </summary>
+        /// <remarks>
+        /// <b>Nothing is applied locally.</b> This sends a request and returns; the sky only
+        /// changes when the server says so, through the same broadcast every other client
+        /// gets. A version that also set the local weather would show the sender a sky nobody
+        /// else was standing under whenever the server refused -- which a release server
+        /// always does.
+        /// </remarks>
+        public void RequestWeather(int weather)
+        {
+            Send(new WorldWeatherCommandMessage { Weather = weather, Automatic = false });
+        }
+
+        /// <summary>Asks the server to stop holding the sky and let it roll again.</summary>
+        public void RequestAutomaticWeather()
+        {
+            Send(new WorldWeatherCommandMessage { Automatic = true });
+        }
+
+        private void Send(WorldWeatherCommandMessage message)
+        {
+            if (_networkManager == null || !_networkManager.ClientManager.Started) return;
+
+            _networkManager.ClientManager.Broadcast(message);
+        }
+
         private void OnJoinResponse(WorldJoinResponseMessage message, Channel channel)
         {
             LastResponse = message;
@@ -235,7 +270,22 @@ namespace ChibiFantasy.Client
             // writes it back or argues with it.
             LastSpawn = message;
 
+            LastWeather = message.Weather;
+
             OnSpawnReceived?.Invoke(message);
+        }
+
+        /// <summary>
+        /// The weather turned while this client was connected.
+        /// </summary>
+        /// <remarks>Kept as well as raised, so a presenter that loads after the message
+        /// arrives -- an environment scene streaming in mid-storm -- can still catch up
+        /// rather than staying dry until the next change.</remarks>
+        private void OnWeather(WorldWeatherMessage message, Channel channel)
+        {
+            LastWeather = message.Weather;
+
+            OnWeatherReceived?.Invoke(message.Weather);
         }
 
         private void OnDestroy()

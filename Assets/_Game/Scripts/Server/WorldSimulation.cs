@@ -61,6 +61,8 @@ namespace ChibiFantasy.Server
         private readonly MonsterRewardAuthority _rewards;
         private readonly CharacterReplicationService _replication;
         private readonly MonsterReplicationService _monsterReplication;
+        private readonly WorldClock _clock;
+        private readonly WeatherDirector _weather;
 
         public WorldSimulation(WorldCharacterRegistry characters,
             CharacterReplicationService replication = null,
@@ -73,7 +75,9 @@ namespace ChibiFantasy.Server
             MonsterReplicationService monsterReplication = null,
             MonsterRewardAuthority rewards = null,
             CharacterLootAuthority lootAuthority = null,
-            CharacterInventoryAuthority inventoryAuthority = null)
+            CharacterInventoryAuthority inventoryAuthority = null,
+            WorldClock clock = null,
+            WeatherDirector weather = null)
         {
             _lootAuthority = lootAuthority;
             _inventoryAuthority = inventoryAuthority;
@@ -87,6 +91,8 @@ namespace ChibiFantasy.Server
             _loot = loot;
             _monsterReplication = monsterReplication;
             _rewards = rewards;
+            _clock = clock ?? new WorldClock();
+            _weather = weather ?? new WeatherDirector();
         }
 
         /// <summary>How many ticks have run. For diagnostics and for the no-work test.</summary>
@@ -94,6 +100,24 @@ namespace ChibiFantasy.Server
 
         /// <summary>The seconds of world time this simulation has advanced.</summary>
         public double Elapsed { get; private set; }
+
+        /// <summary>
+        /// The sky every player stands under.
+        /// </summary>
+        /// <remarks>Exposed rather than hidden because the thing that replicates it lives in
+        /// the network assembly and has to read it once a tick. It is read-only from out
+        /// here: <see cref="Tick"/> is the only thing that advances it, so the world's time
+        /// cannot be moved by whoever happens to hold a reference.</remarks>
+        public WorldClock Clock => _clock;
+
+        /// <summary>
+        /// The weather every player is standing in.
+        /// </summary>
+        /// <remarks>Exposed for the same reason as <see cref="Clock"/>: the thing that
+        /// broadcasts a change lives in the network assembly and subscribes to
+        /// <see cref="WeatherDirector.Changed"/>. Advancing it stays with
+        /// <see cref="Tick"/>.</remarks>
+        public WeatherDirector Weather => _weather;
 
         /// <summary>
         /// Admits a character into the world with correct stats from its first instant.
@@ -173,6 +197,14 @@ namespace ChibiFantasy.Server
             Ticks++;
 
             if (deltaSeconds > 0f) Elapsed += deltaSeconds;
+
+            // 0. The sky. First because it is the cheapest thing here and because every
+            //    other system is entitled to ask what time it is during its own tick.
+            _clock.Advance(deltaSeconds);
+
+            // 0b. And the weather, which announces itself when it turns rather than being
+            //     polled. Nothing downstream reads it, so its place in the order is free.
+            _weather.Tick(deltaSeconds);
 
             // 1. Status first: an effect that expires this tick must be gone before
             //    anything asks what modifiers are in force.

@@ -11,7 +11,8 @@
         "ChibiFantasy.UI",
         "FishNet.Runtime",
         "Unity.InputSystem",
-        "Unity.TextMeshPro"
+        "Unity.TextMeshPro",
+        "Unity.RenderPipelines.Core.Runtime"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
