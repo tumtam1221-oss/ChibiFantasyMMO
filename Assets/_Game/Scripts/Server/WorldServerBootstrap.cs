@@ -204,7 +204,8 @@ namespace ChibiFantasy.Server
             IMonsterSpawnConfigurationSource spawnConfiguration = null,
             IPartyStateStore parties = null,
             IMonsterRewardOutbox rewardOutbox = null,
-            IWorldClockStore clockStore = null)
+            IWorldClockStore clockStore = null,
+            IWorldReclaim reclaim = null)
         {
             Registry = new WorldConnectionRegistry();
 
@@ -217,16 +218,18 @@ namespace ChibiFantasy.Server
                     _apiTimeoutSeconds, out ICharacterStateStore store,
                     out IMonsterSpawnConfigurationSource nests, out _authorityLifetime,
                     out IPartyStateStore partyStore, out IMonsterRewardOutbox outbox,
-                    out IWorldClockStore clocks);
+                    out IWorldClockStore clocks, out IWorldReclaim stranded);
 
                 characters = characters ?? store;
                 spawnConfiguration = spawnConfiguration ?? nests;
                 parties = parties ?? partyStore;
                 rewardOutbox = rewardOutbox ?? outbox;
                 clockStore = clockStore ?? clocks;
+                reclaim = reclaim ?? stranded;
             }
 
             ClockStore = clockStore;
+            Reclaim = reclaim;
 
             Coordinator = new WorldEntryCoordinator(authority, Registry, required);
 
@@ -897,6 +900,15 @@ namespace ChibiFantasy.Server
         /// <summary>Where this world's calendar is written down. Null when nowhere.</summary>
         public IWorldClockStore ClockStore { get; private set; }
 
+        /// <summary>Who hands back what the last process left holding. Null when nobody.</summary>
+        public IWorldReclaim Reclaim { get; private set; }
+
+        /// <summary>What the last shutdown left stranded, as this process found it.</summary>
+        /// <remarks>Kept so a test can read the outcome without a log, and so an operator
+        /// can be told once at startup rather than discovering it from a player who cannot
+        /// get in.</remarks>
+        public WorldReclaimResult Reclaimed { get; private set; }
+
         /// <summary>Whether this world will be remembered across a restart.</summary>
         public bool CanSaveCalendar
         {
@@ -1052,6 +1064,11 @@ namespace ChibiFantasy.Server
         {
             if (IsListening) return true;
 
+            // Before the socket, deliberately. This process has nobody in it yet, so
+            // anything the authority still believes is inside this world belongs to the
+            // process that died -- and that is only true for as long as nobody can connect.
+            ReclaimWhatTheLastProcessLeft();
+
             IsListening = _networkManager.ServerManager.StartConnection(_port);
 
             RegisterWeatherCommands();
@@ -1065,6 +1082,57 @@ namespace ChibiFantasy.Server
                 + (string.IsNullOrEmpty(_apiBaseAddress) ? "<unconfigured>" : _apiBaseAddress));
 
             return IsListening;
+        }
+
+        /// <summary>
+        /// Hands back the players the last process died holding.
+        /// </summary>
+        /// <remarks>
+        /// <b>The bug this closes.</b> <see cref="StopServer"/> releases everyone, and
+        /// nothing released anyone when a server was killed, crashed or lost power. The
+        /// character stayed marked as being in a world that no longer existed, and because
+        /// nothing in the system ever revisited that mark, the player was refused at the
+        /// door forever -- not until a timeout, not until the session expired, but until
+        /// somebody edited the database by hand. Which, for weeks, was me.
+        ///
+        /// <b>Why it is safe to do this and unsafe to do it anywhere else.</b> A server
+        /// that has not opened its socket has no players. That makes "everyone this world
+        /// still holds is a ghost" a fact rather than an inference, and it is a fact for
+        /// exactly one instant -- the one before <see cref="StartServer"/> starts
+        /// listening. A sweeper running on a timer would have to guess instead, and a wrong
+        /// guess throws live players out of the world.
+        ///
+        /// <b>It never stops a server starting.</b> An authority that cannot be reached, a
+        /// key that was never configured, a refusal: all of them leave the world as
+        /// stranded as it already was, and all of them are better than a world that will
+        /// not open. The one thing this must not do is fail quietly, so the reason is said
+        /// out loud when nothing can be handed back.
+        /// </remarks>
+        private void ReclaimWhatTheLastProcessLeft()
+        {
+            Reclaimed = WorldReclaimResult.Nothing;
+
+            if (Reclaim == null || !Server.IsValid || !Channel.IsValid) return;
+
+            if (!Reclaim.CanReclaim)
+            {
+                // Said once, rather than discovered later from a player who cannot log in.
+                Debug.LogWarning("[world] stranded players CANNOT be handed back: "
+                    + HttpWorldClockStore.KeyVariable + " is not set for this process."
+                    + " A crash will lock every player in this world out of their character.");
+
+                return;
+            }
+
+            Reclaimed = Reclaim.ReleaseStranded(Server, Channel);
+
+            if (!Reclaimed.FoundAnything) return;
+
+            // Only worth a line when it found something: a non-zero count is also the only
+            // evidence an operator gets that the last shutdown was not clean.
+            Debug.Log("[world] handed back " + Reclaimed.Sessions + " session(s) and "
+                + Reclaimed.Characters + " character(s) stranded by the last process in "
+                + _serverId + "/" + _channelId + ". The previous shutdown was not clean.");
         }
 
         /// <summary>

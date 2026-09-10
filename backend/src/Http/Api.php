@@ -20,6 +20,7 @@ use ChibiFantasy\Support\Env;
 use ChibiFantasy\World\MonsterRewardRepository;
 use ChibiFantasy\World\MonsterSpawnRepository;
 use ChibiFantasy\World\WorldClockRepository;
+use ChibiFantasy\World\WorldReclaimService;
 use PDO;
 
 /**
@@ -52,6 +53,7 @@ final class Api
     private readonly MonsterSpawnRepository $monsterSpawns;
     private readonly MonsterRewardRepository $monsterRewards;
     private readonly WorldClockRepository $worldClock;
+    private readonly WorldReclaimService $reclaim;
     private readonly IdempotencyStore $idempotency;
 
     /**
@@ -83,6 +85,10 @@ final class Api
             $this->characters,
             $this->characterState
         );
+
+        // Built after the flow it borrows: releasing a stranded session is the same
+        // operation as a player leaving, and there must not be a second version of it.
+        $this->reclaim = new WorldReclaimService($pdo, $this->sessions, $this->flow);
     }
 
     /**
@@ -170,6 +176,9 @@ final class Api
 
             $request->method === 'POST' && $path === '/api/world/clock'
                 => $this->writeWorldClock($request, $requestId),
+
+            $request->method === 'POST' && $path === '/api/world/reclaim'
+                => $this->reclaimWorld($request, $requestId),
 
             $request->method === 'POST' && $path === '/api/world/monster-reward'
                 => $this->recordMonsterReward($request, $requestId),
@@ -1120,24 +1129,10 @@ final class Api
      */
     private function writeWorldClock(Request $request, string $requestId): Response
     {
-        $expected = $this->worldServerKey ?? (string) Env::get('WORLD_SERVER_KEY', '');
+        $refusal = $this->refuseWithoutDeploymentKey($request, $requestId, 'clock write');
 
-        if ($expected === '') {
-            error_log('[api] world clock write refused: WORLD_SERVER_KEY is not configured');
-
-            return Response::problem(
-                ApiProblem::forbidden('world_key_not_configured', 'error.forbidden'),
-                $requestId
-            );
-        }
-
-        $presented = (string) $request->bearerToken();
-
-        if ($presented === '' || !hash_equals($expected, $presented)) {
-            return Response::problem(
-                ApiProblem::unauthenticated('invalid_world_key', 'error.unauthenticated'),
-                $requestId
-            );
+        if ($refusal !== null) {
+            return $refusal;
         }
 
         $serverId = $request->string('server_id', '');
@@ -1165,5 +1160,94 @@ final class Api
             'channel_id' => $channelId,
             'saved'      => true,
         ]);
+    }
+
+    /**
+     * Hands back what a world server left behind when it died.
+     *
+     * **Called by a world server as it starts, before it listens.** That is the one
+     * moment the answer is certain: a process with no players in it yet cannot be
+     * holding anybody, so anything the database still believes is inside that world
+     * belongs to the process that is gone. Doing this on a timer instead would mean
+     * guessing whether a quiet server is dead, and guessing wrong evicts live players.
+     *
+     * **Guarded by the deployment key, not a player's token.** Same door as the clock
+     * write and for the same reason -- there is no session to borrow, and this one
+     * matters more: an open version would let anyone who can reach the port throw a
+     * channel's worth of players out of the world.
+     *
+     * The counts are returned so the server can say what it found in its startup log.
+     * An operator seeing a non-zero count knows the last shutdown was not clean.
+     */
+    private function reclaimWorld(Request $request, string $requestId): Response
+    {
+        $refusal = $this->refuseWithoutDeploymentKey($request, $requestId, 'reclaim');
+
+        if ($refusal !== null) {
+            return $refusal;
+        }
+
+        $serverId = $request->string('server_id', '');
+        $channelId = $request->string('channel_id', '');
+
+        if ($serverId === '' || $channelId === '') {
+            return Response::problem(
+                ApiProblem::validation('invalid_world', 'error.field_required'),
+                $requestId
+            );
+        }
+
+        $counts = $this->reclaim->reclaim($serverId, $channelId);
+
+        return Response::ok([
+            'server_id'           => $serverId,
+            'channel_id'          => $channelId,
+            'sessions_released'   => $counts['sessions'],
+            'characters_released' => $counts['characters'],
+        ]);
+    }
+
+    /**
+     * The door both world-server writes come through.
+     *
+     * Returns a refusal, or null when the caller proved it belongs to this deployment.
+     * Shared rather than repeated because two copies of an authorisation check are two
+     * places for one of them to be relaxed.
+     *
+     * **Refused outright when no key is configured.** The tempting alternative -- allow
+     * the call when no key is set, so development is convenient -- makes the safe
+     * configuration the one an operator has to remember, and a forgotten line in a
+     * deployment file becomes an open door.
+     *
+     * The comparison is constant-time so the response cannot be used to guess the key
+     * one character at a time. Neither the expected key nor the presented one is ever
+     * logged; the log line says which door was tried and nothing else.
+     */
+    private function refuseWithoutDeploymentKey(
+        Request $request,
+        string $requestId,
+        string $what
+    ): ?Response {
+        $expected = $this->worldServerKey ?? (string) Env::get('WORLD_SERVER_KEY', '');
+
+        if ($expected === '') {
+            error_log('[api] world ' . $what . ' refused: WORLD_SERVER_KEY is not configured');
+
+            return Response::problem(
+                ApiProblem::forbidden('world_key_not_configured', 'error.forbidden'),
+                $requestId
+            );
+        }
+
+        $presented = (string) $request->bearerToken();
+
+        if ($presented === '' || !hash_equals($expected, $presented)) {
+            return Response::problem(
+                ApiProblem::unauthenticated('invalid_world_key', 'error.unauthenticated'),
+                $requestId
+            );
+        }
+
+        return null;
     }
 }

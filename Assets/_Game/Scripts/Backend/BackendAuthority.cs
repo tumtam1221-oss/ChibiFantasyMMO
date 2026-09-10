@@ -61,7 +61,7 @@ namespace ChibiFantasy.Backend
             int timeoutSeconds, out ICharacterStateStore characters,
             out IMonsterSpawnConfigurationSource spawns, out IDisposable lifetime,
             out IPartyStateStore parties, out IMonsterRewardOutbox rewards,
-            out IWorldClockStore clock)
+            out IWorldClockStore clock, out IWorldReclaim reclaim)
         {
             var transport = new UnityWebRequestTransport(baseAddress, timeoutSeconds);
 
@@ -74,9 +74,10 @@ namespace ChibiFantasy.Backend
             parties = new HttpPartyStateStore(transport, authority);
             rewards = new HttpMonsterRewardOutbox(transport, authority);
 
-            // The only service here with no player behind it: its key comes from the
+            // The two services here with no player behind them: their key comes from the
             // environment this process was launched in, never from the project.
             clock = new HttpWorldClockStore(transport);
+            reclaim = new HttpWorldReclaim(transport);
 
             return authority;
         }
