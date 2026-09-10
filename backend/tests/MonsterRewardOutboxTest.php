@@ -369,6 +369,46 @@ final class MonsterRewardOutboxTest extends BackendTestCase
         self::assertSame('already_complete', $again['reason']);
     }
 
+    public function testCompletionIsStampedByTheSameClockAsTheRowItSitsOn(): void
+    {
+        // completed_at used to be formatted in PHP while updated_at beside it was written
+        // by MySQL. PHP runs in UTC here and MySQL in the machine's own zone, so the two
+        // halves of one write disagreed by the offset between them -- seven hours on this
+        // machine, and a different number on the next one. The column is a naked DATETIME
+        // with no zone in it, so nothing downstream could tell which clock it was reading.
+        $this->rewards->record($this->envelope(), $this->split(), $this->darkness());
+
+        $this->rewards->progress('reward-1', 1, ['char-ann', 'char-ben'],
+            [['entry_index' => 0, 'character_id' => 'char-ann']], true, true, true);
+
+        $row = $this->pdo->query(
+            'SELECT completed_at, updated_at,
+                    ABS(TIMESTAMPDIFF(SECOND, completed_at, updated_at)) AS apart
+             FROM monster_reward WHERE reward_id = "reward-1"'
+        )->fetch();
+
+        self::assertNotNull($row['completed_at'], 'a finished reward must record when');
+
+        self::assertLessThanOrEqual(1, (int) $row['apart'],
+            'completed_at ' . $row['completed_at'] . ' and updated_at ' . $row['updated_at']
+            . ' were written by the same statement and must come from one clock');
+    }
+
+    public function testAnUnfinishedRewardHasNoCompletionTime(): void
+    {
+        // The other half of the same change: IF(:complete, NOW(3), NULL) must still leave
+        // NULL meaning "not finished" rather than stamping every progress call.
+        $this->rewards->record($this->envelope(), $this->split(), $this->darkness());
+
+        $this->rewards->progress('reward-1', 1, ['char-ann']);
+
+        $completed = $this->pdo->query(
+            'SELECT completed_at FROM monster_reward WHERE reward_id = "reward-1"'
+        )->fetchColumn();
+
+        self::assertNull($completed);
+    }
+
     public function testProgressOnARewardThatDoesNotExistIsRefused(): void
     {
         $result = $this->rewards->progress('reward-nowhere', 1, ['char-ann']);

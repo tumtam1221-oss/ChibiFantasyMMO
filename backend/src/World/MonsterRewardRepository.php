@@ -419,11 +419,22 @@ final class MonsterRewardRepository
 
             $next = $expectedRevision + 1;
 
+            // completed_at is stamped by MySQL, exactly like updated_at beside it.
+            //
+            // It used to be formatted in PHP, which put two clocks in one statement: PHP
+            // runs in UTC here and MySQL in the machine's own zone, so a reward completed
+            // at ten past midnight recorded completed_at seven hours before the updated_at
+            // written on the same row at the same instant -- the previous afternoon. The
+            // column is a naked DATETIME with no zone in it, so nothing downstream could
+            // ever have told which of the two it was looking at.
+            //
+            // IF rather than building the SQL from a boolean, so the statement is one
+            // fixed string whatever happens, and NULL still means "not finished".
             $this->pdo->prepare(
                 'UPDATE monster_reward
                  SET cursor_committed = :cursor, loot_published = :published,
                      state = :state, revision = :rev, updated_at = NOW(3),
-                     completed_at = :completed
+                     completed_at = IF(:complete, NOW(3), NULL)
                  WHERE reward_id = :reward'
             )->execute([
                 ':reward'    => $rewardId,
@@ -433,7 +444,7 @@ final class MonsterRewardRepository
                     ? (int) $current['loot_published'] : ($lootPublished ? 1 : 0),
                 ':state'     => $complete ? self::STATE_COMPLETE : self::STATE_PENDING,
                 ':rev'       => $next,
-                ':completed' => $complete ? date('Y-m-d H:i:s.v') : null,
+                ':complete'  => $complete ? 1 : 0,
             ]);
 
             $this->pdo->commit();
