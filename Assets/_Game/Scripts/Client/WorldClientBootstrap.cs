@@ -1,5 +1,6 @@
 using System;
 using ChibiFantasy.Contracts;
+using ChibiFantasy.Core;
 using ChibiFantasy.Network;
 using FishNet.Managing;
 using FishNet.Transporting;
@@ -93,6 +94,36 @@ namespace ChibiFantasy.Client
         /// <summary>Raised when the world repeats what time it is.</summary>
         public event Action<WorldTimeMessage> OnTimeReceived;
 
+        /// <summary>Command-line names and environment variables this client accepts.</summary>
+        public const string AddressOption = "world-address";
+        public const string AddressVariable = "CHIBI_WORLD_ADDRESS";
+        public const string PortOption = "world-port";
+        public const string PortVariable = "CHIBI_WORLD_PORT";
+
+        /// <summary>
+        /// Lets the launch say which world server to reach.
+        /// </summary>
+        /// <remarks>
+        /// <b>The same build, pointed anywhere.</b> A test client, a staging world and a live
+        /// one differ by an address, and baking that into the build made each of them a
+        /// separate build of identical code.
+        ///
+        /// <b>An address, never a credential.</b> Where the world is, is not a secret -- a
+        /// player's own client necessarily knows it. Nothing that proves who somebody is
+        /// arrives this way, and nothing here is logged.
+        /// </remarks>
+        private void ApplyLaunchOptions()
+        {
+            string[] arguments = Environment.GetCommandLineArgs();
+            Func<string, string> environment = Environment.GetEnvironmentVariable;
+
+            _address = LaunchOptions.Resolve(AddressOption, AddressVariable,
+                arguments, environment, _address);
+
+            _port = LaunchOptions.ResolvePort(PortOption, PortVariable,
+                arguments, environment, _port);
+        }
+
         private void Awake()
         {
             _networkManager = GetComponent<NetworkManager>();
@@ -103,6 +134,8 @@ namespace ChibiFantasy.Client
 
                 return;
             }
+
+            ApplyLaunchOptions();
 
             Register();
 

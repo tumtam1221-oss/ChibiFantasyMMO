@@ -19,6 +19,7 @@ use ChibiFantasy\Session\VersionPolicy;
 use ChibiFantasy\Support\Env;
 use ChibiFantasy\World\MonsterRewardRepository;
 use ChibiFantasy\World\MonsterSpawnRepository;
+use ChibiFantasy\World\WorldClockRepository;
 use PDO;
 
 /**
@@ -50,10 +51,20 @@ final class Api
     private readonly PartyRepository $parties;
     private readonly MonsterSpawnRepository $monsterSpawns;
     private readonly MonsterRewardRepository $monsterRewards;
+    private readonly WorldClockRepository $worldClock;
     private readonly IdempotencyStore $idempotency;
 
-    public function __construct(private readonly PDO $pdo)
-    {
+    /**
+     * @param $worldServerKey The deployment key the world clock write must present, or null
+     *                        to read it from the environment. Supplied only by a test, so the
+     *                        "no key configured closes the door" rule can be proved without
+     *                        depending on what happens to be in the environment when the
+     *                        suite runs -- which is not something a test can clear.
+     */
+    public function __construct(
+        private readonly PDO $pdo,
+        private readonly ?string $worldServerKey = null
+    ) {
         $this->accounts = new AccountRepository($pdo);
         $this->authenticator = new Authenticator($this->accounts, new RateLimiter($pdo));
         $this->sessions = new SessionRepository($pdo);
@@ -63,6 +74,7 @@ final class Api
         $this->parties = new PartyRepository($pdo);
         $this->monsterSpawns = new MonsterSpawnRepository($pdo);
         $this->monsterRewards = new MonsterRewardRepository($pdo);
+        $this->worldClock = new WorldClockRepository($pdo);
         $this->idempotency = new IdempotencyStore($pdo);
         $this->flow = new SessionService(
             $pdo,
@@ -152,6 +164,12 @@ final class Api
 
             $request->method === 'GET' && $path === '/api/world/spawn-configuration'
                 => $this->spawnConfiguration($request, $requestId),
+
+            $request->method === 'GET' && $path === '/api/world/clock'
+                => $this->readWorldClock($request, $requestId),
+
+            $request->method === 'POST' && $path === '/api/world/clock'
+                => $this->writeWorldClock($request, $requestId),
 
             $request->method === 'POST' && $path === '/api/world/monster-reward'
                 => $this->recordMonsterReward($request, $requestId),
@@ -1044,5 +1062,108 @@ final class Api
                 'error.auth.invalid_credentials'
             ),
         };
+    }
+
+    /**
+     * What time this world had got to when it was last saved.
+     *
+     * **Unauthenticated, like the spawn configuration and for the same reason.** A
+     * world server has no credential of its own for a plain read, and the time of day
+     * is not a secret: a player learns it by looking at the sky. Nothing here carries
+     * account data, character data or a token.
+     *
+     * A world that has never been saved is reported as absent rather than as an error.
+     * That is the ordinary state of a new world, and a 404 would put a scary line in an
+     * operator's log every time a fresh server started.
+     */
+    private function readWorldClock(Request $request, string $requestId): Response
+    {
+        $serverId = (string) $request->query('server_id', '');
+        $channelId = (string) $request->query('channel_id', '');
+
+        if ($serverId === '' || $channelId === '') {
+            return Response::problem(
+                ApiProblem::validation('invalid_world', 'error.field_required'),
+                $requestId
+            );
+        }
+
+        $row = $this->worldClock->load($serverId, $channelId);
+
+        return Response::ok([
+            'server_id'  => $serverId,
+            'channel_id' => $channelId,
+            'saved'      => $row !== null,
+            'elapsed_seconds' => $row['elapsed_seconds'] ?? 0.0,
+            'seconds_per_day' => $row['seconds_per_day'] ?? 0.0,
+        ]);
+    }
+
+    /**
+     * Records where a world's calendar has got to.
+     *
+     * **This one is guarded, and not by a player's token.** Every other write in this
+     * API is authorised by the session of the player it concerns; the world's calendar
+     * concerns no player and may well be written when nobody is online at all, so
+     * there is no session to borrow. It is guarded instead by a key that belongs to the
+     * deployment, read from the environment and never committed -- the same place the
+     * database credentials already live.
+     *
+     * **Refused outright when no key is configured.** The tempting alternative -- allow
+     * the write when no key is set, so development is convenient -- makes the safe
+     * configuration the one an operator has to remember, and a forgotten line in a
+     * deployment file becomes an open door that lets anyone who can reach the port set
+     * what time it is for every player at once.
+     *
+     * The comparison is constant-time so the response cannot be used to guess the key
+     * one character at a time.
+     */
+    private function writeWorldClock(Request $request, string $requestId): Response
+    {
+        $expected = $this->worldServerKey ?? (string) Env::get('WORLD_SERVER_KEY', '');
+
+        if ($expected === '') {
+            error_log('[api] world clock write refused: WORLD_SERVER_KEY is not configured');
+
+            return Response::problem(
+                ApiProblem::forbidden('world_key_not_configured', 'error.forbidden'),
+                $requestId
+            );
+        }
+
+        $presented = (string) $request->bearerToken();
+
+        if ($presented === '' || !hash_equals($expected, $presented)) {
+            return Response::problem(
+                ApiProblem::unauthenticated('invalid_world_key', 'error.unauthenticated'),
+                $requestId
+            );
+        }
+
+        $serverId = $request->string('server_id', '');
+        $channelId = $request->string('channel_id', '');
+
+        if ($serverId === '' || $channelId === '') {
+            return Response::problem(
+                ApiProblem::validation('invalid_world', 'error.field_required'),
+                $requestId
+            );
+        }
+
+        $elapsed = $request->float('elapsed_seconds', -1.0);
+        $rate = $request->float('seconds_per_day', -1.0);
+
+        if (!$this->worldClock->save($serverId, $channelId, $elapsed, $rate)) {
+            return Response::problem(
+                ApiProblem::validation('invalid_clock', 'error.field_invalid'),
+                $requestId
+            );
+        }
+
+        return Response::ok([
+            'server_id'  => $serverId,
+            'channel_id' => $channelId,
+            'saved'      => true,
+        ]);
     }
 }

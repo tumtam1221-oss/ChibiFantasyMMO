@@ -1,3 +1,4 @@
+using System;
 using System.Diagnostics;
 using System.IO;
 using UnityEditor;
@@ -102,17 +103,40 @@ namespace ChibiFantasy.Editor
                 return;
             }
 
+            string key = WorldServerKey();
+
+            if (string.IsNullOrEmpty(key))
+            {
+                Debug.LogWarning("[dev] no " + WorldKeyVariable + " available, so this world "
+                    + "will not remember what day it is across a restart. Generate one: "
+                    + "ChibiFantasy > World > Generate world server key.");
+            }
+
             var start = new ProcessStartInfo
             {
                 FileName = exe,
                 WorkingDirectory = Path.GetDirectoryName(exe),
-                UseShellExecute = true,
+
+                // Not ShellExecute, because the key has to go into the child's environment
+                // and ShellExecute cannot carry one. A console-subsystem build still gets
+                // its own window this way, so closing that window still stops the server.
+                UseShellExecute = false,
+                CreateNoWindow = false,
             };
+
+            // Passed through the environment rather than on the command line: a command
+            // line is readable by anything that can list processes, and this is a
+            // credential. It is forwarded here, never invented -- backend/.env decides it.
+            if (!string.IsNullOrEmpty(key))
+            {
+                start.EnvironmentVariables[WorldKeyVariable] = key;
+            }
 
             Process.Start(start);
 
-            Debug.Log("[dev] world server starting on port 7770. It runs in its own window; "
-                + "close that window to stop it.");
+            Debug.Log("[dev] world server starting on port 7770"
+                + (string.IsNullOrEmpty(key) ? " WITHOUT a world key" : " with the world key")
+                + ". It runs in its own window; close that window to stop it.");
         }
 
         [MenuItem("ChibiFantasy/Play/3. Play Development Client", priority = 120)]
@@ -133,6 +157,81 @@ namespace ChibiFantasy.Editor
         }
 
         /// <summary>Where the repository is, from where Unity says the project is.</summary>
+        /// <summary>The environment variable the world server reads its key from.</summary>
+        private const string WorldKeyVariable = "CHIBI_WORLD_SERVER_KEY";
+
+        /// <summary>What the API calls the same value.</summary>
+        private const string BackendKeyVariable = "WORLD_SERVER_KEY";
+
+        /// <summary>
+        /// Reads the deployment key out of backend/.env.
+        /// </summary>
+        /// <remarks>
+        /// <b>Read, not decided.</b> This launcher is not a second source of truth for
+        /// anything, and a key invented here would be a key the API does not have -- which
+        /// fails silently, because the only symptom is a world that quietly stops
+        /// remembering the date.
+        ///
+        /// <b>Never logged.</b> The value is returned and handed to a child process, and no
+        /// line in this file prints it.
+        /// </remarks>
+        private static string WorldServerKey()
+        {
+            // The process environment wins, exactly as the backend's own Env does, so an
+            // operator can override without editing a file.
+            string fromEnvironment = Environment.GetEnvironmentVariable(WorldKeyVariable);
+
+            if (!string.IsNullOrEmpty(fromEnvironment)) return fromEnvironment;
+
+            string path = Path.Combine(ProjectRoot(), "backend", ".env");
+
+            if (!File.Exists(path)) return null;
+
+            foreach (string raw in File.ReadAllLines(path))
+            {
+                string line = raw.Trim();
+
+                if (line.Length == 0 || line[0] == '#') continue;
+
+                int split = line.IndexOf('=');
+
+                if (split <= 0) continue;
+
+                if (line.Substring(0, split).Trim() != BackendKeyVariable) continue;
+
+                return line.Substring(split + 1).Trim().Trim('"');
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Creates the deployment key the world server proves itself with.
+        /// </summary>
+        /// <remarks>Runs the backend's own command rather than generating one here, so there
+        /// is exactly one thing in this project that decides what a key is and where it is
+        /// written. Refuses to replace an existing key -- rotating one means restarting the
+        /// API and every world server together.</remarks>
+        [MenuItem("ChibiFantasy/World/Generate world server key", priority = 200)]
+        public static void GenerateWorldServerKey()
+        {
+            string root = ProjectRoot();
+
+            var start = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/c php bin/world-key.php --generate && pause",
+                WorkingDirectory = Path.Combine(root, "backend"),
+                UseShellExecute = true,
+            };
+
+            Process.Start(start);
+
+            Debug.Log("[dev] generating a world server key in its own window. It is written "
+                + "to backend/.env, which is gitignored, and is never printed here. Restart "
+                + "the API afterwards so it picks the new key up.");
+        }
+
         private static string ProjectRoot()
         {
             return Directory.GetParent(Application.dataPath).FullName;

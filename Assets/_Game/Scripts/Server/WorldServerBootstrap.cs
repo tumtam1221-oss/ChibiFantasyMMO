@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using ChibiFantasy.Backend;
 using ChibiFantasy.Contracts;
@@ -183,6 +184,8 @@ namespace ChibiFantasy.Server
                 return;
             }
 
+            ApplyLaunchOptions();
+
             Compose();
 
             if (_startOnAwake) StartServer();
@@ -198,7 +201,8 @@ namespace ChibiFantasy.Server
             ICharacterStateStore characters = null,
             IMonsterSpawnConfigurationSource spawnConfiguration = null,
             IPartyStateStore parties = null,
-            IMonsterRewardOutbox rewardOutbox = null)
+            IMonsterRewardOutbox rewardOutbox = null,
+            IWorldClockStore clockStore = null)
         {
             Registry = new WorldConnectionRegistry();
 
@@ -210,13 +214,17 @@ namespace ChibiFantasy.Server
                 authority = BackendAuthority.WorldServicesOverHttp(_apiBaseAddress,
                     _apiTimeoutSeconds, out ICharacterStateStore store,
                     out IMonsterSpawnConfigurationSource nests, out _authorityLifetime,
-                    out IPartyStateStore partyStore, out IMonsterRewardOutbox outbox);
+                    out IPartyStateStore partyStore, out IMonsterRewardOutbox outbox,
+                    out IWorldClockStore clocks);
 
                 characters = characters ?? store;
                 spawnConfiguration = spawnConfiguration ?? nests;
                 parties = parties ?? partyStore;
                 rewardOutbox = rewardOutbox ?? outbox;
+                clockStore = clockStore ?? clocks;
             }
+
+            ClockStore = clockStore;
 
             Coordinator = new WorldEntryCoordinator(authority, Registry, required);
 
@@ -434,7 +442,7 @@ namespace ChibiFantasy.Server
 
             Simulation = new WorldSimulation(players, replication, status, stat, movement,
                 combat, monsters, loot, MonsterReplication, rewards, LootAuthority,
-                InventoryAuthority);
+                InventoryAuthority, clock: RestoreClock());
 
             // The sky tells everybody at once. Subscribed here rather than polled in the
             // tick so a change costs one broadcast at the moment it happens and nothing at
@@ -711,6 +719,26 @@ namespace ChibiFantasy.Server
             Simulation.Tick(Time.deltaTime, calendar);
 
             BroadcastTimeOnSchedule(calendar);
+
+            SaveClockOnSchedule(calendar);
+        }
+
+        /// <summary>
+        /// Writes the calendar down every so often, as well as on the way out.
+        /// </summary>
+        /// <remarks>Saving only at shutdown would lose the whole session to a crash, a power
+        /// cut or a kill -- which is how most servers actually stop.</remarks>
+        private void SaveClockOnSchedule(float deltaSeconds)
+        {
+            if (_clockSaveSeconds <= 0f) return;
+
+            _sinceClockSaved += deltaSeconds;
+
+            if (_sinceClockSaved < _clockSaveSeconds) return;
+
+            _sinceClockSaved = 0f;
+
+            SaveClock();
         }
 
         /// <summary>
@@ -757,6 +785,171 @@ namespace ChibiFantasy.Server
         private double _lastRealSeconds;
 
         private float _sinceTimeBroadcast;
+
+        /// <summary>Command-line names and environment variables this server accepts.</summary>
+        /// <remarks>Named here rather than spelled out at each call so a deployment file and
+        /// this code cannot drift apart in a way nobody notices until a server starts as the
+        /// wrong channel.</remarks>
+        public const string ServerOption = "server";
+        public const string ServerVariable = "CHIBI_SERVER_ID";
+        public const string ChannelOption = "channel";
+        public const string ChannelVariable = "CHIBI_CHANNEL_ID";
+        public const string PortOption = "port";
+        public const string PortVariable = "CHIBI_PORT";
+        public const string ApiOption = "api";
+        public const string ApiVariable = "CHIBI_API_BASE_ADDRESS";
+
+        /// <summary>
+        /// Lets the launch decide which world this process is, and where the authority lives.
+        /// </summary>
+        /// <remarks>
+        /// <b>This is what makes one build serve ten channels.</b> Identity, port and the
+        /// account authority's address used to exist only in the scene, so every channel was
+        /// its own build and moving the API meant rebuilding the world.
+        ///
+        /// <b>Announced, because a server that started as the wrong channel looks fine.</b>
+        /// It listens, it admits players, it saves its calendar -- under somebody else's
+        /// name. The one cheap defence is saying out loud which world this process became.
+        /// None of these four values is a secret; the key that is one is never printed.
+        /// </remarks>
+        private void ApplyLaunchOptions()
+        {
+            string[] arguments = System.Environment.GetCommandLineArgs();
+            Func<string, string> environment = System.Environment.GetEnvironmentVariable;
+
+            _serverId = LaunchOptions.Resolve(ServerOption, ServerVariable,
+                arguments, environment, _serverId);
+
+            _channelId = LaunchOptions.Resolve(ChannelOption, ChannelVariable,
+                arguments, environment, _channelId);
+
+            _apiBaseAddress = LaunchOptions.Resolve(ApiOption, ApiVariable,
+                arguments, environment, _apiBaseAddress);
+
+            _port = LaunchOptions.ResolvePort(PortOption, PortVariable,
+                arguments, environment, _port);
+
+            Debug.Log("[world] this process is server='" + _serverId
+                + "' channel='" + _channelId + "' port=" + _port
+                + " authority=" + (string.IsNullOrEmpty(_apiBaseAddress)
+                    ? "<unconfigured>"
+                    : _apiBaseAddress));
+        }
+
+        /// <summary>Where this world's calendar is written down. Null when nowhere.</summary>
+        public IWorldClockStore ClockStore { get; private set; }
+
+        /// <summary>Whether this world will be remembered across a restart.</summary>
+        public bool CanSaveCalendar
+        {
+            get
+            {
+                if (ClockStore == null || !Server.IsValid || !Channel.IsValid) return false;
+
+                var http = ClockStore as HttpWorldClockStore;
+
+                return http == null || http.CanSave;
+            }
+        }
+
+        /// <summary>
+        /// The clock this world should open with.
+        /// </summary>
+        /// <remarks>
+        /// <b>A saved calendar is resumed; anything else starts the authored day.</b> No
+        /// store, an unreachable one, a world that has never been saved and a stored row that
+        /// is not a usable measurement all mean the same thing here, and none of them stops a
+        /// server from opening. A world that refused to start because the database was
+        /// briefly away would be a far worse failure than one that opened at breakfast.
+        ///
+        /// <b>A changed day length is not resumed.</b> The elapsed total was counted against
+        /// the rate it was saved with; reading it back under a different one would move the
+        /// world by weeks. When they disagree the authored day is started instead, and the
+        /// operator is told, because silently relocating the world in time is the kind of
+        /// thing that gets blamed on anything but the setting that caused it.
+        /// </remarks>
+        private WorldClock RestoreClock()
+        {
+            double perDay = WorldClock.DefaultSecondsPerDay;
+
+            if (ClockStore == null) return new WorldClock(perDay);
+
+            WorldClockState? saved = ClockStore.Load(Server, Channel);
+
+            if (saved == null) return new WorldClock(perDay);
+
+            WorldClockState state = saved.Value;
+
+            if (System.Math.Abs(state.SecondsPerDay - perDay) > 0.001)
+            {
+                Debug.LogWarning("[world] saved calendar was measured against a "
+                    + state.SecondsPerDay + "s day but this server runs a " + perDay
+                    + "s day; starting the authored day rather than relocating the world");
+
+                return new WorldClock(perDay);
+            }
+
+            Debug.Log("[world] calendar resumed at day "
+                + (long)(state.ElapsedSeconds / perDay));
+
+            return WorldClock.Restore(perDay, state.ElapsedSeconds);
+        }
+
+        /// <summary>
+        /// Writes the calendar down, if this deployment gave the server a way to.
+        /// </summary>
+        /// <remarks>Failure is reported once and then ignored: a world that could not save
+        /// loses the last few minutes on the next restart, which is not worth interrupting a
+        /// running server over.</remarks>
+        private void SaveClock()
+        {
+            if (ClockStore == null || Simulation == null) return;
+
+            bool saved = ClockStore.Save(Server, Channel, new WorldClockState(
+                Simulation.Clock.ElapsedSeconds, Simulation.Clock.SecondsPerDay));
+
+            if (saved || _warnedClockUnsaved) return;
+
+            _warnedClockUnsaved = true;
+
+            Debug.LogWarning("[world] the calendar could not be saved; this world will "
+                + "restart at the authored hour. " + WhyTheCalendarCannotBeSaved());
+        }
+
+        /// <summary>
+        /// The most likely reason a save failed, named rather than guessed at.
+        /// </summary>
+        /// <remarks>
+        /// <b>Written after chasing the wrong one.</b> The first version of this warning only
+        /// ever asked whether the key was set, so an unconfigured world id -- which is what it
+        /// actually was -- sent the reader hunting through environment variables. A diagnostic
+        /// that names one cause when there are three is worse than one that names none.
+        /// </remarks>
+        private string WhyTheCalendarCannotBeSaved()
+        {
+            if (!Server.IsValid || !Channel.IsValid)
+            {
+                return "This server has no server id or channel id configured, so its world "
+                    + "has no name to be saved under. Set them on WorldServerBootstrap.";
+            }
+
+            var http = ClockStore as HttpWorldClockStore;
+
+            if (http != null && !http.CanSave)
+            {
+                return "No deployment key: set " + HttpWorldClockStore.KeyVariable
+                    + " in this server's environment.";
+            }
+
+            return "The account authority refused or could not be reached.";
+        }
+
+        private bool _warnedClockUnsaved;
+        private float _sinceClockSaved;
+
+        [Tooltip("How often the world's calendar is written down, in seconds. Zero never "
+            + "writes it, and the world restarts at the authored hour.")]
+        [SerializeField] private float _clockSaveSeconds = 120f;
 
         /// <summary>
         /// Repeats the world's time to everyone, every so often.
@@ -845,6 +1038,13 @@ namespace ChibiFantasy.Server
                 + " port=" + _port
                 + " " + state
                 + " characters=" + (Characters == null ? 0 : Characters.Count));
+
+            // Said at startup rather than discovered after the first save interval: an
+            // operator who learns at minute two that the world will not be remembered has
+            // already lost the two minutes.
+            Debug.Log("[world] calendar: " + (CanSaveCalendar
+                ? "will be saved for " + _serverId + "/" + _channelId
+                : "WILL NOT BE SAVED. " + WhyTheCalendarCannotBeSaved()));
         }
 
         /// <summary>
@@ -886,6 +1086,9 @@ namespace ChibiFantasy.Server
 
         private void OnApplicationQuit()
         {
+            // Last chance to write the calendar down while the world still exists.
+            SaveClock();
+
             StopServer();
         }
 

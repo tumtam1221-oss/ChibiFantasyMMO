@@ -78,6 +78,42 @@ namespace ChibiFantasy.Gameplay
         /// <summary>How many whole in-game days have passed since the world started.</summary>
         public long Day => (long)(_elapsed / _secondsPerDay);
 
+        /// <summary>
+        /// The whole clock: total world seconds since day zero began.
+        /// </summary>
+        /// <remarks>This, not <see cref="TimeOfDay"/>, is what has to be written down for a
+        /// world to be resumed. The hour alone loses the date, so a server restarted at
+        /// midnight would come back on the wrong day and every calendar built on it would be
+        /// out by one.</remarks>
+        public double ElapsedSeconds => _elapsed;
+
+        /// <summary>
+        /// Restores a clock that was written down earlier.
+        /// </summary>
+        /// <remarks>
+        /// <b>The rate has to match, and is checked by the caller.</b> Elapsed seconds mean
+        /// nothing without the day length they were measured against: reading a total saved
+        /// under a one hour day back into a two hour day would move the world by weeks. This
+        /// takes both so the pair always travels together.
+        ///
+        /// <b>A nonsense total starts a fresh world rather than throwing.</b> A server that
+        /// cannot read its saved calendar should open at the authored hour, not fail to open.
+        /// </remarks>
+        public static WorldClock Restore(double secondsPerDay, double elapsedSeconds)
+        {
+            var clock = new WorldClock(secondsPerDay);
+
+            if (double.IsNaN(elapsedSeconds) || double.IsInfinity(elapsedSeconds)
+                || elapsedSeconds < 0.0)
+            {
+                return clock;
+            }
+
+            clock._elapsed = elapsedSeconds;
+
+            return clock;
+        }
+
         /// <summary>The current phase.</summary>
         public WorldTimePhase Phase => PhaseAt(TimeOfDay);
 
