@@ -376,6 +376,27 @@ namespace ChibiFantasy.Server
         /// Seconds the killer's claim holds before anyone may take it. Zero means it never
         /// lapses, which is what <c>OwnerOnly</c> loot wants.
         /// </param>
+        /// <summary>
+        /// Told once per monster, after the defeat is claimed and attributed.
+        /// </summary>
+        /// <remarks>
+        /// <b>A notification, not a payment.</b> Experience, loot and the outbox are this
+        /// class's own business and happen either side of it. This exists so that things
+        /// which care that a monster died -- quests today, achievements and titles later --
+        /// can hear about it without this file learning what any of them are.
+        ///
+        /// <b>Once per life.</b> It fires inside the claim, which
+        /// <c>MonsterRuntimeState.TryClaimDefeat</c> permits exactly once, so a listener
+        /// cannot be told twice about one slime however many times it was hit.
+        ///
+        /// <b>Composed, never set.</b> It arrives through the constructor rather than as a
+        /// public property, because a settable delegate is a seam anything could rebind
+        /// mid-fight -- and because this authority's public surface is deliberately closed:
+        /// nothing on it takes a value from a caller, which is what stops an experience
+        /// amount or a connection arriving through the front door. Three tests hold that.
+        /// </remarks>
+        private readonly System.Action<LivingCharacter, DefinitionId> _killClaimed;
+
         public MonsterRewardAuthority(MonsterWorldRuntime monsters,
             WorldCharacterRegistry characters, CharacterProgressionDefinition progression,
             MonsterLootRegistry loot = null,
@@ -389,8 +410,10 @@ namespace ChibiFantasy.Server
             float rewardRangeMetres = 0f,
             IMonsterRewardOutbox outbox = null,
             IDefinitionRegistry<PetDefinition> pets = null,
-            float petExperienceShare = 0f)
+            float petExperienceShare = 0f,
+            System.Action<LivingCharacter, DefinitionId> onKillClaimed = null)
         {
+            _killClaimed = onKillClaimed;
             _pets = pets;
             _petExperienceShare = petExperienceShare < 0f ? 0f : petExperienceShare;
             _parties = parties;
@@ -533,6 +556,18 @@ namespace ChibiFantasy.Server
             }
 
             _paid.Add(monster.Value);
+
+            // The one place in the world that knows a kill really happened and whose it was.
+            //
+            // Told here rather than from combat, because combat resolves damage many times
+            // per monster and only this call claims the defeat -- once per monster life,
+            // guarded by MonsterRuntimeState.TryClaimDefeat. Anything hung off an earlier
+            // step would advance a quest three times for one slime.
+            //
+            // Handed the definition, not the instance: a quest counts training slimes, not
+            // one particular slime. Whoever is listening decides what that satisfies; this
+            // does not know quests exist.
+            _killClaimed?.Invoke(recipient, definition.Id);
 
             // Who this kill belongs to, decided now and not revisited.
             DefeatRewardContext context = ContextFor(recipient, living);

@@ -101,6 +101,12 @@ namespace ChibiFantasy.Server
             // representation into existence -- the same argument the fruit state makes.
             Companion = new PetCompanionState(character.Identity.CharacterId);
 
+            // One live quest log per character, for the same reason as the fruit and the
+            // companion: acceptance, progress and turn-in all read and write this object, so
+            // the log a player sees, the log a kill advances and the log that is saved are
+            // one thing rather than three that can disagree.
+            Quests = new CharacterQuestState(character.Identity.CharacterId);
+
             // One live fruit state per character, always present even when empty, so every
             // reader asks the same object rather than null-checking a second representation
             // into existence. Phase 12's type, unchanged: this class holds one, it does not
@@ -340,6 +346,15 @@ namespace ChibiFantasy.Server
         public CharacterDevilFruitState DevilFruit { get; }
 
         public CharacterSkillsState Skills { get; }
+
+        /// <summary>
+        /// What this character has taken, is doing and has finished.
+        /// </summary>
+        /// <remarks><b>Server-owned.</b> A client is sent a copy to draw and can ask for it
+        /// to change, but nothing a client sends is ever written here directly -- acceptance
+        /// and turn-in go through <c>QuestService</c>, and progress arrives from the world
+        /// rather than from the player.</remarks>
+        public CharacterQuestState Quests { get; }
 
         /// <summary>Phase 11's location state, the one the travel system moves.</summary>
         public CharacterLocationState Location { get; }
@@ -607,6 +622,15 @@ namespace ChibiFantasy.Server
         /// producing a character at the origin. And the duplicate check runs before either,
         /// so a second spawn attempt costs no round trip.
         /// </remarks>
+        /// <summary>
+        /// Told the database's current day whenever a character is loaded.
+        /// </summary>
+        /// <remarks>A delegate rather than a reference to the quest authority: character
+        /// loading should not have to know that daily quests exist, and a second consumer
+        /// of the date -- an event, a login bonus -- costs one more subscriber rather than
+        /// another dependency threaded through here.</remarks>
+        public System.Action<int, int> DayObserved { get; set; }
+
         public WorldSpawnResult Spawn(int connectionId, in WorldAdmission admission,
             ResourceLimits limits = default, CombatTeam team = default)
         {
@@ -729,6 +753,38 @@ namespace ChibiFantasy.Server
             var living = new LivingCharacter(connectionId, admission.Session, admission.Account,
                 admission.Server, admission.Channel, domain.Character, domain.Skills, location,
                 spawn, loaded.Character.SaveRevision, team, inventory, equipment, fruit, pets);
+
+            // What day the database thinks it is, learned from the same reply that brought
+            // the quest log it will be compared against. Announced rather than stored here:
+            // this registry has no business knowing that quests reset, and the quest
+            // authority has no business reaching into character loading.
+            if (loaded.Character.ServerDay > 0)
+            {
+                var observed = DayObserved;
+
+                if (observed != null)
+                {
+                    observed(loaded.Character.ServerDay,
+                        loaded.Character.ServerDayEndsInSeconds);
+                }
+            }
+
+            // What they had taken when they logged out. Restored before anything can
+            // advance it, so a kill in the first second of a session counts toward the
+            // quest they were already on rather than being dropped on the floor.
+            //
+            // A row naming a quest this world no longer ships is left out rather than
+            // adopted: its objectives are authored, and a counter with nothing to count
+            // would sit in the log for ever.
+            for (var i = 0; i < loaded.Character.Quests.Count; i++)
+            {
+                PersistedQuest saved = loaded.Character.Quests[i];
+
+                if (!saved.Quest.IsValid) continue;
+
+                living.Quests.AdoptAuthoritative(saved.Quest, (QuestStatus)saved.Status,
+                    saved.Counters, saved.CompletedDay);
+            }
 
             // What storage already knows this character has been paid, per reward. A
             // reward that is still owed but whose experience is already here reconciles
@@ -855,7 +911,7 @@ namespace ChibiFantasy.Server
             PersistedCharacter row = PersistedCharacterMapper.ToPersisted(living.Domain,
                 living.Skills, living.Location, living.Server, living.Account,
                 living.SaveRevision, living.Inventory, living.Equipment, living.DevilFruit,
-                living.Pets, living.Companion, living.AppliedRewards());
+                living.Pets, living.Companion, living.AppliedRewards(), living.Quests);
 
             CharacterPersistenceResult result = _store.Save(living.Session, row,
                 living.SaveRevision);

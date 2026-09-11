@@ -468,6 +468,186 @@ namespace ChibiFantasy.Network
 
         private ICharacterLootRequestSink _loot;
 
+        // ---- talking to somebody ---------------------------------------------------------
+
+        /// <summary>The server's last answer about an NPC, as this client knows it.</summary>
+        public NpcInteractionSnapshot NpcInteraction { get; private set; }
+
+        /// <summary>
+        /// Raised on the owning client when the server answers an interaction request.
+        /// </summary>
+        /// <remarks>Carries the refusal as well as the permission. A client that only heard
+        /// about success would have to time out to discover it was too far away, and a
+        /// player would read that as the game ignoring them.</remarks>
+        public event System.Action<NpcInteractionSnapshot> NpcInteractionAnswered;
+
+        [TargetRpc]
+        private void TargetPublishNpcInteraction(NetworkConnection connection,
+            NpcInteractionSnapshot snapshot)
+        {
+            NpcInteraction = snapshot;
+
+            NpcInteractionAnswered?.Invoke(snapshot);
+        }
+
+        /// <summary>Sends one player the answer to their own interaction request.</summary>
+        /// <remarks>Targeted rather than observed: which NPC somebody is talking to and what
+        /// it offered them is nobody else's business, and broadcasting it would put every
+        /// player's shop and quest traffic on every other player's connection.</remarks>
+        [Server]
+        public void ServerPublishNpcInteraction(in NpcInteractionSnapshot snapshot)
+        {
+            if (Owner == null || !Owner.IsActive) return;
+
+            TargetPublishNpcInteraction(Owner, snapshot);
+        }
+
+        [Server]
+        public void ServerUseNpcSink(ICharacterNpcRequestSink npcs)
+        {
+            _npcs = npcs;
+        }
+
+        private ICharacterNpcRequestSink _npcs;
+
+        /// <summary>
+        /// Asks to talk to an NPC about one thing.
+        /// </summary>
+        /// <remarks>
+        /// <b>An NPC and a role.</b> Not a shop, not a price, not a quest step, not a class:
+        /// what that NPC offers, whether it offers this, and how far away the asker is
+        /// standing are all read on the server from state this call cannot reach.
+        ///
+        /// <b>Ownership is the authentication</b>, as with every other request here. FishNet
+        /// refuses this from a connection that does not own the object, so the identity is
+        /// never something the message carries.
+        /// </remarks>
+        [ServerRpc]
+        public void RequestNpcInteraction(string npcId, int role, long sequence)
+        {
+            if (_npcs == null) return;
+
+            int connectionId = Owner == null ? -1 : Owner.ClientId;
+
+            if (connectionId < 0) return;
+
+            _npcs.Submit(connectionId, npcId ?? string.Empty, role, sequence);
+        }
+
+        // ---- what this character is doing ------------------------------------------------
+
+        /// <summary>This player's quest log, as far as they know.</summary>
+        public QuestLogSnapshot QuestLog { get; private set; }
+
+        /// <summary>Raised on the owning client whenever the log changes.</summary>
+        public event System.Action<QuestLogSnapshot> QuestLogChanged;
+
+        /// <summary>Raised on the owning client when a quest request is answered.</summary>
+        public event System.Action<QuestCommandSnapshot> QuestCommandAnswered;
+
+        [TargetRpc]
+        private void TargetPublishQuestLog(NetworkConnection connection,
+            QuestLogSnapshot snapshot)
+        {
+            QuestLog = snapshot;
+
+            QuestLogChanged?.Invoke(snapshot);
+        }
+
+        [TargetRpc]
+        private void TargetPublishQuestCommand(NetworkConnection connection,
+            QuestCommandSnapshot snapshot)
+        {
+            QuestCommandAnswered?.Invoke(snapshot);
+        }
+
+        /// <summary>
+        /// Sends one player their whole quest log.
+        /// </summary>
+        /// <remarks>Targeted, like the bag and the status list: what somebody is doing is
+        /// nobody else's business, and there is no observer scoping that would keep a
+        /// broadcast from telling everybody.</remarks>
+        [Server]
+        public void ServerPublishQuestLog(in QuestLogSnapshot snapshot)
+        {
+            if (Owner == null || !Owner.IsActive) return;
+
+            TargetPublishQuestLog(Owner, snapshot);
+        }
+
+        /// <summary>Sends one player the answer to their own quest request.</summary>
+        [Server]
+        public void ServerPublishQuestCommand(in QuestCommandSnapshot snapshot)
+        {
+            if (Owner == null || !Owner.IsActive) return;
+
+            TargetPublishQuestCommand(Owner, snapshot);
+        }
+
+        [Server]
+        public void ServerUseQuestSink(ICharacterQuestRequestSink quests)
+        {
+            _quests = quests;
+        }
+
+        private ICharacterQuestRequestSink _quests;
+
+        [Server]
+        public void ServerUseReviveSink(ICharacterReviveRequestSink revive)
+        {
+            _revive = revive;
+        }
+
+        private ICharacterReviveRequestSink _revive;
+
+        /// <summary>
+        /// Asks to get up again, in town.
+        /// </summary>
+        /// <remarks>
+        /// <b>The request carries nothing.</b> Not a position, not an amount of health, not
+        /// a claim to be dead. Whether they are, where they wake and how much they wake with
+        /// are all decided on the server from state this call cannot reach, so the worst a
+        /// tampered client can do with it is ask at a moment the server refuses.
+        ///
+        /// <b>Owner, not a parameter.</b> The connection is taken from whoever owns this
+        /// object, so a client cannot revive somebody else by editing the call.
+        /// </remarks>
+        [ServerRpc]
+        public void RequestRevive(long sequence)
+        {
+            if (_revive == null) return;
+
+            int connectionId = Owner == null ? -1 : Owner.ClientId;
+
+            if (connectionId < 0) return;
+
+            _revive.Submit(connectionId, sequence);
+        }
+
+        /// <summary>
+        /// Asks to take, hand in or give up a quest.
+        /// </summary>
+        /// <remarks>
+        /// <b>A quest, a command, and the giver they believe they are talking to.</b> Never
+        /// a reward, never a counter, never a status: what the quest pays, whether they may
+        /// take it and how far along they are are all read on the server from state this
+        /// call cannot reach. Naming a giver is a claim, and the server checks it by asking
+        /// whether the player is actually standing there.
+        /// </remarks>
+        [ServerRpc]
+        public void RequestQuestCommand(string questId, int command, string npcId,
+            long sequence)
+        {
+            if (_quests == null) return;
+
+            int connectionId = Owner == null ? -1 : Owner.ClientId;
+
+            if (connectionId < 0) return;
+
+            _quests.Submit(connectionId, questId ?? string.Empty, command,
+                npcId ?? string.Empty, sequence);
+        }
+
         [Server]
         public void ServerPublishDevilFruit(string fruit)
         {

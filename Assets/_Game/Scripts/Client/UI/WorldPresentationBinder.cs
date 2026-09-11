@@ -42,6 +42,8 @@ namespace ChibiFantasy.Client.UI
         private InventoryScreen _inventory;
         private WorldCameraDirector _camera;
         private IDefinitionRegistry<ItemDefinition> _items;
+        private ChibiFantasy.Client.World.WorldNpcPresenter _npcs;
+        private ChibiFantasy.Client.World.QuestJournal _journal;
 
         private CharacterNetworkEntity _bound;
 
@@ -59,15 +61,23 @@ namespace ChibiFantasy.Client.UI
         /// wire.</remarks>
         public void Compose(NetworkManager networkManager, WorldHudScreen hud,
             InventoryScreen inventory, IDefinitionRegistry<ItemDefinition> items,
-            WorldCameraDirector camera = null)
+            WorldCameraDirector camera = null,
+            ChibiFantasy.Client.World.WorldNpcPresenter npcs = null,
+            ChibiFantasy.Client.World.QuestJournal journal = null)
         {
             _networkManager = networkManager;
             _hud = hud;
             _inventory = inventory;
             _camera = camera;
             _items = items;
+            _npcs = npcs;
+            _journal = journal;
 
-            if (_hud != null) _hud.InventoryRequested += OnInventoryRequested;
+            if (_hud != null)
+            {
+                _hud.InventoryRequested += OnInventoryRequested;
+                _hud.ReviveRequested += OnReviveRequested;
+            }
         }
 
         /// <summary>Looks for the owned character and binds or unbinds accordingly.</summary>
@@ -93,6 +103,14 @@ namespace ChibiFantasy.Client.UI
                 _inventory?.SetOpen(false);
                 _camera?.Unbind();
 
+                // The townspeople stay where they are; what goes away is the player who
+                // was going to talk to them. A presenter still holding a destroyed entity
+                // would send its next request into nothing.
+                _npcs?.UsePlayer(null);
+
+                // The quest log belongs to the character who left with it.
+                _journal?.UsePlayer(null);
+
                 return;
             }
 
@@ -105,6 +123,15 @@ namespace ChibiFantasy.Client.UI
             // rebinds all three or none -- a camera bound on its own path would be the one
             // that kept following a destroyed object.
             _camera?.Bind(owned);
+
+            // Interaction goes through the same door as the HUD, the bag and the camera, so
+            // a reconnect rebinds all four or none.
+            _npcs?.UsePlayer(owned);
+
+            // Without this the journal has nobody to ask: RequestAccept returns before it
+            // sends anything, and the server's quest log never arrives -- which looks
+            // exactly like an Accept button that does nothing when pressed.
+            _journal?.UsePlayer(owned);
         }
 
         private void Update()
@@ -114,13 +141,31 @@ namespace ChibiFantasy.Client.UI
 
         private void OnDestroy()
         {
-            if (_hud != null) _hud.InventoryRequested -= OnInventoryRequested;
+            if (_hud == null) return;
+
+            _hud.InventoryRequested -= OnInventoryRequested;
+            _hud.ReviveRequested -= OnReviveRequested;
         }
 
         private void OnInventoryRequested()
         {
             _inventory?.Toggle();
         }
+
+        /// <summary>
+        /// Passes a fallen player's wish to get up along to the server.
+        /// </summary>
+        /// <remarks>The request carries nothing: not where, not how much health, not a claim
+        /// to be dead. All three are the server's, which is why the button cannot be used to
+        /// heal mid-fight however often it is pressed.</remarks>
+        private void OnReviveRequested()
+        {
+            if (_bound == null) return;
+
+            _bound.RequestRevive(++_reviveSequence);
+        }
+
+        private long _reviveSequence;
 
         /// <summary>
         /// The one character object this connection owns.

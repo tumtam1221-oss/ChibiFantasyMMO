@@ -433,12 +433,73 @@ namespace ChibiFantasy.Tests.EditMode
             monster.State.ApplyHealthDelta(-1000);
             _runtime.ClaimDefeat(id, new InstanceId("char-killer"), default, null);
 
-            MonsterTickResult result = _runtime.Tick(0.1f);
+            MonsterTickResult result = _runtime.Tick(MonsterWorldRuntime.CorpseLingerSeconds);
 
             Assert.That(result.Retired, Is.EqualTo(1));
             Assert.That(_runtime.AliveCount, Is.Zero);
             Assert.That(_runtime.TryResolve(id, out _), Is.False,
                 "a collected corpse must not remain targetable");
+        }
+
+        [Test]
+        public void AClaimedCorpseLiesThereLongEnoughToBeSeenDying()
+        {
+            // The defect: a monster was swept away on the tick after its defeat was
+            // claimed, which is about fifty milliseconds after it died -- so the death
+            // animation a player had just earned was never drawn and the slime simply
+            // stopped existing mid-swing. The body now stays for a moment.
+            //
+            // Asserted on the body, not on the animation: what the server owes the
+            // presentation is a monster that is still there, at zero health.
+            _runtime.AddSpawnPoint(Nest(Grunt, HomeMap, respawnDelay: 10f));
+            _runtime.PopulateAll();
+
+            LivingMonster monster = OnlyMonster();
+            InstanceId id = monster.Instance;
+
+            monster.State.ApplyHealthDelta(-1000);
+            _runtime.ClaimDefeat(id, new InstanceId("char-killer"), default, null);
+
+            var elapsed = 0f;
+
+            while (elapsed < MonsterWorldRuntime.CorpseLingerSeconds - 0.2f)
+            {
+                Assert.That(_runtime.Tick(0.1f).Retired, Is.Zero,
+                    "swept away after only " + elapsed + "s, before it could be seen dying");
+
+                elapsed += 0.1f;
+
+                Assert.That(_runtime.TryResolve(id, out ICombatant body), Is.True);
+                Assert.That(body.IsAlive(), Is.False, "it is a body, not a monster");
+            }
+
+            Assert.That(_runtime.Tick(1f).Retired, Is.EqualTo(1), "and then it goes");
+        }
+
+        [Test]
+        public void ACorpseThatLingersIsStillOnlyRewardedOnce()
+        {
+            // The body staying longer must not turn into a second payout: every extra tick
+            // it is lying there is another chance for a claim to be granted twice.
+            _runtime.AddSpawnPoint(Nest(Grunt, HomeMap, respawnDelay: 10f));
+            _runtime.PopulateAll();
+
+            LivingMonster monster = OnlyMonster();
+            InstanceId id = monster.Instance;
+
+            monster.State.ApplyHealthDelta(-1000);
+
+            Assert.That(_runtime.ClaimDefeat(id, new InstanceId("char-killer"), default, null)
+                .IsClaimed, Is.True, "the first claim");
+
+            for (var i = 0; i < 10; i++)
+            {
+                _runtime.Tick(0.1f);
+
+                Assert.That(_runtime.ClaimDefeat(id, new InstanceId("char-killer"), default, null)
+                    .IsClaimed, Is.False,
+                    "claimed a second time while the body was still lying there");
+            }
         }
 
         [Test]
@@ -453,7 +514,10 @@ namespace ChibiFantasy.Tests.EditMode
             // Claimed, because an unclaimed corpse is deliberately never retired and the
             // respawn timer only starts once it is.
             _runtime.ClaimDefeat(monster.Instance, new InstanceId("char-killer"), default, null);
-            _runtime.Tick(0.1f);
+
+            // The body lies where it fell for a moment so its death can be seen; the
+            // respawn clock starts when it is swept away, not when it died.
+            _runtime.Tick(MonsterWorldRuntime.CorpseLingerSeconds);
 
             Assert.That(_runtime.AliveCount, Is.Zero);
 
@@ -474,7 +538,7 @@ namespace ChibiFantasy.Tests.EditMode
 
             dying.State.ApplyHealthDelta(-1000);
             _runtime.ClaimDefeat(first, new InstanceId("char-killer"), default, null);
-            _runtime.Tick(0.1f);
+            _runtime.Tick(MonsterWorldRuntime.CorpseLingerSeconds);
             _runtime.Tick(2f);
 
             LivingMonster second = OnlyMonster();

@@ -43,6 +43,15 @@ namespace ChibiFantasy.Tests.EditMode
         /// registers its own definitions -- but they are not opaque to a dedicated
         /// server reading the same rows.</remarks>
         private const string Poring = "monster.training_slime";
+
+        /// <summary>
+        /// The monster whose AI row proves a partial override travels.
+        /// </summary>
+        /// <remarks>Its own id rather than a real monster's. The integration database is
+        /// also the one a developer's world server reads, so a fixture row that pinned a
+        /// playable monster's aggression pinned it in the running game -- which is exactly
+        /// what happened to the training slime.</remarks>
+        private const string PartialOverride = "monster.fixture_partial";
         private const string Lunatic = "monster.ancient_slime_king";
         private const string Hidden = "monster.hidden";
 
@@ -188,7 +197,7 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(full.AttackCooldown, Is.EqualTo(2.5f).Within(0.0001f));
             Assert.That(full.MoveSpeed, Is.EqualTo(3.25f).Within(0.0001f));
 
-            MonsterAiConfiguration partial = FindAi(configuration, Poring);
+            MonsterAiConfiguration partial = FindAi(configuration, PartialOverride);
 
             // Zero and absent are different answers, and a detection range of zero is a
             // real setting -- it means "notices nobody".
@@ -264,8 +273,15 @@ namespace ChibiFantasy.Tests.EditMode
                 "and it is still reported rather than silently dropped");
             Assert.That(runtime.AliveCount, Is.EqualTo(expectedPopulation));
 
-            // The fixture's own nest: two porings, standing exactly where the row says.
-            // Other nests on the map (the seeded camps) are somebody else's rows.
+            // The fixture's own nest: two porings, standing inside the four-metre radius the
+            // row authors, around the point the row authors. Other nests on the map (the
+            // seeded camps) are somebody else's rows.
+            //
+            // This used to require the exact coordinates, which quietly asserted a defect:
+            // spawn_radius travelled from MySQL through PHP and over HTTP and then nothing
+            // read it, so every monster from a nest appeared on the same spot and a camp of
+            // six stood inside itself. The radius reaching the runtime is now part of what
+            // "the row became a monster" means, so both numbers are checked rather than one.
             var fixturePorings = 0;
 
             foreach (LivingMonster monster in runtime.All())
@@ -274,15 +290,35 @@ namespace ChibiFantasy.Tests.EditMode
 
                 if (monster.State.DefinitionId.Value != Poring) continue;
 
-                // The position in the database, through PHP, through HTTP, onto a monster.
-                if (Mathf.Abs(monster.State.SpawnPosition.X - 12.5f) < 0.0001f
-                    && Mathf.Abs(monster.State.SpawnPosition.Z - -7.25f) < 0.0001f)
-                {
-                    fixturePorings++;
-                }
+                float dx = monster.State.SpawnPosition.X - 12.5f;
+                float dz = monster.State.SpawnPosition.Z - -7.25f;
+                float distance = Mathf.Sqrt(dx * dx + dz * dz);
+
+                // The seeded camps are tens of metres away, so being inside this nest's own
+                // radius is what identifies a monster as the fixture's.
+                if (distance <= 4.0001f) fixturePorings++;
             }
 
             Assert.That(fixturePorings, Is.EqualTo(2));
+
+            // And they are not all on the same spot, which is the thing the radius is for.
+            var distinct = new System.Collections.Generic.List<CombatPosition>();
+
+            foreach (LivingMonster monster in runtime.All())
+            {
+                if (monster.State.DefinitionId.Value != Poring) continue;
+
+                float dx = monster.State.SpawnPosition.X - 12.5f;
+                float dz = monster.State.SpawnPosition.Z - -7.25f;
+
+                if (Mathf.Sqrt(dx * dx + dz * dz) <= 4.0001f)
+                {
+                    distinct.Add(monster.State.SpawnPosition);
+                }
+            }
+
+            Assert.That(distinct[0].SqrDistanceTo(distinct[1]), Is.GreaterThan(0.0001f),
+                "both monsters from a four-metre nest appeared on the same spot");
 
             // And reloading the same configuration does not double the map.
             Assert.That(loader.Load(Map), Is.Zero);

@@ -23,10 +23,10 @@ namespace ChibiFantasy.Gameplay
         /// <summary>No time passed, so no distance can have been covered.</summary>
         NoElapsedTime = 3,
 
-        /// <summary>This behaviour state does not move. Idle, Detect, Attack, Wander.</summary>
+        /// <summary>This behaviour state does not move. Idle, Detect, Attack.</summary>
         StateDoesNotMove = 4,
 
-        /// <summary>Chasing, but there is nowhere to chase to.</summary>
+        /// <summary>Chasing or strolling, but there is nowhere to go.</summary>
         NoDestination = 5,
 
         /// <summary>Already at the destination, within the arrival tolerance.</summary>
@@ -173,7 +173,12 @@ namespace ChibiFantasy.Gameplay
                 return MonsterMoveResult.Refused(rejection, current);
             }
 
-            float speed = monster.Definition.MoveSpeed;
+            // A stroll is slower than a hunt. A camp of creatures milling about at chase
+            // speed reads as a swarm working itself up, which is not what an idle monster
+            // is doing.
+            float speed = state == MonsterAiState.Wander
+                ? monster.Definition.WanderSpeed
+                : monster.Definition.MoveSpeed;
 
             if (speed <= 0f)
             {
@@ -259,9 +264,11 @@ namespace ChibiFantasy.Gameplay
         /// stands still, including <see cref="MonsterAiState.Attack"/> — a monster already in
         /// reach has no reason to keep walking into its target.
         ///
-        /// <see cref="MonsterAiState.Wander"/> is listed as stationary deliberately. The
-        /// state exists in Phase 10's enum but the controller never enters it, so any wander
-        /// behaviour written here would be dead code that looked implemented.
+        /// <see cref="MonsterAiState.Wander"/> walks to a spot
+        /// <see cref="MonsterWanderPlan"/> chose and wrote onto the monster. The destination
+        /// is read from the monster rather than passed in, exactly as <c>Return</c> reads
+        /// <c>SpawnPosition</c>, so strolling reuses this step instead of growing a second
+        /// one beside it.
         /// </remarks>
         private static bool TryDestinationFor(MonsterRuntimeState monster, MonsterAiState state,
             CombatPosition? target, out CombatPosition destination,
@@ -283,6 +290,20 @@ namespace ChibiFantasy.Gameplay
                     }
 
                     destination = target.Value;
+
+                    return true;
+
+                case MonsterAiState.Wander:
+                    if (!monster.HasWanderDestination)
+                    {
+                        // In the wander state with nowhere chosen yet. It simply stands
+                        // still this tick; the plan picks a spot and it walks next tick.
+                        rejection = MonsterMoveRejection.NoDestination;
+
+                        return false;
+                    }
+
+                    destination = monster.WanderDestination;
 
                     return true;
 

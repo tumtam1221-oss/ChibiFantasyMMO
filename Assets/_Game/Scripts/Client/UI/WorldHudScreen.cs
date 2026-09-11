@@ -27,6 +27,36 @@ namespace ChibiFantasy.Client.UI
     {
         private readonly CharacterHudPresenter _presenter = new CharacterHudPresenter();
 
+        private TextMeshProUGUI _bagLabel;
+        private TextMeshProUGUI _hints;
+        private ILocalizedTextSource _text;
+
+        /// <summary>Where this screen's words are translated. Optional.</summary>
+        /// <remarks>Assigning relabels immediately: the HUD is built when the world loads
+        /// and its two fixed captions are never touched again, so a language chosen
+        /// afterwards would otherwise leave the bag button and the control hints in the
+        /// language the player just left.</remarks>
+        public ILocalizedTextSource Text
+        {
+            get => _text;
+            set
+            {
+                _text = value;
+
+                if (_bagLabel != null) _bagLabel.text = UiText.Of(_text, UiStrings.HudInventory);
+                if (_hints != null) _hints.text = UiText.Of(_text, UiStrings.HudHints);
+                if (_defeatLabel != null)
+                {
+                    _defeatLabel.text = UiText.Of(_text, UiStrings.HudDefeated);
+                }
+
+                if (_reviveLabel != null)
+                {
+                    _reviveLabel.text = UiText.Of(_text, UiStrings.HudReturnToTown);
+                }
+            }
+        }
+
         private RectTransform _panel;
         private TextMeshProUGUI _name;
         private TextMeshProUGUI _health;
@@ -40,6 +70,9 @@ namespace ChibiFantasy.Client.UI
         /// comes and goes, and the player's own numbers must not move around the screen when
         /// it does.</remarks>
         private RectTransform _targetPanel;
+        private RectTransform _defeatPanel;
+        private TextMeshProUGUI _defeatLabel;
+        private TextMeshProUGUI _reviveLabel;
 
         private TextMeshProUGUI _targetName;
         private TextMeshProUGUI _targetHealth;
@@ -51,6 +84,14 @@ namespace ChibiFantasy.Client.UI
 
         /// <summary>Raised when the player asks for their bag.</summary>
         public event System.Action InventoryRequested;
+
+        /// <summary>Raised when a fallen player asks to get up in town.</summary>
+        /// <remarks>An event rather than a call into the network, so this screen stays a
+        /// screen: it knows a button was pressed and nothing about who might act on it.</remarks>
+        public event System.Action ReviveRequested;
+
+        /// <summary>Whether the fallen notice is currently on screen. For tests.</summary>
+        public bool IsShowingDefeat => _defeatPanel != null && _defeatPanel.gameObject.activeSelf;
 
         /// <summary>The values currently on screen, for a test to read.</summary>
         public HudViewData Current => _presenter.Current;
@@ -196,8 +237,9 @@ namespace ChibiFantasy.Client.UI
 
             BuildTargetPanel(root);
 
-            Button bag = UiFactory.CreateButton("Inventory", root, "Inventory",
-                out TextMeshProUGUI _);
+            Button bag = UiFactory.CreateButton("Inventory", root,
+                UiText.Of(Text, UiStrings.HudInventory),
+                out _bagLabel);
 
             RectTransform bagRect = bag.GetComponent<RectTransform>();
             bagRect.anchorMin = new Vector2(1f, 0f);
@@ -209,6 +251,7 @@ namespace ChibiFantasy.Client.UI
             bag.onClick.AddListener(() => InventoryRequested?.Invoke());
 
             BuildHints(root);
+            BuildDefeatPanel(root);
 
             _panel.gameObject.SetActive(false);
         }
@@ -228,14 +271,10 @@ namespace ChibiFantasy.Client.UI
         /// </remarks>
         private void BuildHints(RectTransform root)
         {
-            // Environment.NewLine rather than an escape, so the three lines survive being
-            // edited by tools that rewrite this file.
-            string newline = System.Environment.NewLine;
-
             TextMeshProUGUI hints = UiFactory.CreateLabel("Hints", root,
-                "Left Click: Move / Select / Attack / Pick up" + newline
-                + "Right Drag: Camera" + newline
-                + "Mouse Wheel: Zoom", 15f);
+                UiText.Of(Text, UiStrings.HudHints), 15f);
+
+            _hints = hints;
 
             hints.color = UiFactory.Muted;
 
@@ -245,6 +284,68 @@ namespace ChibiFantasy.Client.UI
             rect.pivot = new Vector2(0f, 0f);
             rect.sizeDelta = new Vector2(360f, 70f);
             rect.anchoredPosition = new Vector2(24f, 24f);
+        }
+
+        /// <summary>
+        /// What a player sees when they have lost a fight.
+        /// </summary>
+        /// <remarks>
+        /// <b>It exists because the alternative was nothing at all.</b> A character reduced
+        /// to zero health simply stopped working: attacks were refused, monsters ignored
+        /// them, and because health is persisted, signing out and back in returned them to
+        /// the same zero. Nothing on screen said what had happened or offered a way out.
+        ///
+        /// <b>It says one thing and offers one action.</b> Not a death screen with options
+        /// this game does not have -- no resurrection items, no penalties, no timer. Those
+        /// are decisions for a later gate; being stuck forever is not.
+        /// </remarks>
+        private void BuildDefeatPanel(RectTransform root)
+        {
+            _defeatPanel = UiFactory.CreateAnchored("Defeated", root, new Vector2(0.5f, 0.5f),
+                new Vector2(360f, 132f), Vector2.zero);
+
+            UiFactory.CreatePanel("Frame", _defeatPanel, UiFactory.Panel).rectTransform
+                .SetAsFirstSibling();
+
+            var frame = (RectTransform)_defeatPanel.GetChild(0);
+            frame.anchorMin = Vector2.zero;
+            frame.anchorMax = Vector2.one;
+            frame.offsetMin = Vector2.zero;
+            frame.offsetMax = Vector2.zero;
+
+            _defeatLabel = UiFactory.CreateLabel("DefeatedText", _defeatPanel,
+                UiText.Of(Text, UiStrings.HudDefeated), 22f, TextAlignmentOptions.Center);
+
+            Row(_defeatLabel.rectTransform, -22f, 32f);
+
+            Button revive = UiFactory.CreateButton("ReturnToTown", _defeatPanel,
+                UiText.Of(Text, UiStrings.HudReturnToTown), out _reviveLabel);
+
+            RectTransform rect = revive.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0.5f, 0f);
+            rect.anchorMax = new Vector2(0.5f, 0f);
+            rect.pivot = new Vector2(0.5f, 0f);
+            rect.sizeDelta = new Vector2(220f, 48f);
+            rect.anchoredPosition = new Vector2(0f, 22f);
+
+            revive.onClick.AddListener(() => ReviveRequested?.Invoke());
+
+            _defeatPanel.gameObject.SetActive(false);
+        }
+
+        /// <summary>
+        /// Shows or hides the fallen notice.
+        /// </summary>
+        /// <remarks><b>Driven by replicated health, never by this screen.</b> The caller
+        /// passes what the server said; nothing here decides that anybody is down, and
+        /// hiding the notice does not revive anybody.</remarks>
+        public void ShowDefeated(bool defeated)
+        {
+            if (_defeatPanel == null) return;
+
+            if (_defeatPanel.gameObject.activeSelf == defeated) return;
+
+            _defeatPanel.gameObject.SetActive(defeated);
         }
 
         /// <summary>The target readout: a name, a bar and a number.</summary>

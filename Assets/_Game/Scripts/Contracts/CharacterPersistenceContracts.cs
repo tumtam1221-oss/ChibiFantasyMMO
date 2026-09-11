@@ -46,6 +46,52 @@ namespace ChibiFantasy.Contracts
         public int Level { get; }
     }
 
+    /// <summary>
+    /// One quest a character has touched, as the database holds it.
+    /// </summary>
+    /// <remarks>
+    /// <b>Counters travel with the quest, not as their own rows in this shape.</b> One
+    /// objective's progress means nothing without the quest it belongs to, and the array is
+    /// matched by position exactly as <c>CharacterQuestState</c> stores it -- there is no
+    /// second identity for an objective to drift from.
+    ///
+    /// <b>No reward and no requirement.</b> Both are authored content the world already
+    /// ships; storing them would put a second copy in the database that goes stale the first
+    /// time a quest is retuned, and a player would be paid last patch's reward.
+    /// </remarks>
+    public readonly struct PersistedQuest
+    {
+        public PersistedQuest(DefinitionId quest, int status, IReadOnlyList<int> counters,
+            int completedDay = 0)
+        {
+            Quest = quest;
+            Status = status;
+            Counters = counters ?? System.Array.Empty<int>();
+            CompletedDay = completedDay;
+        }
+
+        public DefinitionId Quest { get; }
+
+        /// <summary>Mirrors <c>QuestStatus</c>: 0 not started, 1 active, 2 ready, 3 done.</summary>
+        public int Status { get; }
+
+        /// <summary>One counter per authored objective, in the definition's order.</summary>
+        public IReadOnlyList<int> Counters { get; }
+
+        /// <summary>
+        /// The day this was finished, as the database counts days. Zero means never.
+        /// </summary>
+        /// <remarks>Not a timestamp. The only question asked of it is whether today differs
+        /// from it, and a number from one clock answers that without a timezone ever
+        /// entering the game -- see <c>ServerDay</c>.</remarks>
+        public int CompletedDay { get; }
+
+        public override string ToString()
+        {
+            return Quest + " status " + Status + " (" + Counters.Count + " objectives)";
+        }
+    }
+
     /// <summary>One status stone in one socket, as the database holds it.</summary>
     /// <remarks>Mirrors <c>equipment_enchant</c> row for row, which is why nothing has to be
     /// translated on the way down.</remarks>
@@ -349,8 +395,17 @@ namespace ChibiFantasy.Contracts
             IReadOnlyList<PersistedPet> pets = null, InstanceId activePet = default,
             IReadOnlyList<PersistedRewardApplication> rewardApplications = null,
             bool hasPosition = false, float positionX = 0f, float positionY = 0f,
-            float positionZ = 0f)
+            float positionZ = 0f,
+            IReadOnlyList<PersistedQuest> quests = null, int serverDay = 0,
+            int serverDayEndsInSeconds = 0)
         {
+            // Trailing and optional for the same reason every collection before it was: a
+            // row saved before quests existed simply has none, and every existing caller
+            // compiles unchanged.
+            Quests = quests ?? System.Array.Empty<PersistedQuest>();
+            ServerDay = serverDay < 0 ? 0 : serverDay;
+            ServerDayEndsInSeconds = serverDayEndsInSeconds < 0 ? 0 : serverDayEndsInSeconds;
+
             // Trailing and optional so every existing caller still compiles unchanged, and
             // so a row that has never been saved from the world simply says it has none.
             HasPosition = hasPosition
@@ -480,6 +535,32 @@ namespace ChibiFantasy.Contracts
         /// delivery it belongs to, so this is bounded by pending rewards rather than by
         /// everything a character has ever been paid.</remarks>
         public IReadOnlyList<PersistedRewardApplication> RewardApplications { get; }
+
+        /// <summary>What this character has taken, is doing and has finished.</summary>
+        /// <remarks>Empty for a row saved before quests were persisted, which reads as a
+        /// character who has taken none -- the honest answer rather than a guess.</remarks>
+        public IReadOnlyList<PersistedQuest> Quests { get; }
+
+        /// <summary>
+        /// Today, as the database counts days. Zero when the backend did not say.
+        /// </summary>
+        /// <remarks>
+        /// <b>Carried on the character rather than fetched separately.</b> It arrives with
+        /// the quest log it is compared against, from the same query and the same clock, so
+        /// the two can never be a midnight apart. A world server that asked its own machine
+        /// what day it was would reset dailies at whatever midnight that machine believes
+        /// in -- which is the timezone bug this project already had once, in a new place.
+        ///
+        /// Zero means the rules that need a date stay switched off, which leaves a daily
+        /// quest behaving like a one-time quest. That is the safe direction: a player keeps
+        /// a reward they earned rather than being handed a second one.
+        /// </remarks>
+        public int ServerDay { get; }
+
+        /// <summary>Seconds until <see cref="ServerDay"/> increments. Zero when unknown.</summary>
+        /// <remarks>A duration, so the world can count down to the database's midnight
+        /// without owning a calendar. See <c>WorldDayClock</c>.</remarks>
+        public int ServerDayEndsInSeconds { get; }
 
         /// <summary>
         /// The pet currently out, if any.

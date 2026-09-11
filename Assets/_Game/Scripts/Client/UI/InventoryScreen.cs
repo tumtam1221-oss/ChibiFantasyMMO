@@ -23,6 +23,42 @@ namespace ChibiFantasy.Client.UI
     /// </remarks>
     public sealed class InventoryScreen : MonoBehaviour
     {
+        private ChibiFantasy.UI.ILocalizedTextSource _text;
+        private TextMeshProUGUI _equipLabel;
+        private TextMeshProUGUI _unequipLabel;
+        private TextMeshProUGUI _closeLabel;
+
+        /// <summary>Where this screen's words are translated. Optional.</summary>
+        /// <remarks>Assigning rewrites the three fixed captions, which are written when
+        /// the panel is built and never touched again -- so a language chosen afterwards
+        /// would otherwise leave the bag in the language the player just left.</remarks>
+        public ChibiFantasy.UI.ILocalizedTextSource Text
+        {
+            get => _text;
+            set
+            {
+                _text = value;
+
+                if (_equipLabel != null)
+                {
+                    _equipLabel.text = ChibiFantasy.UI.UiText.Of(_text,
+                        ChibiFantasy.UI.UiStrings.InventoryActionEquip);
+                }
+
+                if (_unequipLabel != null)
+                {
+                    _unequipLabel.text = ChibiFantasy.UI.UiText.Of(_text,
+                        ChibiFantasy.UI.UiStrings.InventoryActionUnequip);
+                }
+
+                if (_closeLabel != null)
+                {
+                    _closeLabel.text = ChibiFantasy.UI.UiText.Of(_text,
+                        ChibiFantasy.UI.UiStrings.CommonClose);
+                }
+            }
+        }
+
         private NetworkInventoryPresenter _presenter;
 
         private RectTransform _panel;
@@ -157,7 +193,8 @@ namespace ChibiFantasy.Client.UI
             {
                 // Not "empty bag". Nothing has arrived yet, and a grid of empty squares
                 // would be a claim about the character that the client cannot make.
-                SetStatus("Waiting for server state");
+                SetStatus(ChibiFantasy.UI.UiText.Of(Text,
+                    ChibiFantasy.UI.UiStrings.InventoryWaiting));
 
                 return;
             }
@@ -295,7 +332,8 @@ namespace ChibiFantasy.Client.UI
             frame.offsetMin = Vector2.zero;
             frame.offsetMax = Vector2.zero;
 
-            UiFactory.CreateLabel("Title", _panel, "Inventory", 28f,
+            UiFactory.CreateLabel("Title", _panel,
+                ChibiFantasy.UI.UiText.Of(Text, ChibiFantasy.UI.UiStrings.InventoryTitle), 28f,
                 TextAlignmentOptions.Center).rectTransform.anchoredPosition =
                 new Vector2(0f, -16f);
 
@@ -321,18 +359,21 @@ namespace ChibiFantasy.Client.UI
             _status.rectTransform.sizeDelta = new Vector2(-40f, 30f);
             _status.rectTransform.anchoredPosition = new Vector2(0f, 24f);
 
-            Button equip = UiFactory.CreateButton("Equip", _panel, "Equip",
-                out TextMeshProUGUI _);
+            Button equip = UiFactory.CreateButton("Equip", _panel,
+                ChibiFantasy.UI.UiText.Of(Text, ChibiFantasy.UI.UiStrings.InventoryActionEquip),
+                out _equipLabel);
             Action(equip.GetComponent<RectTransform>(), new Vector2(20f, 96f));
             equip.onClick.AddListener(() => Equip());
 
-            Button unequip = UiFactory.CreateButton("Unequip", _panel, "Unequip",
-                out TextMeshProUGUI _);
+            Button unequip = UiFactory.CreateButton("Unequip", _panel,
+                ChibiFantasy.UI.UiText.Of(Text, ChibiFantasy.UI.UiStrings.InventoryActionUnequip),
+                out _unequipLabel);
             Action(unequip.GetComponent<RectTransform>(), new Vector2(190f, 96f));
             unequip.onClick.AddListener(() => Unequip());
 
-            Button close = UiFactory.CreateButton("Close", _panel, "Close",
-                out TextMeshProUGUI _);
+            Button close = UiFactory.CreateButton("Close", _panel,
+                ChibiFantasy.UI.UiText.Of(Text, ChibiFantasy.UI.UiStrings.CommonClose),
+                out _closeLabel);
             close.GetComponent<Image>().color = UiFactory.Slot;
             Action(close.GetComponent<RectTransform>(), new Vector2(-20f, 96f));
             close.GetComponent<RectTransform>().anchorMin = new Vector2(1f, 0f);

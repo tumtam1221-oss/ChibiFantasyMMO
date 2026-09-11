@@ -113,7 +113,7 @@ MonoBehaviour:
   _monsterPrefab: {fileID: 0}
   _rewardRangeMetres: 40
   _lootReachMetres: 4
-  _lootLifetimeSeconds: 300
+  _lootLifetimeSeconds: 60
   _lootPersonalWindowSeconds: 30
   _petExperienceShare: 0.25
 --- !u!114 &7326777954106199815

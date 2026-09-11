@@ -188,7 +188,6 @@ namespace ChibiFantasy.Tests.EditMode
         [TestCase(MonsterAiState.Idle)]
         [TestCase(MonsterAiState.Detect)]
         [TestCase(MonsterAiState.Attack)]
-        [TestCase(MonsterAiState.Wander)]
         [TestCase(MonsterAiState.Dead)]
         public void TheseStatesDoNotMove(MonsterAiState state)
         {
@@ -210,12 +209,46 @@ namespace ChibiFantasy.Tests.EditMode
         }
 
         [Test]
-        public void WanderIsStationaryBecauseTheControllerNeverEntersIt()
+        public void WanderWalksToTheSpotTheMonsterWasGiven()
         {
-            // The state exists in Phase 10's enum but no transition reaches it. Wander
-            // behaviour written here would be dead code that looked implemented.
-            Assert.That(MonsterMovement.Step(_monster, MonsterAiState.Wander, At(100f), 1f)
-                .Reason, Is.EqualTo(MonsterMoveRejection.StateDoesNotMove));
+            // Wander used to be listed among the states that do not move, because nothing
+            // ever entered it. It is entered now, and it reads its destination from the
+            // monster exactly as Return reads SpawnPosition -- so strolling reuses this
+            // step rather than growing a second one beside it.
+            _monster.SetWanderDestination(new CombatPosition(3f, 0f, 0f));
+
+            MonsterMoveResult result = MonsterMovement.Step(_monster, MonsterAiState.Wander,
+                null, 0.1f);
+
+            Assert.That(result.Moved, Is.True, result.Reason.ToString());
+            Assert.That(_monster.Position.X, Is.GreaterThan(0f));
+            Assert.That(_monster.Position.X, Is.LessThanOrEqualTo(3f), "it did not overshoot");
+        }
+
+        [Test]
+        public void WanderIgnoresTheCombatTargetEntirely()
+        {
+            // A strolling monster walks where it decided to walk. If it followed the target
+            // argument it would chase without ever entering Chase, which is the sort of
+            // thing that makes a monster look possessed.
+            _monster.SetWanderDestination(new CombatPosition(-2f, 0f, 0f));
+
+            MonsterMovement.Step(_monster, MonsterAiState.Wander, At(100f), 0.1f);
+
+            Assert.That(_monster.Position.X, Is.LessThan(0f),
+                "it walked toward the target instead of toward its own destination");
+        }
+
+        [Test]
+        public void WanderWithNowhereChosenMovesNothing()
+        {
+            CombatPosition before = _monster.Position;
+
+            MonsterMoveResult result = MonsterMovement.Step(_monster, MonsterAiState.Wander,
+                At(100f), 1f);
+
+            Assert.That(result.Reason, Is.EqualTo(MonsterMoveRejection.NoDestination));
+            Assert.That(_monster.Position, Is.EqualTo(before));
         }
 
         [Test]

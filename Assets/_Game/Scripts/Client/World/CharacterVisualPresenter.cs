@@ -41,6 +41,28 @@ namespace ChibiFantasy.Client.World
         private static readonly int SpeedHash = Animator.StringToHash("Speed");
         private static readonly int DeadHash = Animator.StringToHash("Dead");
 
+        /// <summary>
+        /// The trigger the locomotion controller already has for a swing.
+        /// </summary>
+        /// <remarks>
+        /// <b>The link that was missing.</b> The server has been publishing accepted attacks
+        /// for a long time: its replication step raises
+        /// <see cref="CharacterNetworkEntity.AttackPerformed"/> on every client that can see
+        /// the character, and nothing anywhere subscribed to it. Every part of the chain
+        /// existed except the last one, so a player swung, a monster lost health, and the
+        /// character on screen carried on standing there. Exactly the same shape of gap as
+        /// the monster attack intents nobody read.
+        ///
+        /// (The server type that publishes it is deliberately not named here. A test scans
+        /// every client file for the names of server classes, and a comment counts -- the
+        /// rule is that the client does not know those types exist, not merely that it does
+        /// not call them.)
+        ///
+        /// Nothing about the rig, the controller or the locomotion changes to fix it: the
+        /// <c>Attack</c> trigger and the state it drives were already authored.
+        /// </remarks>
+        private static readonly int AttackHash = Animator.StringToHash("Attack");
+
         [Tooltip("Which approved model to use, and how to animate it.")]
         [SerializeField] private CharacterVisualCatalogue _catalogue;
 
@@ -133,6 +155,30 @@ namespace ChibiFantasy.Client.World
 
             _visualRoot = new GameObject("VisualRoot").transform;
             _visualRoot.SetParent(transform, false);
+
+            if (_entity != null) _entity.AttackPerformed += OnAttackPerformed;
+        }
+
+        /// <summary>How many swings this character has been seen to throw. For tests.</summary>
+        public int AttacksShown { get; private set; }
+
+        /// <summary>
+        /// Draws the swing the server has already resolved.
+        /// </summary>
+        /// <remarks>
+        /// <b>A report, never a cause.</b> By the time this runs the server has validated the
+        /// range, spent the cooldown, rolled the damage and written the health. Nothing here
+        /// is consulted about any of that, and an animation event is never allowed to be the
+        /// thing that deals damage -- the trigger only decides what the character looks like
+        /// while it happens.
+        /// </remarks>
+        private void OnAttackPerformed()
+        {
+            AttacksShown++;
+
+            if (_animator == null || _animator.runtimeAnimatorController == null) return;
+
+            _animator.SetTrigger(AttackHash);
         }
 
         /// <summary>
@@ -414,6 +460,8 @@ namespace ChibiFantasy.Client.World
 
         private void OnDestroy()
         {
+            if (_entity != null) _entity.AttackPerformed -= OnAttackPerformed;
+
             if (_model != null) DestroyVisual(_model);
         }
 

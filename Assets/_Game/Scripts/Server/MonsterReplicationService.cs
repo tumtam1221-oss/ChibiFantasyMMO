@@ -161,7 +161,10 @@ namespace ChibiFantasy.Server
                 monster.State.Position.X,
                 monster.State.Position.Y,
                 monster.State.Position.Z,
-                monster.State.CurrentHealth);
+                monster.State.CurrentHealth,
+                monster.Facing);
+
+            entity.ServerPublishSwings(monster.Swings);
         }
 
         /// <summary>

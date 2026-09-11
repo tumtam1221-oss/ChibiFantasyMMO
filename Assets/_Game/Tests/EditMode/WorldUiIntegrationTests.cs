@@ -482,7 +482,7 @@ namespace ChibiFantasy.Tests.EditMode
         }
 
         /// <summary>
-        /// The files allowed to start a journey or an interaction.
+        /// The files allowed to start a journey.
         /// </summary>
         /// <remarks>
         /// Phase 11 permitted exactly one: the world UI controller, which was the command
@@ -503,12 +503,40 @@ namespace ChibiFantasy.Tests.EditMode
             "/Server/TravelCommandAuthority.cs",
         };
 
+        /// <summary>
+        /// The files allowed to start an NPC interaction.
+        /// </summary>
+        /// <remarks>
+        /// <b>Listed apart from travel, and that is the point.</b> The two verbs used to
+        /// share one list, so a file admitted for either was silently admitted for both --
+        /// a server file permitted to interact was also permitted to travel, with nothing
+        /// saying so. Counted separately, each verb's boundary has to be argued for alone.
+        ///
+        /// Phase 19B.2 made interaction server-authoritative exactly as Phase 17 did travel:
+        /// a client's click reaches <c>CharacterNpcAuthority</c> and the server calls the
+        /// interaction rules. The client-side controller remains for the offline scenes.
+        /// </remarks>
+        private static readonly string[] InteractionCommandBoundaries =
+        {
+            // The client-side flow, still used by the prototype and offline scenes.
+            "/Client/UI/WorldUiController.cs",
+
+            // The authoritative one. A client asks; this decides.
+            "/Server/CharacterNpcAuthority.cs",
+        };
+
         [Test]
         public void Exactly_two_files_may_start_a_journey()
         {
             // One boundary per side of the wire, and no more. A third entry must be a
             // deliberate decision somebody makes by editing this test.
             Assert.That(TravelCommandBoundaries.Length, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void Exactly_two_files_may_start_an_interaction()
+        {
+            Assert.That(InteractionCommandBoundaries.Length, Is.EqualTo(2));
         }
 
         [Test]
@@ -528,16 +556,33 @@ namespace ChibiFantasy.Tests.EditMode
                     if (normalized.Contains(boundary)) isBoundary = true;
                 }
 
-                if (isBoundary) continue;
                 if (normalized.Contains("/Gameplay/")) continue;
 
                 string source = System.IO.File.ReadAllText(file);
 
-                Assert.That(source, Does.Not.Contain("TravelService.TryTraversePortal"),
-                    normalized + " travels outside the command boundary");
-                Assert.That(source, Does.Not.Contain("NpcInteractionService.TryInteract"),
-                    normalized + " interacts outside the command boundary");
+                if (!isBoundary)
+                {
+                    Assert.That(source, Does.Not.Contain("TravelService.TryTraversePortal"),
+                        normalized + " travels outside the command boundary");
+                }
+
+                if (!Permitted(normalized, InteractionCommandBoundaries))
+                {
+                    Assert.That(source, Does.Not.Contain("NpcInteractionService.TryInteract"),
+                        normalized + " interacts outside the command boundary");
+                }
             }
+        }
+
+        /// <summary>Whether a file is one of the boundaries named for a verb.</summary>
+        private static bool Permitted(string file, string[] boundaries)
+        {
+            for (var i = 0; i < boundaries.Length; i++)
+            {
+                if (file.Contains(boundaries[i])) return true;
+            }
+
+            return false;
         }
 
         [Test]

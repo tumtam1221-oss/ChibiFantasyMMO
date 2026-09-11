@@ -28,9 +28,9 @@ namespace ChibiFantasy.Client.UI
     /// </remarks>
     public sealed class CharacterSelectScreen : SessionScreenBase
     {
-        protected override string Title => "Choose a character";
+        protected override string Title => UiText.Of(Text, UiStrings.CharacterTitle);
 
-        protected override string EmptyMessage => "No characters on this account";
+        protected override string EmptyMessage => UiText.Of(Text, UiStrings.CharacterEmpty);
 
         /// <summary>
         /// This screen paints its own slots, so the plain rows are always empty.
@@ -58,6 +58,55 @@ namespace ChibiFantasy.Client.UI
         private Button _enter;
 
         private TextMeshProUGUI _infoName;
+        private TextMeshProUGUI _infoLevelKey;
+        private TextMeshProUGUI _infoClassKey;
+        private TextMeshProUGUI _infoLocationKey;
+        private TextMeshProUGUI _enterLabel;
+        private TextMeshProUGUI _backLabel;
+        private readonly System.Collections.Generic.List<TextMeshProUGUI> _headingLines =
+            new System.Collections.Generic.List<TextMeshProUGUI>();
+        private readonly System.Collections.Generic.List<TextMeshProUGUI> _subtitleLines =
+            new System.Collections.Generic.List<TextMeshProUGUI>();
+
+        /// <summary>Rewrites the words this screen painted once, after a language change.</summary>
+        public override void Relabel()
+        {
+            Write(_headingLines, UiText.Of(Text, UiStrings.CharacterHeading));
+            Write(_subtitleLines, UiText.Of(Text, UiStrings.CharacterSubtitle));
+
+            if (_infoLevelKey != null)
+            {
+                _infoLevelKey.text = UiText.Of(Text, UiStrings.CharacterInfoLevel);
+            }
+
+            if (_infoClassKey != null)
+            {
+                _infoClassKey.text = UiText.Of(Text, UiStrings.CharacterInfoClass);
+            }
+
+            if (_infoLocationKey != null)
+            {
+                _infoLocationKey.text = UiText.Of(Text, UiStrings.CharacterInfoLocation);
+            }
+
+            if (_backLabel != null) _backLabel.text = UiText.Of(Text, UiStrings.CommonBack);
+
+            if (_enterLabel != null)
+            {
+                _enterLabel.text = UiText.Of(Text, UiStrings.CharacterButtonEnterWorld);
+            }
+
+            base.Relabel();
+        }
+
+        private static void Write(System.Collections.Generic.List<TextMeshProUGUI> lines,
+            string text)
+        {
+            for (var i = 0; i < lines.Count; i++)
+            {
+                if (lines[i] != null) lines[i].text = text;
+            }
+        }
         private TextMeshProUGUI _infoLevel;
         private TextMeshProUGUI _infoClass;
         private TextMeshProUGUI _infoLocation;
@@ -94,9 +143,9 @@ namespace ChibiFantasy.Client.UI
             }
         }
 
-        private static string Describe(in CharacterRowViewData row)
+        private string Describe(in CharacterRowViewData row)
         {
-            return "Level " + row.Level;
+            return UiText.Format(Text, UiStrings.CharacterLevel, row.Level);
         }
 
         // ---- the painted screen -----------------------------------------------------------------
@@ -148,7 +197,7 @@ namespace ChibiFantasy.Client.UI
         }
 
         /// <summary>The compass, the title and the line under it.</summary>
-        private static void BuildHeading(RectTransform root, PreWorldUiSkin skin)
+        private void BuildHeading(RectTransform root, PreWorldUiSkin skin)
         {
             if (skin.CharacterCompass != null)
             {
@@ -163,12 +212,16 @@ namespace ChibiFantasy.Client.UI
                     new Vector2(CompassX, HeadingY));
             }
 
-            Legible(root, "Heading", "Select Character", 62f,
-                new Vector2(TextX, HeadingY), Color.white, 78f, FontStyles.Bold);
+            _headingLines.Clear();
+            _subtitleLines.Clear();
 
-            Legible(root, "Subtitle", "Choose your hero to enter the world", 26f,
-                new Vector2(TextX + 4f, SubtitleY), new Color(0.86f, 0.92f, 1f, 1f), 34f,
-                FontStyles.Normal);
+            Legible(root, "Heading", UiText.Of(Text, UiStrings.CharacterHeading),
+                62f, new Vector2(TextX, HeadingY), Color.white, 78f, FontStyles.Bold,
+                _headingLines);
+
+            Legible(root, "Subtitle", UiText.Of(Text, UiStrings.CharacterSubtitle),
+                26f, new Vector2(TextX + 4f, SubtitleY), new Color(0.86f, 0.92f, 1f, 1f), 34f,
+                FontStyles.Normal, _subtitleLines);
         }
 
         /// <summary>
@@ -180,14 +233,26 @@ namespace ChibiFantasy.Client.UI
         /// than a material instance per label and it cannot be undone by a shader keyword.
         /// </remarks>
         private static TextMeshProUGUI Legible(RectTransform root, string name, string text,
-            float size, Vector2 at, Color colour, float height, FontStyles style)
+            float size, Vector2 at, Color colour, float height, FontStyles style,
+            System.Collections.Generic.List<TextMeshProUGUI> both = null)
         {
             // The same weight on both, or the wider one shows past the other and the line
             // reads as its own last word twice.
-            Line(root, name + " Shadow", text, size, at + new Vector2(3f, -3f),
+            TextMeshProUGUI shadow = Line(root, name + " Shadow", text, size,
+                at + new Vector2(3f, -3f),
                 new Color(0.02f, 0.05f, 0.12f, 0.85f), height, style);
 
-            return Line(root, name, text, size, at, colour, height, style);
+            TextMeshProUGUI front = Line(root, name, text, size, at, colour, height, style);
+
+            // Both halves are collected, because relabelling only the front one leaves the
+            // previous language legible in the drop shadow behind the new one.
+            if (both != null)
+            {
+                both.Add(shadow);
+                both.Add(front);
+            }
+
+            return front;
         }
 
         private static TextMeshProUGUI Line(RectTransform root, string name, string text,
@@ -263,16 +328,22 @@ namespace ChibiFantasy.Client.UI
             name.sizeDelta = new Vector2(InfoWidth - 60f, 40f);
             name.anchoredPosition = new Vector2(0f, InfoNameY);
 
-            _infoLevel = InfoRow(panel, "Level", InfoRow1Y);
-            _infoClass = InfoRow(panel, "Class", InfoRow2Y);
-            _infoLocation = InfoRow(panel, "Location", InfoRow3Y);
+            _infoLevel = InfoRow(panel, UiStrings.CharacterInfoLevel, InfoRow1Y,
+                out _infoLevelKey);
+            _infoClass = InfoRow(panel, UiStrings.CharacterInfoClass, InfoRow2Y,
+                out _infoClassKey);
+            _infoLocation = InfoRow(panel, UiStrings.CharacterInfoLocation, InfoRow3Y,
+                out _infoLocationKey);
         }
 
         /// <summary>One labelled field, keyed left and valued right.</summary>
-        private static TextMeshProUGUI InfoRow(RectTransform panel, string key, float y)
+        private TextMeshProUGUI InfoRow(RectTransform panel, string key, float y,
+            out TextMeshProUGUI caption)
         {
-            TextMeshProUGUI label = UiFactory.CreateLabel("Key " + key, panel, key, 22f,
-                TextAlignmentOptions.Left);
+            TextMeshProUGUI label = UiFactory.CreateLabel("Key " + key, panel,
+                UiText.Of(Text, key), 22f, TextAlignmentOptions.Left);
+
+            caption = label;
 
             label.color = new Color(0.72f, 0.82f, 0.95f, 1f);
 
@@ -300,15 +371,18 @@ namespace ChibiFantasy.Client.UI
 
         private void BuildButtons(RectTransform root, PreWorldUiSkin skin)
         {
-            Button back = PaintedButton(root, "Back", "Back", skin.CharacterButtonBack,
+            Button back = PaintedButton(root, "Back", UiText.Of(Text, UiStrings.CommonBack),
+                skin.CharacterButtonBack,
                 BackOpaque, BackWidth, BackHeight, new Vector2(BackX, ButtonY),
-                BackLabelOffset);
+                BackLabelOffset, out _backLabel);
 
             back.onClick.AddListener(GoBack);
 
-            _enter = PaintedButton(root, "Enter", "Enter World", skin.CharacterButtonEnter,
+            _enter = PaintedButton(root, "Enter",
+                UiText.Of(Text, UiStrings.CharacterButtonEnterWorld),
+                skin.CharacterButtonEnter,
                 EnterOpaque, EnterWidth, EnterHeight, new Vector2(EnterX, ButtonY),
-                EnterLabelOffset);
+                EnterLabelOffset, out _enterLabel);
 
             _enter.onClick.AddListener(Confirm);
             _enter.interactable = false;
@@ -322,7 +396,7 @@ namespace ChibiFantasy.Client.UI
         /// middle would sit on top of it.</remarks>
         private static Button PaintedButton(RectTransform parent, string name, string text,
             Sprite art, Vector4 opaque, float width, float height, Vector2 centre,
-            float labelOffset)
+            float labelOffset, out TextMeshProUGUI caption)
         {
             RectTransform host = UiFactory.CreateAnchored(name, parent,
                 new Vector2(0.5f, 0.5f), Vector2.one);
@@ -347,6 +421,8 @@ namespace ChibiFantasy.Client.UI
             rect.pivot = new Vector2(0.5f, 0.5f);
             rect.sizeDelta = new Vector2(width * 0.6f, 34f);
             rect.anchoredPosition = new Vector2(labelOffset, 0f);
+
+            caption = label;
 
             return button;
         }
@@ -429,7 +505,8 @@ namespace ChibiFantasy.Client.UI
             name.color = Color.white;
 
             TextMeshProUGUI detail = SlotLabel(host,
-                "Lv. " + row.Level + "   " + Readable(row.Class), 21f, SlotDetailY);
+                UiText.Format(Text, UiStrings.CharacterSlotDetail, row.Level,
+                    Readable(row.Class)), 21f, SlotDetailY);
 
             detail.color = new Color(0.76f, 0.85f, 0.96f, 1f);
 
@@ -452,14 +529,15 @@ namespace ChibiFantasy.Client.UI
             button.targetGraphic = host.GetComponent<Image>();
             button.onClick.AddListener(SayCreationIsUnavailable);
 
-            TextMeshProUGUI label = SlotLabel(host, "Create Character", 24f, 0f);
+            TextMeshProUGUI label = SlotLabel(host,
+                UiText.Of(Text, UiStrings.CharacterCreate), 24f, 0f);
             label.color = new Color(0.84f, 0.90f, 0.98f, 1f);
         }
 
         /// <summary>The one honest thing an unwired button can do.</summary>
         private void SayCreationIsUnavailable()
         {
-            SetStatus("Character creation is not available yet");
+            SetStatus(UiText.Of(Text, UiStrings.CharacterCreateUnavailable));
         }
 
         private RectTransform Slot(string name, int index, Sprite art, Vector4 opaque)
@@ -678,7 +756,7 @@ namespace ChibiFantasy.Client.UI
                 return;
             }
 
-            SetStatus("Entering world...");
+            SetStatus(UiText.Of(Text, UiStrings.CharacterEnteringWorld));
 
             EnterWorldResult entry = Session.SubmitEnterWorld(RequestId.New());
 

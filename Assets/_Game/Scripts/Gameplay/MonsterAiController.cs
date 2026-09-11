@@ -55,11 +55,28 @@ namespace ChibiFantasy.Gameplay
     /// when it dies, leaves, or the leash runs out. There is no threat table: party hate,
     /// taunts and boss aggro are later systems, and <see cref="SelectTarget"/> is the one
     /// method they will replace.
+    ///
+    /// <b>An attack is a cycle, not a condition.</b> Reaching
+    /// <see cref="MonsterAiState.Attack"/> starts an anticipation, the swing lands when that
+    /// elapses, and a recovery holds the monster still afterwards before the authored
+    /// cooldown even begins to matter. All three figures are content. The alternative --
+    /// raise the intent whenever the target is in reach and the cooldown has expired -- is
+    /// what this replaced, and it spaced the damage correctly while reading as a twitch.
+    ///
+    /// <b>Strolling is offered to it, not decided by it.</b>
+    /// <see cref="MonsterAiState.Wander"/> exists because a world of monsters standing
+    /// perfectly still reads as a world that is switched off. Where and when to stroll is
+    /// <see cref="MonsterWanderPlan"/>'s, which has the nest's geometry and its own timers;
+    /// this owns only the ordering -- <see cref="BeginWander"/> is refused outright by
+    /// anything more important, so a stroll can never interrupt a fight.
     /// </remarks>
     public sealed class MonsterAiController
     {
         private readonly MonsterRuntimeState _monster;
         private float _attackCooldownRemaining;
+        private float _windupRemaining;
+        private float _recoveryRemaining;
+        private bool _windingUp;
         private float _stateElapsed;
 
         /// <summary>How long the reaction pause between noticing and pursuing lasts.</summary>
@@ -89,6 +106,38 @@ namespace ChibiFantasy.Gameplay
         /// <summary>Seconds until it may strike again.</summary>
         public float AttackCooldownRemaining => _attackCooldownRemaining;
 
+        /// <summary>Seconds of anticipation left before the swing lands.</summary>
+        public float WindupRemaining => _windupRemaining;
+
+        /// <summary>Seconds it is still committed to the swing it just threw.</summary>
+        public float RecoveryRemaining => _recoveryRemaining;
+
+        /// <summary>
+        /// True on the tick it commits to a swing -- the moment the anticipation starts.
+        /// </summary>
+        /// <remarks>
+        /// <b>Why this and not <see cref="WantsToAttack"/>.</b> The presentation has to start
+        /// the attack animation at the anticipation, because the anticipation is the part of
+        /// it a player is supposed to see coming. <c>WantsToAttack</c> is raised when the
+        /// damage lands, which is the end of the swing -- animating from there shows the
+        /// recoil first and the wind-up afterwards, in the wrong order.
+        ///
+        /// A monster with no authored anticipation commits and strikes on the same tick, so
+        /// both are raised together and nothing changes for it.
+        ///
+        /// <b>It is not permission to hurt anybody.</b> Damage is still resolved from
+        /// <c>WantsToAttack</c> alone, one authored windup later, and is still range-checked
+        /// again at that point. A committed swing whose target stepped away animates as a
+        /// lunge at nothing, which is what missing looks like.
+        /// </remarks>
+        public bool BeganSwing { get; private set; }
+
+        /// <summary>Whether it is mid-swing: winding up, or recovering from one.</summary>
+        /// <remarks>A monster in this state does nothing else. It is what turns "in range"
+        /// from a condition that fires every time it is true into a cycle with a beginning
+        /// and an end.</remarks>
+        public bool IsCommittedToASwing => _windupRemaining > 0f || _recoveryRemaining > 0f;
+
         /// <summary>How long it has been in the current state.</summary>
         public float StateElapsed => _stateElapsed;
 
@@ -103,6 +152,7 @@ namespace ChibiFantasy.Gameplay
         public void Tick(float deltaSeconds, IReadOnlyList<ICombatant> candidates)
         {
             WantsToAttack = false;
+            BeganSwing = false;
 
             if (deltaSeconds < 0f) deltaSeconds = 0f;
 
@@ -110,6 +160,12 @@ namespace ChibiFantasy.Gameplay
             {
                 _attackCooldownRemaining -= deltaSeconds;
                 if (_attackCooldownRemaining < 0f) _attackCooldownRemaining = 0f;
+            }
+
+            if (_recoveryRemaining > 0f)
+            {
+                _recoveryRemaining -= deltaSeconds;
+                if (_recoveryRemaining < 0f) _recoveryRemaining = 0f;
             }
 
             // Death outranks everything, including a target it was mid-swing on.
@@ -158,7 +214,18 @@ namespace ChibiFantasy.Gameplay
                     return;
                 }
 
-                if (State != MonsterAiState.Return) Enter(MonsterAiState.Idle, deltaSeconds);
+                // Return keeps walking home, and Wander keeps strolling. Everything else
+                // with nothing to fight stands still.
+                //
+                // Wander is left alone here deliberately: this method owns "is there
+                // anything to fight", and a monster minding its own business is not an
+                // answer to that question. Stomping it back to Idle every tick is what
+                // used to make the state unreachable.
+                if (State != MonsterAiState.Return && State != MonsterAiState.Wander)
+                {
+                    Enter(MonsterAiState.Idle, deltaSeconds);
+                }
+
                 return;
             }
 
@@ -167,17 +234,70 @@ namespace ChibiFantasy.Gameplay
             float sqrDistance = _monster.Position.SqrDistanceTo(target.Position);
             float attackRange = definition.AttackRange;
 
-            if (attackRange > 0f && sqrDistance <= attackRange * attackRange)
+            bool inReach = attackRange > 0f && sqrDistance <= attackRange * attackRange;
+
+            // A swing already begun is seen through even if the target steps out of reach.
+            //
+            // Two reasons, and the second is the one that bites. The first is the fight
+            // reading correctly: stepping back during the anticipation should make the
+            // monster miss, not make it silently cancel and stand there. The second is that
+            // without this, a player standing near the edge of reach cancels and re-arms the
+            // anticipation every time they drift a few centimetres, and the monster never
+            // reaches the end of a windup at all -- which gets far more likely the smaller
+            // the authored reach is, and it has just been made much smaller.
+            //
+            // The damage is unaffected: it is resolved separately and revalidates the range
+            // at the moment of impact, so a swing seen through at somebody who left lands on
+            // nobody.
+            if (inReach || IsCommittedToASwing)
             {
                 Enter(MonsterAiState.Attack, deltaSeconds);
 
-                if (_attackCooldownRemaining <= 0f)
-                {
-                    WantsToAttack = true;
+                // One swing is a cycle, not a condition that keeps being true:
+                //
+                //   arrive in reach -> wind up -> strike -> recover -> wait out the
+                //   cooldown -> wind up again
+                //
+                // Before this, reaching for a target raised the intent the moment the
+                // cooldown expired, with nothing before it and nothing after it. The
+                // damage was correctly spaced and the fight still read as a monster
+                // twitching at you, because there was no anticipation to see coming and no
+                // beat afterwards to register that it had finished.
+                if (_recoveryRemaining > 0f) return;
 
-                    float cooldown = definition.AttackCooldownSeconds;
-                    _attackCooldownRemaining = cooldown > 0f ? cooldown : 0f;
+                if (_attackCooldownRemaining > 0f) return;
+
+                if (_windupRemaining > 0f)
+                {
+                    // The tick the anticipation actually starts running, which is after any
+                    // recovery and cooldown have cleared -- not the tick it was armed.
+                    if (!_windingUp)
+                    {
+                        _windingUp = true;
+                        BeganSwing = true;
+                    }
+
+                    _windupRemaining -= deltaSeconds;
+
+                    if (_windupRemaining > 0f) return;
+
+                    _windupRemaining = 0f;
                 }
+
+                // A monster authored with no anticipation commits and strikes together.
+                if (!_windingUp) BeganSwing = true;
+
+                _windingUp = false;
+
+                WantsToAttack = true;
+
+                float cooldown = definition.AttackCooldownSeconds;
+                _attackCooldownRemaining = cooldown > 0f ? cooldown : 0f;
+                _recoveryRemaining = definition.AttackRecoverySeconds;
+
+                // Armed for the next one, so the cycle repeats rather than the first swing
+                // being the only one with anticipation.
+                _windupRemaining = definition.AttackWindupSeconds;
 
                 return;
             }
@@ -201,6 +321,39 @@ namespace ChibiFantasy.Gameplay
             _monster.ClearTarget();
             WantsToAttack = false;
             Enter(MonsterAiState.Return, 0f);
+        }
+
+        /// <summary>
+        /// Sends it strolling to a spot.
+        /// </summary>
+        /// <remarks>
+        /// <b>Only from standing still.</b> A monster that is chasing, striking, walking home
+        /// or dead has a reason to be doing it, and an idle stroll is the lowest-priority
+        /// thing a monster can be doing. Refusing here rather than letting the caller check
+        /// keeps that ordering in one place -- <see cref="MonsterWanderPlan"/> asks, this
+        /// decides.
+        ///
+        /// Returns whether it took. A caller that wants to know may look; one that does not
+        /// can call it every tick and be ignored.
+        /// </remarks>
+        public bool BeginWander(CombatPosition destination)
+        {
+            if (State != MonsterAiState.Idle && State != MonsterAiState.Wander) return false;
+
+            if (!_monster.IsAlive || !destination.IsFinite) return false;
+
+            _monster.SetWanderDestination(destination);
+            Enter(MonsterAiState.Wander, 0f);
+
+            return true;
+        }
+
+        /// <summary>Stops a stroll and stands still. What arriving and giving up call.</summary>
+        public void StopWandering()
+        {
+            if (State != MonsterAiState.Wander) return;
+
+            Enter(MonsterAiState.Idle, 0f);
         }
 
         /// <summary>
@@ -322,6 +475,28 @@ namespace ChibiFantasy.Gameplay
         private void Enter(MonsterAiState state, float deltaSeconds)
         {
             if (State == state) return;
+
+            // Arriving in reach arms the anticipation; leaving disarms it, so a monster that
+            // was interrupted mid-windup has to wind up again rather than striking the
+            // instant it catches its target a second time.
+            if (state == MonsterAiState.Attack)
+            {
+                _windupRemaining = _monster.Definition == null
+                    ? 0f
+                    : _monster.Definition.AttackWindupSeconds;
+                _windingUp = false;
+            }
+            else if (State == MonsterAiState.Attack)
+            {
+                _windupRemaining = 0f;
+                _recoveryRemaining = 0f;
+                _windingUp = false;
+            }
+
+            // Leaving a stroll forgets where it was strolling to. Left behind, a stale
+            // destination would send the monster back to it the moment it went idle again,
+            // which reads as a monster that will not stay where a fight left it.
+            if (State == MonsterAiState.Wander) _monster.ClearWanderDestination();
 
             State = state;
 

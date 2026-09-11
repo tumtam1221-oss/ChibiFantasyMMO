@@ -294,6 +294,8 @@ MonoBehaviour:
   _networkManagerPrefab: {fileID: 3462012269369269435, guid: 3219f49f317e95a4f912f8cc01e0f697,
     type: 3}
   _content: {fileID: 11400000, guid: 231a6d2d3472aa94180ee29e091ef002, type: 2}
+  _localization: {fileID: 11400000, guid: 50e6a87f40c6b0048a8b4b46a6a2393f, type: 2}
+  _monsterVisuals: {fileID: 11400000, guid: d62805045f6c674418ff2ce82ff11f2c, type: 2}
 --- !u!4 &583275472
 Transform:
   m_ObjectHideFlags: 0

@@ -5,8 +5,15 @@ declare(strict_types=1);
 /**
  * Deterministic development seed data.
  *
- *   php bin/seed.php            seed the application database
- *   php bin/seed.php --test     seed the test database
+ *   php bin/seed.php                   seed the application database
+ *   php bin/seed.php --test            seed the test database
+ *   php bin/seed.php --integration     seed the live-integration database
+ *
+ * The third target is the one a running dev world actually reads: the Unity integration
+ * fixture signs in against DB_INTEGRATION_DATABASE, so that is the database whose monster
+ * camps a developer sees when they walk out of Harbor Town. Adding the flag is what makes
+ * those camps reproducible from this file instead of from somebody's memory of an ad-hoc
+ * UPDATE.
  *
  * What this deliberately does NOT create: an account with a known password.
  * A development fixture that ships credentials is a production breach waiting for
@@ -23,7 +30,15 @@ require_once dirname(__DIR__) . '/src/bootstrap.php';
 use ChibiFantasy\Database\Connection;
 use ChibiFantasy\Support\Env;
 
-$useTest = in_array('--test', array_slice($argv, 1), true);
+$arguments = array_slice($argv, 1);
+
+$useTest = in_array('--test', $arguments, true);
+$useIntegration = in_array('--integration', $arguments, true);
+
+if ($useTest && $useIntegration) {
+    fwrite(STDERR, 'refusing: pass --test or --integration, not both.' . PHP_EOL);
+    exit(1);
+}
 
 $environment = strtolower((string) Env::get('APP_ENV', ''));
 
@@ -33,7 +48,9 @@ if (!in_array($environment, ['development', 'testing', 'local'], true)) {
 }
 
 try {
-    $pdo = $useTest ? Connection::forTests() : Connection::get();
+    $pdo = $useIntegration
+        ? Connection::forIntegration()
+        : ($useTest ? Connection::forTests() : Connection::get());
 
     // Every insert is idempotent, so seeding twice changes nothing and a partially
     // seeded database can be completed rather than reset.
@@ -134,12 +151,20 @@ try {
     // server refuses a row inside one, so a typo here empties a camp rather than putting
     // a slime in the plaza. Y is 0 on purpose: the server drops each monster onto the
     // baked ground when it spawns.
+    // Six in a camp, room for seven. Three read as a place monsters happen to be; six
+    // milling about a clearing reads as a hunting ground, which is what a level-one
+    // player is sent here to find. The spare slot is what a respawn arrives into while
+    // the camp is still full.
+    //
+    // The radius is also the area they stroll inside -- the server walks an idle monster
+    // around the nest it came from -- so widening it would spread a camp out rather than
+    // making it busier.
     $camps = [
         // id, monster, x, z, radius, initial, max alive, respawn seconds
-        ['spawn.harbor_town.south_meadow', 'monster.training_slime',    0.0,  -58.0, 6.0, 4, 6, 20.0],
-        ['spawn.harbor_town.west_shore',   'monster.training_slime',  -58.0,   -8.0, 6.0, 3, 5, 25.0],
-        ['spawn.harbor_town.east_woods',   'monster.training_slime',   54.0,   12.0, 6.0, 3, 5, 25.0],
-        ['spawn.harbor_town.river_bend',   'monster.training_slime',   38.0,  -52.0, 6.0, 3, 5, 30.0],
+        ['spawn.harbor_town.south_meadow', 'monster.training_slime',    0.0,  -58.0, 6.0, 6, 7, 20.0],
+        ['spawn.harbor_town.west_shore',   'monster.training_slime',  -58.0,   -8.0, 6.0, 6, 7, 25.0],
+        ['spawn.harbor_town.east_woods',   'monster.training_slime',   54.0,   12.0, 6.0, 6, 7, 25.0],
+        ['spawn.harbor_town.river_bend',   'monster.training_slime',   38.0,  -52.0, 6.0, 6, 7, 30.0],
         // The world boss keeps the far knoll. Thirty minutes, matching the authored
         // RespawnSettings the runtime already uses.
         ['spawn.harbor_town.slime_king',   'monster.ancient_slime_king', -46.0, 40.0, 0.0, 1, 1, 1800.0],
@@ -161,7 +186,10 @@ try {
         ]);
     }
 
-    echo 'seeded ' . ($useTest ? 'test' : 'application') . ' database' . PHP_EOL;
+
+    $target = $useIntegration ? 'integration' : ($useTest ? 'test' : 'application');
+
+    echo 'seeded ' . $target . ' database' . PHP_EOL;
     echo '  1 currency, 1 server, 2 channels (one with PK enabled)' . PHP_EOL;
     echo '  5 monster camps on map.harbor_town (4 slime camps outside the wall + the slime king on the far knoll)' . PHP_EOL;
     echo '  no accounts: fixtures never ship credentials' . PHP_EOL;

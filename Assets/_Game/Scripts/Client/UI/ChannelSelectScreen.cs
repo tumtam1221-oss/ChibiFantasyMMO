@@ -20,9 +20,9 @@ namespace ChibiFantasy.Client.UI
     /// </remarks>
     public sealed class ChannelSelectScreen : SessionScreenBase
     {
-        protected override string Title => "Choose a channel";
+        protected override string Title => UiText.Of(Text, UiStrings.ChannelTitle);
 
-        protected override string EmptyMessage => "No available channels";
+        protected override string EmptyMessage => UiText.Of(Text, UiStrings.ChannelEmpty);
 
         /// <summary>This screen paints its own table, so the plain rows are always empty.</summary>
         protected override bool HasContent => _painted.Count > 0 || base.HasContent;
@@ -42,6 +42,29 @@ namespace ChibiFantasy.Client.UI
 
         private RectTransform _list;
         private Button _enter;
+        private TextMeshProUGUI _enterLabel;
+        private TextMeshProUGUI _backLabel;
+        private TextMeshProUGUI _subtitle;
+        private TextMeshProUGUI[] _headers;
+        private string[] _headerKeys;
+
+        /// <summary>Rewrites the words this screen painted once, after a language change.</summary>
+        public override void Relabel()
+        {
+            if (_subtitle != null) _subtitle.text = UiText.Of(Text, UiStrings.ChannelSubtitle);
+            if (_backLabel != null) _backLabel.text = UiText.Of(Text, UiStrings.CommonBack);
+            if (_enterLabel != null) _enterLabel.text = UiText.Of(Text, UiStrings.CommonEnter);
+
+            if (_headers != null && _headerKeys != null)
+            {
+                for (var i = 0; i < _headers.Length && i < _headerKeys.Length; i++)
+                {
+                    if (_headers[i] != null) _headers[i].text = UiText.Of(Text, _headerKeys[i]);
+                }
+            }
+
+            base.Relabel();
+        }
 
         private struct RowWidgets
         {
@@ -77,13 +100,17 @@ namespace ChibiFantasy.Client.UI
         }
 
         /// <summary>PK is shown because the view data carries it. It is never set here.</summary>
-        private static string Describe(in ChannelRowViewData row)
+        private string Describe(in ChannelRowViewData row)
         {
-            string state = row.IsSelectable ? "Open" : row.Status.ToString();
+            string state = row.IsSelectable
+                ? UiText.Of(Text, UiStrings.ChannelStateOpen)
+                : row.Status.ToString();
 
             if (row.PkEnabled) state += "  ~  PK";
 
-            return row.PopulationKnown ? state + "  ~  " + row.Population + " online" : state;
+            return row.PopulationKnown
+                ? UiText.Format(Text, UiStrings.CommonPopulation, state, row.Population)
+                : state;
         }
 
         // ---- the painted table ----------------------------------------------------------------
@@ -149,7 +176,9 @@ namespace ChibiFantasy.Client.UI
             }
 
             TextMeshProUGUI subtitle = UiFactory.CreateLabel("Subtitle", root,
-                "Choose a channel to enter the world", 24f, TextAlignmentOptions.Left);
+                UiText.Of(Text, UiStrings.ChannelSubtitle), 24f, TextAlignmentOptions.Left);
+
+            _subtitle = subtitle;
 
             subtitle.color = new Color(0.78f, 0.86f, 0.97f, 1f);
 
@@ -167,17 +196,26 @@ namespace ChibiFantasy.Client.UI
         /// thing to tell a player.</remarks>
         private void BuildColumnHeaders(RectTransform panel)
         {
-            Header(panel, "Channel Name", NameX, TextAlignmentOptions.Left);
-            Header(panel, "Status", StatusX, TextAlignmentOptions.Left);
-            Header(panel, "Players", PlayersX, TextAlignmentOptions.Center);
-            Header(panel, "Ping", PingX, TextAlignmentOptions.Center);
+            _headerKeys = new[]
+            {
+                UiStrings.ChannelHeaderName, UiStrings.CommonHeaderStatus,
+                UiStrings.CommonHeaderPlayers, UiStrings.CommonHeaderPing
+            };
+
+            _headers = new[]
+            {
+                Header(panel, _headerKeys[0], NameX, TextAlignmentOptions.Left),
+                Header(panel, _headerKeys[1], StatusX, TextAlignmentOptions.Left),
+                Header(panel, _headerKeys[2], PlayersX, TextAlignmentOptions.Center),
+                Header(panel, _headerKeys[3], PingX, TextAlignmentOptions.Center)
+            };
         }
 
-        private static void Header(RectTransform panel, string text, float x,
+        private TextMeshProUGUI Header(RectTransform panel, string key, float x,
             TextAlignmentOptions alignment)
         {
-            TextMeshProUGUI label = UiFactory.CreateLabel("Header " + text, panel, text, 22f,
-                alignment);
+            TextMeshProUGUI label = UiFactory.CreateLabel("Header " + key, panel,
+                UiText.Of(Text, key), 22f, alignment);
 
             label.color = new Color(0.72f, 0.80f, 0.92f, 1f);
             label.fontStyle = FontStyles.Bold;
@@ -188,17 +226,21 @@ namespace ChibiFantasy.Client.UI
             rect.pivot = new Vector2(alignment == TextAlignmentOptions.Left ? 0f : 0.5f, 0.5f);
             rect.sizeDelta = new Vector2(280f, 30f);
             rect.anchoredPosition = new Vector2(x, HeaderY);
+
+            return label;
         }
 
         private void BuildButtons(RectTransform root, PreWorldUiSkin skin)
         {
-            Button back = PaintedButton(root, "Back", "Back", skin.ChannelButtonBack,
-                BackOpaque, 320f, 88f, new Vector2(-700f, -424f), out TextMeshProUGUI _);
+            Button back = PaintedButton(root, "Back", UiText.Of(Text, UiStrings.CommonBack),
+                skin.ChannelButtonBack,
+                BackOpaque, 320f, 88f, new Vector2(-700f, -424f), out _backLabel);
 
             back.onClick.AddListener(GoBack);
 
-            _enter = PaintedButton(root, "Enter", "Enter", skin.ChannelButtonEnter, EnterOpaque,
-                330f, 85f, new Vector2(700f, -424f), out TextMeshProUGUI _);
+            _enter = PaintedButton(root, "Enter", UiText.Of(Text, UiStrings.CommonEnter),
+                skin.ChannelButtonEnter, EnterOpaque,
+                330f, 85f, new Vector2(700f, -424f), out _enterLabel);
 
             _enter.onClick.AddListener(Confirm);
             _enter.interactable = false;
@@ -274,7 +316,8 @@ namespace ChibiFantasy.Client.UI
             ChannelId channel = row.Channel;
             button.onClick.AddListener(() => Highlight(channel));
 
-            Cell(host, row.NameKey.Key, NameX, TextAlignmentOptions.Left, 24f, Color.white);
+            Cell(host, UiText.ContentText(Text, row.NameKey), NameX,
+                TextAlignmentOptions.Left, 24f, Color.white);
 
             Sprite dot = DotFor(row.Status, skin);
             Vector4 dotOpaque = DotOpaqueFor(row.Status);
@@ -291,8 +334,12 @@ namespace ChibiFantasy.Client.UI
                 UiFactory.FitSprite(pip, dotOpaque, 22f, 22f, new Vector2(StatusX - 4f, 0f));
             }
 
-            TextMeshProUGUI state = Cell(host, row.Status.ToString(), StatusX + 24f,
-                TextAlignmentOptions.Left, 22f, Color.white);
+            // The same word the row description uses. Left as the enum name this cell
+            // read "Online" in English beside four Thai column headers.
+            TextMeshProUGUI state = Cell(host, row.IsSelectable
+                    ? UiText.Of(Text, UiStrings.ChannelStateOpen)
+                    : row.Status.ToString(),
+                StatusX + 24f, TextAlignmentOptions.Left, 22f, Color.white);
 
             state.color = ColourFor(row.Status);
 

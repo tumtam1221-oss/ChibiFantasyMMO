@@ -371,6 +371,13 @@ namespace ChibiFantasy.Tests.EditMode
                 // so a second server-side pickup path is still caught.
                 if (normalized.Contains("/Server/MonsterLootRegistry.cs")) continue;
 
+                // The server's own quest authority, for exactly the reason above. Phase 19C
+                // made accepting and turning in server decisions rather than UI ones: a
+                // client controller can be bypassed by a modified client and this cannot.
+                // Named as a file, and Exactly_one_server_file_may_move_a_quest below holds
+                // the list at one so a second server-side quest path is still caught.
+                if (normalized.Contains("/Server/CharacterQuestAuthority.cs")) continue;
+
                 string source = System.IO.File.ReadAllText(file);
 
                 Assert.That(source, Does.Not.Contain("QuestService.TryTurnIn"),
@@ -403,6 +410,31 @@ namespace ChibiFantasy.Tests.EditMode
 
             Assert.That(takers, Has.Count.EqualTo(1), string.Join(", ", takers));
             Assert.That(takers[0], Does.EndWith("/Server/MonsterLootRegistry.cs"));
+        }
+
+        [Test]
+        public void Exactly_one_server_file_may_move_a_quest()
+        {
+            // The same guard the loot path has. Two server classes deciding whether a quest
+            // may be accepted is how the two come to disagree about whether it was.
+            string[] files = System.IO.Directory.GetFiles("Assets/_Game/Scripts/Server",
+                "*.cs", System.IO.SearchOption.AllDirectories);
+
+            var movers = new System.Collections.Generic.List<string>();
+
+            foreach (string file in files)
+            {
+                string source = System.IO.File.ReadAllText(file);
+
+                if (source.Contains("QuestService.TryAccept")
+                    || source.Contains("QuestService.TryTurnIn"))
+                {
+                    movers.Add(file.Replace('\\', '/'));
+                }
+            }
+
+            Assert.That(movers, Has.Count.EqualTo(1), string.Join(", ", movers));
+            Assert.That(movers[0], Does.EndWith("/Server/CharacterQuestAuthority.cs"));
         }
 
         [Test]

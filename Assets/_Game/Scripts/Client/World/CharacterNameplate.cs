@@ -28,7 +28,26 @@ namespace ChibiFantasy.Client.World
         /// <summary>How many times the string was actually written.</summary>
         public int WriteCount { get; private set; }
 
+        /// <summary>The size a player's or an NPC's name has always been drawn at.</summary>
+        public const float DefaultFontSize = 2.4f;
+
         public static CharacterNameplate Create(Transform parent, float height)
+        {
+            return Create(parent, height, DefaultFontSize);
+        }
+
+        /// <summary>
+        /// Builds a nameplate at a given size.
+        /// </summary>
+        /// <remarks>
+        /// The size is a parameter because a monster's name is not a title. A player's
+        /// nameplate identifies somebody across a plaza and is read at a distance; a
+        /// monster's says what the thing you are already looking at is called, and at the
+        /// player's size it dominated the creature it was labelling -- six of them in a camp
+        /// buried the camp. Text is in world units, so this scales with distance like
+        /// everything else in the scene rather than being pinned to one screen resolution.
+        /// </remarks>
+        public static CharacterNameplate Create(Transform parent, float height, float fontSize)
         {
             var host = new GameObject("Nameplate");
             host.transform.SetParent(parent, false);
@@ -38,12 +57,24 @@ namespace ChibiFantasy.Client.World
 
             plate._label = host.AddComponent<TextMeshPro>();
             plate._label.alignment = TextAlignmentOptions.Center;
-            plate._label.fontSize = 2.4f;
+            plate._label.fontSize = fontSize;
             plate._label.color = new Color(0.90f, 0.92f, 0.96f);
             plate._label.text = string.Empty;
-            plate._label.rectTransform.sizeDelta = new Vector2(4f, 0.6f);
+            plate._label.rectTransform.sizeDelta = new Vector2(4f * (fontSize / DefaultFontSize),
+                0.6f * (fontSize / DefaultFontSize));
 
             return plate;
+        }
+
+        /// <summary>Shows or hides the plate without forgetting what it says.</summary>
+        /// <remarks>Separate from <see cref="Refresh"/>, which hides an empty plate on its
+        /// own: a monster's plate has a name at all times and is hidden because nobody has
+        /// selected it, which is a different question.</remarks>
+        public void SetShown(bool shown)
+        {
+            bool wanted = shown && Text.Length > 0;
+
+            if (gameObject.activeSelf != wanted) gameObject.SetActive(wanted);
         }
 
         /// <summary>Sets the text, if it changed.</summary>

@@ -40,6 +40,14 @@ namespace ChibiFantasy.Server
 
         /// <summary>Where a pickup request goes. Null in a world with no loot.</summary>
         private ICharacterLootRequestSink _lootSink;
+        private ICharacterNpcRequestSink _npcSink;
+        private ICharacterQuestRequestSink _questSink;
+
+        /// <summary>Sends a newly spawned character their own quest log.</summary>
+        /// <remarks>A delegate rather than a second reference to the authority: this service
+        /// already holds the sink, and what a quest log contains is the authority's business
+        /// entirely.</remarks>
+        private System.Action<CharacterNetworkEntity, LivingCharacter> _questSource;
         private readonly ICharacterMovementRequestSink _movement;
         private ICharacterInventoryRequestSink _inventory;
 
@@ -102,6 +110,28 @@ namespace ChibiFantasy.Server
         {
             _lootSink = loot;
         }
+
+        /// <summary>Points every spawned character at where interaction requests land.</summary>
+        public void UseNpcs(ICharacterNpcRequestSink npcs)
+        {
+            _npcSink = npcs;
+        }
+
+        /// <summary>Points every spawned character at where quest requests land.</summary>
+        public void UseQuests(ICharacterQuestRequestSink quests,
+            System.Action<CharacterNetworkEntity, LivingCharacter> publishLog = null)
+        {
+            _questSink = quests;
+            _questSource = publishLog;
+        }
+
+        /// <summary>Points every spawned character at where a request to get up lands.</summary>
+        public void UseRevive(ICharacterReviveRequestSink revive)
+        {
+            _reviveSink = revive;
+        }
+
+        private ICharacterReviveRequestSink _reviveSink;
 
         /// <summary>Points every spawned character's pet requests at the server's authority.</summary>
         public void UsePets(ICharacterPetRequestSink pets)
@@ -235,6 +265,15 @@ namespace ChibiFantasy.Server
             entity.ServerUsePetSink(_pets);
             entity.ServerUseStatusSource(_status);
             entity.ServerUseLootSink(_lootSink);
+            entity.ServerUseNpcSink(_npcSink);
+            entity.ServerUseQuestSink(_questSink);
+            entity.ServerUseReviveSink(_reviveSink);
+
+            // What this character has already taken, sent as they arrive. Published only on
+            // change afterwards, so a world where nobody is questing costs nothing -- but
+            // without this first send a reconnecting player's journal is empty until they
+            // happen to kill something.
+            _questSource?.Invoke(entity, character);
 
             // The owner's fruit at spawn, read from the live state rather than captured, so
             // a reconnecting player is told what they own before anything else happens.

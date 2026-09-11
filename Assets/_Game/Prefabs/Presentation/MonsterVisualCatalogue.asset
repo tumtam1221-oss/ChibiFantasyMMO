@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d7ca970d56591834489910cbd6483051, type: 3}
+  m_Name: MonsterVisualCatalogue
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.World.MonsterVisualCatalogue
+  _entries:
+  - Monster:
+      _value: monster.training_slime
+    Prefab: {fileID: 729025606452281218, guid: 7fedb33bca1cd8742b80ff39dea0c864, type: 3}
+    NameplateHeight: 0.56
+    HopMetres: 0.42
+    VisualScale: 0.75

@@ -22,9 +22,9 @@ namespace ChibiFantasy.Client.UI
     /// </remarks>
     public sealed class ServerSelectScreen : SessionScreenBase
     {
-        protected override string Title => "Choose a server";
+        protected override string Title => UiText.Of(Text, UiStrings.ServerTitle);
 
-        protected override string EmptyMessage => "No available servers";
+        protected override string EmptyMessage => UiText.Of(Text, UiStrings.ServerEmpty);
 
         /// <summary>This screen paints its own table, so the plain rows are always empty.</summary>
         protected override bool HasContent => _painted.Count > 0 || base.HasContent;
@@ -47,6 +47,28 @@ namespace ChibiFantasy.Client.UI
         private Button _enter;
         private Button _back;
         private TextMeshProUGUI _enterLabel;
+        private TextMeshProUGUI _backLabel;
+        private TextMeshProUGUI _subtitle;
+        private TextMeshProUGUI[] _headers;
+        private string[] _headerKeys;
+
+        /// <summary>Rewrites the words this screen painted once, after a language change.</summary>
+        public override void Relabel()
+        {
+            if (_subtitle != null) _subtitle.text = UiText.Of(Text, UiStrings.ServerSubtitle);
+            if (_backLabel != null) _backLabel.text = UiText.Of(Text, UiStrings.CommonBack);
+            if (_enterLabel != null) _enterLabel.text = UiText.Of(Text, UiStrings.CommonEnter);
+
+            if (_headers != null && _headerKeys != null)
+            {
+                for (var i = 0; i < _headers.Length && i < _headerKeys.Length; i++)
+                {
+                    if (_headers[i] != null) _headers[i].text = UiText.Of(Text, _headerKeys[i]);
+                }
+            }
+
+            base.Relabel();
+        }
 
         private struct RowWidgets
         {
@@ -88,12 +110,14 @@ namespace ChibiFantasy.Client.UI
         /// <remarks>Only values the view data actually carries. A population it does not
         /// know is left out rather than shown as zero, because zero players and unknown
         /// players are different things and one of them is a lie.</remarks>
-        private static string Describe(in ServerRowViewData row)
+        private string Describe(in ServerRowViewData row)
         {
-            string state = row.IsSelectable ? "Online" : row.Status.ToString();
+            string state = row.IsSelectable
+                ? UiText.Of(Text, UiStrings.ServerStateOnline)
+                : row.Status.ToString();
 
             return row.PopulationKnown
-                ? state + "  ~  " + row.Population + " online"
+                ? UiText.Format(Text, UiStrings.CommonPopulation, state, row.Population)
                 : state;
         }
 
@@ -174,7 +198,9 @@ namespace ChibiFantasy.Client.UI
             }
 
             TextMeshProUGUI subtitle = UiFactory.CreateLabel("Subtitle", root,
-                "Choose a server to begin your adventure", 24f, TextAlignmentOptions.Left);
+                UiText.Of(Text, UiStrings.ServerSubtitle), 24f, TextAlignmentOptions.Left);
+
+            _subtitle = subtitle;
 
             subtitle.color = new Color(0.78f, 0.86f, 0.97f, 1f);
 
@@ -192,16 +218,27 @@ namespace ChibiFantasy.Client.UI
         /// telling a player something about a server nobody measured.</remarks>
         private void BuildColumnHeaders(RectTransform panel)
         {
-            Header(panel, "Server Name", NameX, TextAlignmentOptions.Left);
-            Header(panel, "Status", StatusX, TextAlignmentOptions.Left);
-            Header(panel, "Players", PlayersX, TextAlignmentOptions.Center);
-            Header(panel, "Ping", PingX, TextAlignmentOptions.Center);
+            _headers = new[]
+            {
+                Header(panel, UiStrings.ServerHeaderName, NameX, TextAlignmentOptions.Left),
+                Header(panel, UiStrings.CommonHeaderStatus, StatusX, TextAlignmentOptions.Left),
+                Header(panel, UiStrings.CommonHeaderPlayers, PlayersX, TextAlignmentOptions.Center),
+                Header(panel, UiStrings.CommonHeaderPing, PingX, TextAlignmentOptions.Center)
+            };
+
+            _headerKeys = new[]
+            {
+                UiStrings.ServerHeaderName, UiStrings.CommonHeaderStatus,
+                UiStrings.CommonHeaderPlayers, UiStrings.CommonHeaderPing
+            };
         }
 
-        private static void Header(RectTransform panel, string text, float x,
+        private TextMeshProUGUI Header(RectTransform panel, string key, float x,
             TextAlignmentOptions alignment)
         {
-            TextMeshProUGUI label = UiFactory.CreateLabel("Header " + text, panel, text, 22f,
+            string text = UiText.Of(Text, key);
+
+            TextMeshProUGUI label = UiFactory.CreateLabel("Header " + key, panel, text, 22f,
                 alignment);
 
             label.color = new Color(0.72f, 0.80f, 0.92f, 1f);
@@ -213,17 +250,21 @@ namespace ChibiFantasy.Client.UI
             rect.pivot = new Vector2(alignment == TextAlignmentOptions.Left ? 0f : 0.5f, 0.5f);
             rect.sizeDelta = new Vector2(260f, 30f);
             rect.anchoredPosition = new Vector2(x, HeaderY);
+
+            return label;
         }
 
         /// <summary>Back to the login screen, and into the world.</summary>
         private void BuildButtons(RectTransform root, PreWorldUiSkin skin)
         {
-            _back = PaintedButton(root, "Back", "Back", skin.ServerButtonBack, BackOpaque,
-                320f, 88f, new Vector2(-700f, -424f), out TextMeshProUGUI _);
+            _back = PaintedButton(root, "Back", UiText.Of(Text, UiStrings.CommonBack),
+                skin.ServerButtonBack, BackOpaque,
+                320f, 88f, new Vector2(-700f, -424f), out _backLabel);
 
             _back.onClick.AddListener(GoBack);
 
-            _enter = PaintedButton(root, "Enter", "Enter", skin.ServerButtonEnter, EnterOpaque,
+            _enter = PaintedButton(root, "Enter", UiText.Of(Text, UiStrings.CommonEnter),
+                skin.ServerButtonEnter, EnterOpaque,
                 330f, 82f, new Vector2(700f, -424f), out _enterLabel);
 
             _enter.onClick.AddListener(Confirm);
@@ -310,7 +351,8 @@ namespace ChibiFantasy.Client.UI
             ServerId server = row.Server;
             button.onClick.AddListener(() => Highlight(server));
 
-            Cell(host, row.NameKey.Key, NameX, TextAlignmentOptions.Left, 24f, Color.white);
+            Cell(host, UiText.ContentText(Text, row.NameKey), NameX,
+                TextAlignmentOptions.Left, 24f, Color.white);
 
             // The status dot, at whatever size its own image is drawn -- the two states are
             // not the same size inside their canvases.
@@ -330,7 +372,9 @@ namespace ChibiFantasy.Client.UI
                     new Vector2(StatusX - 4f, 0f));
             }
 
-            TextMeshProUGUI state = Cell(host, row.IsSelectable ? "Online" : row.Status.ToString(),
+            TextMeshProUGUI state = Cell(host, row.IsSelectable
+                    ? UiText.Of(Text, UiStrings.ServerStateOnline)
+                    : row.Status.ToString(),
                 StatusX + 24f, TextAlignmentOptions.Left, 22f, Color.white);
 
             state.color = row.IsSelectable

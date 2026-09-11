@@ -1,0 +1,137 @@
+{
+  "_comment": "English content names. The screens' own English lives in UiStrings and is not repeated here -- this file carries only what the code has no opinion about: what the world's items, monsters, NPCs, maps and quests are called. Deliberately NOT translated into Thai: a Thai player sees these names in English, by decision, because a name is what players call a thing to each other and two vocabularies for one slime is worse than one foreign word.",
+  "entries": [
+    {
+      "key": "server.aurora.name",
+      "text": "Aurora"
+    },
+    {
+      "key": "server.itest.name",
+      "text": "Integration"
+    },
+    {
+      "key": "channel.ch1.name",
+      "text": "Channel 1"
+    },
+    {
+      "key": "channel.ch2.name",
+      "text": "Channel 2"
+    },
+    {
+      "key": "map.harbor_town.name",
+      "text": "Harbor Town"
+    },
+    {
+      "key": "map.harbor_outskirts.name",
+      "text": "Harbor Outskirts"
+    },
+    {
+      "key": "npc.harbor_guide.name",
+      "text": "Harbor Guide"
+    },
+    {
+      "key": "npc.general_store_merchant.name",
+      "text": "General Store Merchant"
+    },
+    {
+      "key": "npc.blacksmith.name",
+      "text": "Blacksmith"
+    },
+    {
+      "key": "npc.storage_keeper.name",
+      "text": "Storage Keeper"
+    },
+    {
+      "key": "npc.job_guide.name",
+      "text": "Job Guide"
+    },
+    {
+      "key": "monster.training_slime.name",
+      "text": "Training Slime"
+    },
+    {
+      "key": "monster.ancient_slime_king.name",
+      "text": "Ancient Slime King"
+    },
+    {
+      "key": "item.apprentice_cutlass.name",
+      "text": "Apprentice Cutlass"
+    },
+    {
+      "key": "item.slime_gel.name",
+      "text": "Slime Gel"
+    },
+    {
+      "key": "item.devil_fruit.darkness.name",
+      "text": "Darkness Devil Fruit"
+    },
+    {
+      "key": "card.ancient_slime_king.name",
+      "text": "Ancient Slime King Card"
+    },
+    {
+      "key": "quest.harbor_first_hunt.name",
+      "text": "A First Hunt"
+    },
+    {
+      "key": "quest.harbor_first_hunt.description",
+      "text": "Training slimes have been wandering too close to the harbour. Put down three of them and come back to me."
+    },
+    {
+      "key": "quest.harbor_slime_cleanup.name",
+      "text": "Clearing the Roads"
+    },
+    {
+      "key": "quest.harbor_slime_cleanup.description",
+      "text": "Three was a start, but the roads out of town are still crawling. Thin them out properly -- eight should make the carters happy."
+    },
+    {
+      "key": "quest.harbor_daily_patrol.name",
+      "text": "Harbour Patrol"
+    },
+    {
+      "key": "quest.harbor_daily_patrol.description",
+      "text": "The watch is short-handed and the slimes never stop coming back. Walk the patrol, clear five, and come and see me again whenever you have the time. There is always work."
+    },
+    {
+      "key": "quest.harbor_steel_proof.name",
+      "text": "Proving the Steel"
+    },
+    {
+      "key": "quest.harbor_steel_proof.description",
+      "text": "The blacksmith has a cutlass on the rack and no one worth giving it to. Bring down fifteen and I will tell him you have earned it."
+    },
+    {
+      "key": "quest.harbor_slime_king.name",
+      "text": "The Ancient Slime King"
+    },
+    {
+      "key": "quest.harbor_slime_king.description",
+      "text": "Something old has woken in the hills and the small ones answer to it. Do not go alone, and do not go unprepared."
+    },
+    {
+      "key": "quest.harbor_daily_patrol_10.name",
+      "text": "Road Watch"
+    },
+    {
+      "key": "quest.harbor_daily_patrol_10.description",
+      "text": "The carters take the east road every morning and the slimes know it. Clear eight before they set out. Come back tomorrow -- there will be eight more."
+    },
+    {
+      "key": "quest.harbor_daily_patrol_20.name",
+      "text": "Deep Patrol"
+    },
+    {
+      "key": "quest.harbor_daily_patrol_20.description",
+      "text": "The watch does not go past the river bend any more. You can. Fourteen of them, every day, and the road stays open."
+    },
+    {
+      "key": "quest.event_slime_festival.name",
+      "text": "Slime Festival"
+    },
+    {
+      "key": "quest.event_slime_festival.description",
+      "text": "Once a year the harbour hangs lanterns and the slimes come to see them. Twenty of them, before the lanterns come down."
+    }
+  ]
+}

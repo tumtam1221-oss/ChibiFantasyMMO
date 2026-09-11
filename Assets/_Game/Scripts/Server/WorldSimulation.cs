@@ -59,6 +59,7 @@ namespace ChibiFantasy.Server
         /// until this gate.</remarks>
         private readonly CharacterInventoryAuthority _inventoryAuthority;
         private readonly MonsterRewardAuthority _rewards;
+        private readonly MonsterAttackAuthority _monsterAttacks;
         private readonly CharacterReplicationService _replication;
         private readonly MonsterReplicationService _monsterReplication;
         private readonly WorldClock _clock;
@@ -74,6 +75,7 @@ namespace ChibiFantasy.Server
             MonsterLootRegistry loot = null,
             MonsterReplicationService monsterReplication = null,
             MonsterRewardAuthority rewards = null,
+            MonsterAttackAuthority monsterAttacks = null,
             CharacterLootAuthority lootAuthority = null,
             CharacterInventoryAuthority inventoryAuthority = null,
             WorldClock clock = null,
@@ -91,6 +93,7 @@ namespace ChibiFantasy.Server
             _loot = loot;
             _monsterReplication = monsterReplication;
             _rewards = rewards;
+            _monsterAttacks = monsterAttacks;
             _clock = clock ?? new WorldClock();
             _weather = weather ?? new WeatherDirector();
         }
@@ -243,7 +246,17 @@ namespace ChibiFantasy.Server
             _characters?.TickAutosave(deltaSeconds);
 
             // 4. Monsters: spawning, thinking, retiring, and the piles they left.
-            _monsters?.Tick(deltaSeconds);
+            //
+            // The tick decides who swings; the line after it makes those swings happen. They
+            // were separate for a long time and only the first half was ever called, so
+            // every monster in the world decided to attack on schedule and no player ever
+            // lost a point of health to one.
+            MonsterTickResult monsters = _monsters == null
+                ? default
+                : _monsters.Tick(deltaSeconds);
+
+            _monsterAttacks?.Resolve(monsters);
+
             _loot?.Tick(deltaSeconds);
 
             // And anybody standing near a pile that has just appeared, gone, or been dipped

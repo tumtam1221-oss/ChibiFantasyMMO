@@ -264,7 +264,13 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(character.Character.Value, Is.EqualTo(_fixture.CharacterId));
             Assert.That(character.Name, Is.EqualTo("Itest"));
             Assert.That(character.Gender, Is.EqualTo(CharacterGender.Female), "gender decoded as an enum");
-            Assert.That(character.Level, Is.EqualTo(12));
+            // At least the seeded level, not exactly it. The integration character is a real
+            // character in a real database and playing the game levels it up -- this failed
+            // the first time somebody handed in a quest on it, which is the fixture working
+            // rather than the mapping breaking. Every failure this guards against is still
+            // caught: an absent field decodes as zero and a mis-mapped one lands elsewhere.
+            Assert.That(character.Level, Is.GreaterThanOrEqualTo(12),
+                "level decoded as a number and is at or above the seeded value");
 
             // The names differ on the two sides -- class_definition_id in the schema,
             // class_id on the wire -- so this asserts the mapping, not just the value.

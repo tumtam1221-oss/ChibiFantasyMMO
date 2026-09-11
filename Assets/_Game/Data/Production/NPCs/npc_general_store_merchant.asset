@@ -1,0 +1,39 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8e7d5c7da3dae9c42abf2cd16bb40302, type: 3}
+  m_Name: npc_general_store_merchant
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.NPCDefinition
+  _id:
+    _value: npc.general_store_merchant
+  _nameKey:
+    _key: npc.general_store_merchant.name
+  _category: 1
+  _model:
+    _address:
+  _dialogue:
+    _value:
+  _shop:
+    _value: shop.harbor_general_store
+  _isQuestGiver: 0
+  _isJobChanger: 0
+  _providesStorage: 0
+  _providesWarp: 0
+  _providesEnhancement: 0
+  _map:
+    _value: map.harbor_town
+  _spawnPoint:
+    _value: spawn.harbor_town.merchant
+  _enabled: 1
+  _interactionRadius: 3
+  _quests: []
+  _classesOffered: []
+  _jobsOffered: []

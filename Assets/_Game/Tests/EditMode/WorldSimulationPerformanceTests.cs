@@ -333,7 +333,8 @@ namespace ChibiFantasy.Tests.EditMode
             // reward path does. Killing alone leaves it lying there, by design.
             _monsters.ClaimDefeat(killed, killed, default, null);
 
-            _monsters.Tick(0.1f);
+            // And the body is left lying for a moment after that, so its death can be seen.
+            _monsters.Tick(MonsterWorldRuntime.CorpseLingerSeconds);
 
             Assert.That(_monsters.All().Count, Is.EqualTo(2),
                 "a retired monster is still in the world");

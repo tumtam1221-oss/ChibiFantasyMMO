@@ -99,6 +99,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 6896161744655504631}
+  - component: {fileID: 5229420634796008801}
   m_Layer: 0
   m_Name: NPC_StorageKeeper
   m_TagString: Untagged
@@ -122,3 +123,18 @@ Transform:
   - {fileID: 4898772475635319117}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &5229420634796008801
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6124831984169782861}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a0e18e4f9fb1bde409ad170c811f321c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.World.WorldNpcMarker
+  _npcId: npc.storage_keeper
+  _clickHeight: 1.8
+  _clickRadius: 0.45

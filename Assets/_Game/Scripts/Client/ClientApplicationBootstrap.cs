@@ -5,6 +5,7 @@ using ChibiFantasy.Contracts;
 using ChibiFantasy.Core;
 using ChibiFantasy.Data;
 using ChibiFantasy.Gameplay;
+using FishNet.Connection;
 using FishNet.Managing;
 using FishNet.Object;
 using UnityEngine;
@@ -66,6 +67,13 @@ namespace ChibiFantasy.Client
         [Tooltip("Authored content, so the bag can name the items the server sends.")]
         [SerializeField] private WorldContentCatalogue _content;
 
+        [Tooltip("Translations. Left empty, every screen reads the English compiled in.")]
+        [SerializeField] private ChibiFantasy.UI.LocalizationCatalogue _localization;
+
+        [Tooltip("Approved monster models, keyed by definition id. A monster with no entry "
+            + "falls back to the development placeholder.")]
+        [SerializeField] private MonsterVisualCatalogue _monsterVisuals;
+
         /// <summary>The one instance, or null before the first scene has loaded.</summary>
         public static ClientApplicationBootstrap Current { get; private set; }
 
@@ -124,12 +132,30 @@ namespace ChibiFantasy.Client
         /// </remarks>
         public SessionToken WorldToken { get; set; }
 
+        /// <summary>
+        /// The language every screen in this client reads from.
+        /// </summary>
+        /// <remarks>
+        /// <b>One, for the whole client.</b> Composed here and handed down, exactly as the
+        /// session and the content catalogue are -- not reached for by the screens. A second
+        /// source would be a second language, and the two would disagree the moment somebody
+        /// changed one.
+        ///
+        /// Never null once composition has run: a client with no translation files gets a
+        /// service holding only the English compiled into <c>UiStrings</c>, which is a
+        /// complete game.
+        /// </remarks>
+        public ChibiFantasy.UI.LocalizationService Language { get; private set; }
+
         private WorldHudScreen _hud;
         private SessionDirectory _sessions;
         private System.IDisposable _transportLifetime;
         private DefinitionRegistry<ItemDefinition> _items;
         private DefinitionRegistry<MapDefinition> _maps;
         private DefinitionRegistry<SpawnPointDefinition> _spawns;
+        private DefinitionRegistry<NPCDefinition> _npcDefinitions;
+        private DefinitionRegistry<QuestDefinition> _questDefinitions;
+        private DefinitionRegistry<MonsterDefinition> _monsterDefinitions;
 
         private void Awake()
         {
@@ -153,6 +179,133 @@ namespace ChibiFantasy.Client
             // The scene this root was built in is already loaded, so nothing will announce
             // it: bind what is already here.
             BindScene(SceneManager.GetActiveScene());
+        }
+
+        /// <summary>
+        /// Builds the one language service and puts the client into the player's language.
+        /// </summary>
+        /// <remarks>
+        /// <b>Before anything draws.</b> Called first in composition, so the sign-in screen
+        /// -- the first thing a player sees and the one they have to read before they can
+        /// identify themselves -- is already in their language rather than flashing English
+        /// and correcting itself.
+        ///
+        /// <b>The font comes with the language.</b> Thai needs a face TextMeshPro does not
+        /// ship, and asking for it here rather than inside the picker means a player whose
+        /// stored preference is Thai gets readable letters on the very first frame.
+        /// </remarks>
+        private void ComposeLanguage()
+        {
+            Language = _localization != null
+                ? _localization.Build()
+                : BuildEnglishOnlyLanguage();
+
+            // Checked, not installed. The Thai face is a project asset listed in
+            // TextMeshPro's settings; runtime code that wrote to shared font assets is what
+            // wiped the Latin font's character table and froze the editor.
+            LocalizationFonts.Verify();
+
+            UseLanguage(LanguagePreference.Current, remember: false);
+
+            Language.Changed -= OnLanguageChanged;
+            Language.Changed += OnLanguageChanged;
+        }
+
+        /// <summary>Everything <c>UiStrings</c> ships, and nothing else.</summary>
+        /// <remarks>What a build with no translation asset gets. Not an error: English is a
+        /// complete game, and a missing content file must not be able to produce a client
+        /// with no words in it.</remarks>
+        private static ChibiFantasy.UI.LocalizationService BuildEnglishOnlyLanguage()
+        {
+            var service = new ChibiFantasy.UI.LocalizationService();
+
+            service.Load(ChibiFantasy.UI.GameLanguage.English, ChibiFantasy.UI.UiStrings.English);
+
+            return service;
+        }
+
+        /// <summary>
+        /// Switches the whole client to a language, and optionally remembers the choice.
+        /// </summary>
+        /// <remarks>Remembering is the caller's decision because two things call this: the
+        /// launch path, which is applying a preference rather than making one, and the
+        /// picker, where the player really did choose.</remarks>
+        public void UseLanguage(ChibiFantasy.UI.GameLanguage language, bool remember = true)
+        {
+            if (Language == null) return;
+
+            // Nothing to install: switching language cannot change which fonts exist. A
+            // missing face is reported once at composition and is a content fix.
+
+            Language.Use(language);
+
+            if (remember) LanguagePreference.Remember(language);
+
+            // Use() only raises when the language actually changed, and applying a stored
+            // preference of English on a client that is already English changes nothing --
+            // so the screens are told directly rather than through the event.
+            OnLanguageChanged();
+        }
+
+        /// <summary>
+        /// Tells every screen currently in existence to rewrite itself.
+        /// </summary>
+        /// <remarks>
+        /// <b>Found rather than remembered.</b> Screens come and go with scenes, and a list
+        /// held here would be a list of destroyed objects one scene later. This runs once per
+        /// language change -- an action a player takes perhaps twice in the life of an
+        /// install -- so walking the scene is the cheap option, not the expensive one.
+        /// </remarks>
+        private void OnLanguageChanged()
+        {
+            foreach (SessionScreenBase screen in
+                FindObjectsByType<SessionScreenBase>(FindObjectsInactive.Include,
+                    FindObjectsSortMode.None))
+            {
+                screen.Text = Language;
+            }
+
+            if (_hud != null) _hud.Text = Language;
+
+            if (QuestList != null)
+            {
+                QuestList.Text = Language;
+
+                if (QuestList.IsVisible) QuestList.Show(QuestList.Tab);
+            }
+
+            if (NpcDialogue != null) NpcDialogue.Text = Language;
+
+            // The world's controllers already push their source down into the views they
+            // own, so handing each of them the language reaches the tooltips, the tracker,
+            // the map name and the loot pickups without naming any of those here.
+            foreach (WorldUiController world in
+                FindObjectsByType<WorldUiController>(FindObjectsInactive.Include,
+                    FindObjectsSortMode.None))
+            {
+                world.Text = Language;
+            }
+
+            foreach (QuestUiController quests in
+                FindObjectsByType<QuestUiController>(FindObjectsInactive.Include,
+                    FindObjectsSortMode.None))
+            {
+                quests.Text = Language;
+            }
+
+            foreach (InventoryUiController bag in
+                FindObjectsByType<InventoryUiController>(FindObjectsInactive.Include,
+                    FindObjectsSortMode.None))
+            {
+                bag.Text = Language;
+            }
+
+            foreach (InventoryScreen screen in
+                FindObjectsByType<InventoryScreen>(FindObjectsInactive.Include,
+                    FindObjectsSortMode.None))
+            {
+                screen.Text = Language;
+            }
         }
 
         private void OnApplicationQuit()
@@ -188,12 +341,24 @@ namespace ChibiFantasy.Client
         /// synchronously to a known address, so a release issued here reaches the server
         /// before the process is gone. A client on its way out can do nothing useful with a
         /// failure, so one is swallowed; the guard makes the two shutdown hooks idempotent.
+        ///
+        /// <b>Not while a world holds the character.</b> Releasing the session revokes the
+        /// token, and the world server saves the character with that token -- so a client
+        /// that released on its way out raced the save and usually won. The world's
+        /// disconnect handler saves first and releases the session afterwards, in that
+        /// order and for that reason; doing it from here as well threw away everything since
+        /// the last periodic save, every single time anybody quit.
+        ///
+        /// The original defect is still covered: a client that never reached the world has
+        /// no server to release its session, so this still does it.
         /// </remarks>
         private void ReleaseSessionOnExit()
         {
             if (_sessionReleased) return;
 
             _sessionReleased = true;
+
+            if (IsInAWorldThatWillReleaseTheSession()) return;
 
             if (Api is HttpAccountApi http && !string.IsNullOrEmpty(http.SessionToken))
             {
@@ -206,6 +371,26 @@ namespace ChibiFantasy.Client
                     // A process that is exiting cannot act on a release failure.
                 }
             }
+        }
+
+        /// <summary>
+        /// Whether a world server is holding this character and will release the session.
+        /// </summary>
+        /// <remarks>
+        /// The world's disconnect handling saves the character and then hands the session
+        /// back, in that order. While a connection to it exists, that is the release that
+        /// must happen -- and it must happen after the save, which a release from here would
+        /// prevent by revoking the token first.
+        ///
+        /// Asked of the connection rather than remembered as a flag, because a connection
+        /// that has already dropped leaves nobody to save anything and this client should
+        /// hand the session back itself.
+        /// </remarks>
+        private bool IsInAWorldThatWillReleaseTheSession()
+        {
+            return NetworkManager != null
+                && NetworkManager.ClientManager != null
+                && NetworkManager.ClientManager.Started;
         }
 
         /// <summary>
@@ -244,6 +429,8 @@ namespace ChibiFantasy.Client
         {
             WarnIfTheAccountApiIsInTheClear();
 
+            ComposeLanguage();
+
             var transport = new UnityWebRequestTransport(_apiBaseAddress, _apiTimeoutSeconds);
 
             _transportLifetime = transport;
@@ -262,6 +449,8 @@ namespace ChibiFantasy.Client
 
             Session.Bind(api, authority, _sessions, ReportedVersions, default);
 
+            Session.Text = Language;
+
             _items = _content == null
                 ? new DefinitionRegistry<ItemDefinition>()
                 : _content.BuildItems();
@@ -276,6 +465,22 @@ namespace ChibiFantasy.Client
             _spawns = _content == null
                 ? new DefinitionRegistry<SpawnPointDefinition>()
                 : _content.BuildSpawnPoints();
+
+            // Who is standing in the towns. The client resolves a name and a role tag from
+            // this; what any of it is allowed to do is still the server's answer.
+            _npcDefinitions = _content == null
+                ? new DefinitionRegistry<NPCDefinition>()
+                : _content.BuildNpcs();
+
+            // What a quest is, and what its objectives point at. The wire carries a quest
+            // id and a handful of counters; everything a player reads is resolved here.
+            _questDefinitions = _content == null
+                ? new DefinitionRegistry<QuestDefinition>()
+                : _content.BuildQuests();
+
+            _monsterDefinitions = _content == null
+                ? new DefinitionRegistry<MonsterDefinition>()
+                : _content.BuildMonsters();
         }
 
         // ---- scenes ----------------------------------------------------------------------
@@ -283,6 +488,11 @@ namespace ChibiFantasy.Client
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             BindScene(scene);
+
+            // A map scene arrives additively, long after the world was composed, and it is
+            // the scene the townspeople are standing in. Adopting here rather than polling
+            // means an NPC becomes clickable the moment it exists and never before.
+            Npcs?.Adopt(scene);
         }
 
         /// <summary>
@@ -630,11 +840,395 @@ namespace ChibiFantasy.Client
             var bag = FindAnyObjectByType<InventoryScreen>(FindObjectsInactive.Include);
             var camera = FindAnyObjectByType<WorldCameraDirector>(FindObjectsInactive.Include);
 
-            binder.Compose(NetworkManager, hud, bag, _items, camera);
+            // Before the binder builds it, so the bag's three fixed captions are written
+            // in the right language once rather than in English and then corrected.
+            if (bag != null) bag.Text = Language;
+
+            WorldNpcPresenter npcs = ComposeNpcs();
+
+            binder.Compose(NetworkManager, hud, bag, _items, camera, npcs, Journal);
 
             ComposeEnvironment(binder);
 
             ComposeInteraction(hud, camera);
+        }
+
+        /// <summary>
+        /// Gives the townspeople in whatever map is loaded a name and a click.
+        /// </summary>
+        /// <remarks>
+        /// <b>On the network manager's object, like everything else that exists only while a
+        /// world does.</b> Leaving the world takes it with them, so a presenter cannot
+        /// outlive the connection whose player it was sending requests for.
+        ///
+        /// <b>It adopts rather than spawns.</b> Harbor Town's five NPCs are placed by hand in
+        /// the scene; this finds the markers on them when the map finishes loading. Nothing
+        /// here creates a townsperson, which is why re-entering a map cannot leave two.
+        ///
+        /// <b>Answers open a panel and nothing else.</b> The dialogue view is the service
+        /// entry for this gate -- it proves the right NPC resolved to the right role. Each
+        /// real service replaces its body later rather than opening a second door.
+        /// </remarks>
+        private WorldNpcPresenter ComposeNpcs()
+        {
+            GameObject host = NetworkManager.gameObject;
+
+            WorldNpcPresenter npcs = host.GetComponent<WorldNpcPresenter>();
+
+            if (npcs == null) npcs = host.AddComponent<WorldNpcPresenter>();
+
+            npcs.Bind(_npcDefinitions);
+
+            // The journal first, because the NPC marks read from it. One per world, on the
+            // same object as everything else that exists only while a world does.
+            Journal = host.GetComponent<QuestJournal>();
+
+            if (Journal == null) Journal = host.AddComponent<QuestJournal>();
+
+            Journal.Bind(_questDefinitions, _items, _monsterDefinitions, _npcDefinitions);
+
+            npcs.UseJournal(Journal);
+
+            NpcDialogue = FindAnyObjectByType<ChibiFantasy.UI.NpcDialogueView>(
+                FindObjectsInactive.Include);
+
+            if (NpcDialogue == null) NpcDialogue = BuildNpcDialogue();
+
+            if (NpcDialogue != null)
+            {
+                // Before the visuals, so the buttons are built with their captions
+                // already in the right language rather than written twice.
+                NpcDialogue.Text = Language;
+
+                NpcDialogue.EnsureVisuals();
+
+                npcs.Authorised -= OnNpcAuthorised;
+                npcs.Authorised += OnNpcAuthorised;
+            }
+
+            // After the dialogue exists, and handed it, so the order cannot be got wrong
+            // again. It was: this ran first, subscribed to a null dialogue, and the Accept
+            // button raised an event nobody was listening to -- a button that did nothing,
+            // with no error to find.
+            ComposeQuestJournalUi(NpcDialogue);
+
+            Npcs = npcs;
+
+            // Whatever is already loaded, plus whatever arrives later. A map scene finishes
+            // loading after this runs on the very first entry and before it on a rejoin, so
+            // both orders have to work.
+            AdoptNpcsInLoadedScenes();
+
+            return npcs;
+        }
+
+        /// <summary>
+        /// Builds the dialogue panel when the scene did not author one.
+        /// </summary>
+        /// <remarks>
+        /// <b>Built rather than authored, for now.</b> This is the service entry a later
+        /// gate replaces with a real shop, storage and job screen, and authoring five
+        /// panels into a scene that is about to lose them is work thrown away. It is parented
+        /// to whatever canvas the world already has, so it inherits the scaling the rest of
+        /// the HUD uses rather than introducing a second one.
+        ///
+        /// Null when there is no canvas at all, which is a world with no HUD -- and a world
+        /// with no HUD has nowhere to put a dialogue box either.
+        /// </remarks>
+        private ChibiFantasy.UI.NpcDialogueView BuildNpcDialogue()
+        {
+            var canvas = FindAnyObjectByType<UnityEngine.Canvas>(FindObjectsInactive.Include);
+
+            if (canvas == null) return null;
+
+            var host = new GameObject("NPC Dialogue", typeof(RectTransform));
+
+            host.transform.SetParent(canvas.transform, false);
+
+            var rect = (RectTransform)host.transform;
+
+            rect.anchorMin = new Vector2(0.5f, 0f);
+            rect.anchorMax = new Vector2(0.5f, 0f);
+            rect.pivot = new Vector2(0.5f, 0f);
+            rect.anchoredPosition = new Vector2(0f, 90f);
+
+            // Sized for a quest offer -- greeting, objective and rewards -- rather than for
+            // the one-line conversation this panel started as.
+            rect.sizeDelta = new Vector2(460f, 280f);
+
+            return host.AddComponent<ChibiFantasy.UI.NpcDialogueView>();
+        }
+
+        /// <summary>Takes the NPC markers in every loaded scene under management.</summary>
+        public int AdoptNpcsInLoadedScenes()
+        {
+            if (Npcs == null) return 0;
+
+            var found = 0;
+
+            for (var i = 0; i < SceneManager.sceneCount; i++)
+            {
+                found += Npcs.Adopt(SceneManager.GetSceneAt(i));
+            }
+
+            return found;
+        }
+
+        /// <summary>The panel an authorised interaction opens. Null when the scene has none.</summary>
+        public ChibiFantasy.UI.NpcDialogueView NpcDialogue { get; private set; }
+
+        /// <summary>The townspeople presenter, once the world is composed.</summary>
+        public WorldNpcPresenter Npcs { get; private set; }
+
+        /// <summary>Draws monsters that have approved art. Null outside the world.</summary>
+        public WorldMonsterPresenter MonsterPresenter { get; private set; }
+
+        /// <summary>
+        /// The approved monster models, as the scene wired them.
+        /// </summary>
+        /// <remarks>
+        /// <b>Serialized, never looked up.</b> An earlier version of this fell back to
+        /// <c>AssetDatabase.LoadAssetAtPath</c> behind a <c>UNITY_EDITOR</c> guard, so that a
+        /// scene nobody had wired still drew its monsters. That is a convenience with a
+        /// sting: it works in the editor, ships nothing to a player, and hides the missing
+        /// reference until somebody runs a build and finds a world full of capsules.
+        ///
+        /// Two tests refuse it by name -- content is found through a catalogue a scene
+        /// points at, never by a runtime path scan -- and they were right to.
+        /// </remarks>
+        public MonsterVisualCatalogue MonsterVisuals => _monsterVisuals;
+
+        /// <summary>This player's quest log and what they could take.</summary>
+        public QuestJournal Journal { get; private set; }
+
+        /// <summary>The Ctrl+Q panel. Null when the world has no canvas.</summary>
+        public ChibiFantasy.UI.QuestListView QuestList { get; private set; }
+
+        /// <summary>What reads Ctrl+Q.</summary>
+        public WorldQuestInput QuestInput { get; private set; }
+
+        private void OnNpcAuthorised(ChibiFantasy.Network.NpcInteractionSnapshot answer)
+        {
+            if (NpcDialogue == null || Npcs == null) return;
+
+            var id = new DefinitionId(answer.NpcId ?? string.Empty);
+
+            NPCDefinition npc = null;
+
+            if (_npcDefinitions != null) _npcDefinitions.TryGet(id, out npc);
+
+            string name = npc == null ? id.ToString() : WorldNpcPresenter.FallbackName(npc);
+
+            var role = (NpcRole)answer.Role;
+
+            // A guide with something to hand out opens with the offer attached, which is the
+            // one place a quest can actually be taken. Everything else is the plain
+            // conversation Phase 19B.2 already opened.
+            // Handing back comes first: a player walking up to a guide with a finished
+            // quest came back to be paid, not to be offered another one.
+            DefinitionId finished = role == NpcRole.Quest ? FirstFinishedQuestOf(npc) : default;
+
+            if (finished.IsValid && Journal != null)
+            {
+                NpcDialogue.ShowQuestTurnIn(id, name,
+                    WorldViewAdapter.BuildQuest(Journal.State, finished, Journal.ViewContext));
+
+                return;
+            }
+
+            DefinitionId offer = role == NpcRole.Quest ? FirstTakeableQuestOf(npc) : default;
+
+            if (offer.IsValid && Journal != null)
+            {
+                // The offer view, not the log view: a repeatable quest already run once
+                // would otherwise be offered showing last run's finished counters.
+                NpcDialogue.ShowQuestOffer(id, name,
+                    WorldViewAdapter.BuildQuestOffer(offer, Journal.ViewContext));
+
+                return;
+            }
+
+            NpcDialogue.Show(id, role, name);
+        }
+
+        /// <summary>
+        /// The first quest this NPC offers that the player could take right now.
+        /// </summary>
+        /// <remarks>Asked of the journal, which asks <c>QuestService</c> -- so the offer a
+        /// guide makes and the answer the server gives come from one set of rules. Invalid
+        /// when the guide has nothing for this player, which is the ordinary state of a
+        /// guide whose quest is already under way.</remarks>
+        /// <summary>
+        /// The first quest this NPC gave that the player has finished.
+        /// </summary>
+        /// <remarks>Read from the journal's own log rather than decided here, so the mark
+        /// above their head and the conversation they open come from one answer. The server
+        /// checks the claim again when the request arrives.</remarks>
+        private DefinitionId FirstFinishedQuestOf(NPCDefinition npc)
+        {
+            if (npc == null || Journal == null) return default;
+
+            DefinitionId[] offered = npc.Quests;
+
+            for (var i = 0; i < offered.Length; i++)
+            {
+                if (Journal.State.StatusOf(offered[i]) == QuestStatus.ReadyToComplete)
+                {
+                    return offered[i];
+                }
+            }
+
+            return default;
+        }
+
+        private DefinitionId FirstTakeableQuestOf(NPCDefinition npc)
+        {
+            if (npc == null || Journal == null) return default;
+
+            if (Journal.MarkerFor(npc) != QuestMarker.Available) return default;
+
+            DefinitionId[] offered = npc.Quests;
+
+            for (var i = 0; i < offered.Length; i++)
+            {
+                for (var q = 0; q < Journal.Available.Count; q++)
+                {
+                    if (Journal.Available[q].QuestId == offered[i]) return offered[i];
+                }
+            }
+
+            return default;
+        }
+
+        /// <summary>
+        /// Builds the journal panel and the key that opens it.
+        /// </summary>
+        /// <remarks>
+        /// <b>Viewing is free; taking is not.</b> The panel lists what is on offer wherever
+        /// the player is standing, and its Accept button is never live there -- taking a
+        /// quest means standing in front of the giver, which is the same question the NPC
+        /// dialogue answers and the same one the server enforces. Ctrl+Q is therefore a way
+        /// to read, never a way to collect every quest in the world from a bench.
+        /// </remarks>
+        private void ComposeQuestJournalUi(ChibiFantasy.UI.NpcDialogueView dialogue)
+        {
+            GameObject host = NetworkManager.gameObject;
+
+            QuestInput = host.GetComponent<WorldQuestInput>();
+
+            if (QuestInput == null) QuestInput = host.AddComponent<WorldQuestInput>();
+
+            QuestInput.Compose();
+
+            QuestList = FindAnyObjectByType<ChibiFantasy.UI.QuestListView>(
+                FindObjectsInactive.Include);
+
+            if (QuestList == null) QuestList = BuildQuestList();
+
+            if (QuestList == null) return;
+
+            QuestList.Text = Language;
+
+            QuestList.EnsureVisuals();
+
+            QuestList.GiverName = quest =>
+            {
+                DefinitionId giver = Journal == null ? default : Journal.GiverOf(quest);
+
+                if (!giver.IsValid) return null;
+
+                return _npcDefinitions != null
+                    && _npcDefinitions.TryGet(giver, out NPCDefinition who)
+                        ? WorldNpcPresenter.FallbackName(who)
+                        : giver.ToString();
+            };
+
+            // The journal is a window, not a counter.
+            QuestList.CanAcceptHere = _ => false;
+
+            QuestInput.Toggled -= ToggleQuestList;
+            QuestInput.Toggled += ToggleQuestList;
+
+            if (Journal != null)
+            {
+                Journal.Changed -= RefreshQuestList;
+                Journal.Changed += RefreshQuestList;
+            }
+
+            // Taken from the argument rather than the field: a caller that has not built
+            // the dialogue yet cannot reach this line at all.
+            if (dialogue != null)
+            {
+                dialogue.QuestAccepted -= OnQuestAccepted;
+                dialogue.QuestAccepted += OnQuestAccepted;
+
+                dialogue.QuestTurnedIn -= OnQuestTurnedIn;
+                dialogue.QuestTurnedIn += OnQuestTurnedIn;
+            }
+
+            RefreshQuestList();
+        }
+
+        private void ToggleQuestList()
+        {
+            if (QuestList == null) return;
+
+            RefreshQuestList();
+
+            QuestList.Toggle();
+        }
+
+        private void RefreshQuestList()
+        {
+            if (QuestList == null || Journal == null) return;
+
+            QuestList.Bind(Journal.Available, Journal.Active, Journal.Completed);
+        }
+
+        /// <summary>Hands a finished quest back to the guide and is paid.</summary>
+        /// <remarks>The reward is the server's to grant: this asks, and the next quest log
+        /// is the answer.</remarks>
+        private void OnQuestTurnedIn(DefinitionId quest)
+        {
+            if (Journal == null || NpcDialogue == null) return;
+
+            Journal.RequestTurnIn(quest, NpcDialogue.Npc);
+
+            NpcDialogue.Close();
+        }
+
+        /// <summary>Takes a quest from the guide the player is standing in front of.</summary>
+        private void OnQuestAccepted(DefinitionId quest)
+        {
+            if (Journal == null || NpcDialogue == null) return;
+
+            Journal.RequestAccept(quest, NpcDialogue.Npc);
+
+            // Closed straight away: the answer is the next quest log, and a panel left open
+            // on a stale offer is the one that looks like the click did nothing.
+            NpcDialogue.Close();
+        }
+
+        /// <summary>Builds the journal panel when the scene did not author one.</summary>
+        private ChibiFantasy.UI.QuestListView BuildQuestList()
+        {
+            var canvas = FindAnyObjectByType<UnityEngine.Canvas>(FindObjectsInactive.Include);
+
+            if (canvas == null) return null;
+
+            var host = new GameObject("Quest List", typeof(RectTransform));
+
+            host.transform.SetParent(canvas.transform, false);
+
+            var rect = (RectTransform)host.transform;
+
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = Vector2.zero;
+            rect.sizeDelta = new Vector2(640f, 380f);
+
+            return host.AddComponent<ChibiFantasy.UI.QuestListView>();
         }
 
         /// <summary>
@@ -754,6 +1348,23 @@ namespace ChibiFantasy.Client
 
             _hud = hud;
 
+            if (_hud != null) _hud.Text = Language;
+
+            // The approved monster art. Production, not development: a monster with a
+            // model in the catalogue is drawn by this, at any build setting.
+            MonsterPresenter = host.GetComponent<WorldMonsterPresenter>();
+
+            if (MonsterPresenter == null)
+            {
+                MonsterPresenter = host.AddComponent<WorldMonsterPresenter>();
+            }
+
+            // The selection is read through a function rather than handed the input object,
+            // so the presentation can ask what the player has targeted and has no way to
+            // tell it anything.
+            MonsterPresenter.Compose(NetworkManager, MonsterVisuals, _monsterDefinitions,
+                Language, () => Combat == null ? null : Combat.Target);
+
 #if DEVELOPMENT_BUILD || UNITY_EDITOR
             var monsters = host.GetComponent<DevelopmentMonsterVisualizer>();
 
@@ -763,6 +1374,9 @@ namespace ChibiFantasy.Client
             }
 
             monsters.Compose(NetworkManager);
+
+            // So the placeholder skips anything the presenter already draws properly.
+            monsters.Presenter = MonsterPresenter;
 
             var piles = host.GetComponent<DevelopmentLootVisualizer>();
 
@@ -780,10 +1394,42 @@ namespace ChibiFantasy.Client
 #endif
         }
 
+        /// <summary>The character object this connection owns, or null before entering.</summary>
+        private ChibiFantasy.Network.CharacterNetworkEntity OwnedCharacter()
+        {
+            if (NetworkManager == null || NetworkManager.ClientManager == null) return null;
+
+            NetworkConnection connection = NetworkManager.ClientManager.Connection;
+
+            if (connection == null || connection.Objects == null) return null;
+
+            foreach (NetworkObject owned in connection.Objects)
+            {
+                if (owned == null) continue;
+
+                if (owned.TryGetComponent(
+                    out ChibiFantasy.Network.CharacterNetworkEntity character))
+                {
+                    return character;
+                }
+            }
+
+            return null;
+        }
+
         /// <summary>Keeps the target readout showing whatever the server says about it.</summary>
         private void Update()
         {
-            if (_hud == null || Combat == null) return;
+            if (_hud == null) return;
+
+            // Whether the player is down is read from their own replicated health, so the
+            // notice appears and disappears because the server said so and for no other
+            // reason. The screen never decides it, and hiding it revives nobody.
+            ChibiFantasy.Network.CharacterNetworkEntity me = OwnedCharacter();
+
+            _hud.ShowDefeated(me != null && me.MaxHealth > 0 && !me.IsAlive);
+
+            if (Combat == null) return;
 
             ChibiFantasy.Network.MonsterNetworkEntity target = Combat.Target;
 

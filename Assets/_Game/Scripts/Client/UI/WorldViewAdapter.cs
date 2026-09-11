@@ -109,6 +109,32 @@ namespace ChibiFantasy.Client.UI
         }
 
         /// <summary>What a detail panel should draw for one quest.</summary>
+        /// <summary>
+        /// A quest as it is being offered, rather than as it stands in the log.
+        /// </summary>
+        /// <remarks>
+        /// <b>The bug this exists for.</b> A repeatable quest keeps its counters after it is
+        /// handed in -- deliberately, because the log is a record of what happened. Offering
+        /// it again read those counters straight back out, so a player who had run Harbour
+        /// Patrol once was shown "Defeat Training Slime 5 / 5" on a quest they had not
+        /// started, beside a button asking them to take it. It looked exactly like a quest
+        /// that had completed itself.
+        ///
+        /// An offer is about what a player <i>would</i> do, so progress toward it is zero by
+        /// definition: accepting calls <c>Begin</c>, which resets the counters anyway. This
+        /// shows what accepting will actually produce rather than what the last run left
+        /// behind.
+        ///
+        /// The log's own views -- the Active and Completed tabs, and the hand-back panel --
+        /// keep using <see cref="BuildQuest"/>, because there the counters are the point.
+        /// </remarks>
+        public static QuestViewData BuildQuestOffer(DefinitionId questId, in Context context)
+        {
+            // No state at all, rather than state with the numbers filtered out: there is
+            // exactly one way to be wrong here and passing nothing removes it.
+            return BuildQuest(null, questId, context);
+        }
+
         public static QuestViewData BuildQuest(CharacterQuestState state, DefinitionId questId,
             in Context context)
         {
@@ -155,9 +181,12 @@ namespace ChibiFantasy.Client.UI
                     reward.Amount);
             }
 
+            // "Comes back" rather than "is flagged repeatable": a daily comes back too, and
+            // a player choosing what to do next does not care which mechanism says so.
             return QuestViewData.From(questId, quest.NameKey, quest.DescriptionKey,
-                quest.QuestType, Translate(status), quest.LevelRequirement, quest.Repeatable,
-                objectiveViews, rewardViews);
+                quest.QuestType, Translate(status), quest.LevelRequirement,
+                quest.Repeatable || quest.ResetsDaily,
+                objectiveViews, rewardViews, quest.ResetsDaily);
         }
 
         /// <summary>

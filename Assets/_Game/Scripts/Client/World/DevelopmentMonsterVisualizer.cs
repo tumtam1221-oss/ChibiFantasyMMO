@@ -41,6 +41,14 @@ namespace ChibiFantasy.Client.World
         private NetworkManager _networkManager;
         private Material _material;
 
+        /// <summary>
+        /// The presenter that draws monsters which do have art.
+        /// </summary>
+        /// <remarks>Optional. When set, this placeholder skips anything that presenter is
+        /// already drawing -- otherwise a capsule stands inside the slime, and the two
+        /// together look like a rendering bug rather than like progress.</remarks>
+        public WorldMonsterPresenter Presenter { get; set; }
+
         /// <summary>How many placeholders are currently standing. For tests.</summary>
         public int Count => _shown.Count;
 
@@ -52,7 +60,16 @@ namespace ChibiFantasy.Client.World
 
         private void Update()
         {
-            if (_networkManager == null || !_networkManager.ClientManager.Started) return;
+            // Objects too: an editor domain reload tears FishNet's tables down while
+            // Update is still running, and the sweep below would throw on them.
+            if (_networkManager == null
+                || _networkManager.ClientManager == null
+                || !_networkManager.ClientManager.Started
+                || _networkManager.ClientManager.Objects == null
+                || _networkManager.ClientManager.Objects.Spawned == null)
+            {
+                return;
+            }
 
             Sweep();
         }
@@ -66,6 +83,9 @@ namespace ChibiFantasy.Client.World
                 if (pair.Value == null) continue;
 
                 if (!pair.Value.TryGetComponent(out MonsterNetworkEntity monster)) continue;
+
+                // Somebody else is drawing this one properly.
+                if (Presenter != null && Presenter.Draws(monster.Definition)) continue;
 
                 if (!_shown.TryGetValue(pair.Key, out GameObject shown) || shown == null)
                 {

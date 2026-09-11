@@ -156,6 +156,12 @@ namespace ChibiFantasy.Server
         /// <summary>Loads monster nests from the backend. Null on a world with no source.</summary>
         public MonsterConfigurationLoader MonsterConfiguration { get; private set; }
 
+        /// <summary>What stands a fallen character back up in town.</summary>
+        public CharacterReviveAuthority ReviveAuthority { get; private set; }
+
+        /// <summary>What makes a monster's swing actually land on somebody.</summary>
+        public MonsterAttackAuthority MonsterAttacks { get; private set; }
+
         private readonly List<string> _contentFaults = new List<string>();
 
         /// <summary>Floor under a resolved blow, shared by basic attacks and skills.</summary>
@@ -284,6 +290,8 @@ namespace ChibiFantasy.Server
             Loot = null;
             Rewards = null;
             LootAuthority = null;
+            NpcAuthority = null;
+            QuestAuthority = null;
             Parties = null;
             PartyStore = null;
             RewardOutbox = null;
@@ -342,8 +350,15 @@ namespace ChibiFantasy.Server
             // owns every rule; this is the seam a connection reaches it through.
             PetAuthority = new CharacterPetAuthority(players, pets, items, effects);
 
+            // The maps go in, and they are not optional in practice.
+            //
+            // Without them MonsterWorldRuntime.DefinitionOf returns null for every map, and
+            // the code that stands a freshly spawned monster on the ground is skipped in
+            // silence -- so every monster sat at the flat y the database row happens to
+            // carry. On Harbor Town's terrain that buried a 0.28 m slime up to 0.15 m into
+            // the hillside, and nothing anywhere said why.
             var monsters = new MonsterWorldRuntime(players, _content.BuildMonsters(),
-                _content.MaxHealthStat, new CombatTeam(_monsterTeam));
+                _content.MaxHealthStat, new CombatTeam(_monsterTeam), maps);
 
             var movement = new CharacterMovementAuthority(players, _ => true, maps,
                 _content.WalkMetresPerSecond);
@@ -379,7 +394,16 @@ namespace ChibiFantasy.Server
                 _content.BuildDropTables(), _rolls ?? new SystemRandomSource(),
                 _quantities as IRandomRangeSource ?? new SystemRandomSource(),
                 _lootLifetimeSeconds, _lootPersonalWindowSeconds,
-                Parties, _rewardRangeMetres, rewardOutbox, pets, _petExperienceShare);
+                Parties, _rewardRangeMetres, rewardOutbox, pets, _petExperienceShare,
+
+                // A kill advances a quest. Hung off the one call that claims a defeat, so
+                // one dead slime is one point of progress however many times it was hit on
+                // the way down.
+                //
+                // Resolved when it fires rather than captured now: the quest authority is
+                // composed a few lines below this, and nothing can be killed before either
+                // exists.
+                (killer, monster) => QuestAuthority?.ReportKill(killer, monster));
 
             RewardOutbox = rewardOutbox;
 
@@ -435,6 +459,51 @@ namespace ChibiFantasy.Server
 
             replication.UseLoot(LootAuthority);
 
+            // Who a player may talk to, and about what. Every rule was already decided by
+            // NpcInteractionService; this gives it the identity of whoever is asking and a
+            // way to answer exactly them. The registries come from the same catalogue the
+            // rest of the world is built from, so an NPC a client can see is one the server
+            // can name -- an NPC only the scene knows about would refuse every interaction.
+            NpcAuthority = new CharacterNpcAuthority(players,
+                new NpcInteractionService.Context(_content.BuildNpcs(), _spawnPoints,
+                    _content.BuildShops(), _content.BuildQuests()),
+                replication);
+
+            replication.UseNpcs(NpcAuthority);
+
+            // Taking a quest, handing it in, and every kill that advances one. The rules
+            // were already QuestService's; this gives them the asker's identity, the giver
+            // they must be standing next to, and somewhere to send the answer.
+            QuestAuthority = new CharacterQuestAuthority(players, _content.BuildQuests(),
+                new NpcInteractionService.Context(_content.BuildNpcs(), _spawnPoints,
+                    _content.BuildShops(), _content.BuildQuests()),
+                items, replication, curve);
+
+            // The date the daily quests turn over on, learned from the backend every time a
+            // character loads. Without this the world would have to ask its own machine what
+            // day it is, and dailies would reset at whatever midnight that machine believes
+            // in rather than the one their completion times were stamped in.
+            // Gameplay may not read the engine, so the clock is handed its source here --
+            // an elapsed duration, which is all it needs to count forward to the midnight
+            // the database picked.
+            QuestAuthority.Days.ElapsedSeconds = () => Time.realtimeSinceStartupAsDouble;
+
+            players.DayObserved = QuestAuthority.SyncDay;
+
+            replication.UseQuests(QuestAuthority,
+                (entity, character) =>
+                    entity.ServerPublishQuestLog(QuestAuthority.SnapshotFor(character)));
+
+            // What lets a player who lost a fight get up again. Without it a character
+            // reduced to zero health stays there permanently -- current health is persisted,
+            // so signing out and back in restores them to exactly the zero they left.
+            ReviveAuthority = new CharacterReviveAuthority(players, _spawnPoints,
+                _content.ReviveHealthFraction);
+
+            replication.UseRevive(ReviveAuthority);
+
+
+
             var stat = new CharacterStatAuthority(players, _content.Formulas, stats, effects,
                 new EquipmentModifierResolver.Context(items, cards: cards),
                 _content.MaxHealthStat, _content.MaxManaStat, fruits, skills);
@@ -445,9 +514,15 @@ namespace ChibiFantasy.Server
                 ? null
                 : new MonsterReplicationService(_networkManager, monsters, _monsterPrefab);
 
+            // What turns a monster's decision to swing into damage. Without it the AI still
+            // decides, on schedule and correctly, and nothing ever happens to the player it
+            // decided to hit -- which is how this world ran until now.
+            MonsterAttacks = new MonsterAttackAuthority(monsters, _content.AttackStat,
+                _content.DefenceStat, MinimumDamage);
+
             Simulation = new WorldSimulation(players, replication, status, stat, movement,
-                combat, monsters, loot, MonsterReplication, rewards, LootAuthority,
-                InventoryAuthority, clock: RestoreClock());
+                combat, monsters, loot, MonsterReplication, rewards, MonsterAttacks,
+                LootAuthority, InventoryAuthority, clock: RestoreClock());
 
             // The sky tells everybody at once. Subscribed here rather than polled in the
             // tick so a change costs one broadcast at the moment it happens and nothing at
@@ -619,6 +694,12 @@ namespace ChibiFantasy.Server
         /// <summary>Where a pickup request lands. Null when unready.</summary>
         public CharacterLootAuthority LootAuthority { get; private set; }
 
+        /// <summary>Who decides whether a player may talk to an NPC. Null before compose.</summary>
+        public CharacterNpcAuthority NpcAuthority { get; private set; }
+
+        /// <summary>Who decides what happens to a quest. Null before compose.</summary>
+        public CharacterQuestAuthority QuestAuthority { get; private set; }
+
         /// <summary>The parties this world is running. Null when unready.</summary>
         public WorldPartyRegistry Parties { get; private set; }
 
@@ -663,7 +744,7 @@ namespace ChibiFantasy.Server
         private IRandomRangeSource _quantities;
 
         [Tooltip("How long a dropped pile lasts. Zero means it never expires on its own.")]
-        [SerializeField] private float _lootLifetimeSeconds = 300f;
+        [SerializeField] private float _lootLifetimeSeconds = 60f;
 
         [Tooltip("How long the killer alone may take their drops. Zero disables the window.")]
         [SerializeField] private float _lootPersonalWindowSeconds = 30f;

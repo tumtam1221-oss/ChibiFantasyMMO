@@ -33,7 +33,7 @@ MonoBehaviour:
     _value: 3
   _element: 0
   _movementType: 1
-  _aggressionType: 0
+  _aggressionType: 1
   _model:
     _address: 
   _animatorController:
@@ -46,9 +46,12 @@ MonoBehaviour:
     _respawnDelaySeconds: 15
     _maxAliveInArea: 4
   _detectionRange: 6
-  _attackRange: 1.5
-  _attackCooldownSeconds: 2
+  _attackRange: 0.75
+  _attackCooldownSeconds: 2.5
   _leashRange: 14
-  _moveSpeed: 1.5
+  _moveSpeed: 0.95
+  _wanderSpeed: 0.5
+  _attackWindupSeconds: 0.8
+  _attackRecoverySeconds: 0.5
   _allowedMaps:
   - _value: map.harbor_town

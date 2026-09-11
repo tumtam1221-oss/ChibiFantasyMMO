@@ -48,6 +48,15 @@ namespace ChibiFantasy.Gameplay
 
         public QuestStatus Status { get; internal set; }
 
+        /// <summary>
+        /// The day this was finished, as the database counts days. Zero means never.
+        /// </summary>
+        /// <remarks>Carried rather than derived: it is written by MySQL when the quest is
+        /// saved as completed, and compared against the day the database reports as today.
+        /// Nothing in the game computes it, which is what keeps one clock deciding when a
+        /// daily comes back.</remarks>
+        public int CompletedDay { get; internal set; }
+
         /// <summary>How many objectives this quest has.</summary>
         public int ObjectiveCount => _counters.Length;
 
@@ -83,10 +92,15 @@ namespace ChibiFantasy.Gameplay
             _counters[index] = value < 0 ? 0 : value;
         }
 
+        /// <summary>Wipes progress so the quest can be run again.</summary>
+        /// <remarks>The completion day goes with it. A daily taken again this morning is in
+        /// progress, not done -- and leaving yesterday's stamp on it would have tomorrow
+        /// refuse it as already finished.</remarks>
         internal void Reset()
         {
             for (int i = 0; i < _counters.Length; i++) _counters[i] = 0;
             Status = QuestStatus.Active;
+            CompletedDay = 0;
         }
 
         public override string ToString()
@@ -173,6 +187,49 @@ namespace ChibiFantasy.Gameplay
         /// <summary>Records that state moved. Called by the service after a real change.</summary>
         internal void Touch()
         {
+            _revision = _revision.Next();
+        }
+
+        /// <summary>
+        /// Replaces one quest's entry with what an authority says it is.
+        /// </summary>
+        /// <remarks>
+        /// <b>For a client adopting the server's answer, and for loading a saved row.</b>
+        /// Not a gameplay call: nothing decides anything here, it copies. The server's own
+        /// copy is only ever changed through <see cref="QuestService"/>, which is what makes
+        /// acceptance, progress and payment its decision rather than a caller's.
+        ///
+        /// <b>Public where the rest of the mutators are internal, and deliberately so.</b>
+        /// A client lives in another assembly and has to be able to hold what it was sent;
+        /// an internal setter would have meant a second quest-state type on the client and
+        /// two view adapters to go with it. What keeps this honest is that the server never
+        /// reads a client's copy -- a player writing anything they like into their own is
+        /// writing into a picture.
+        /// </remarks>
+        public void AdoptAuthoritative(DefinitionId questId, QuestStatus status,
+            IReadOnlyList<int> counters, int completedDay = 0)
+        {
+            if (!questId.IsValid) return;
+
+            int objectives = counters == null ? 0 : counters.Count;
+
+            QuestProgress progress;
+
+            if (!_quests.TryGetValue(questId, out progress)
+                || progress.ObjectiveCount != objectives)
+            {
+                // A different shape means the definition changed under a saved row, or this
+                // is the first time the quest has been seen. Either way the authority's
+                // shape wins.
+                progress = new QuestProgress(questId, objectives);
+                _quests[questId] = progress;
+            }
+
+            progress.Status = status;
+            progress.CompletedDay = completedDay < 0 ? 0 : completedDay;
+
+            for (var i = 0; i < objectives; i++) progress.SetCount(i, counters[i]);
+
             _revision = _revision.Next();
         }
 
