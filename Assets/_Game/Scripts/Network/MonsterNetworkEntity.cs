@@ -42,6 +42,36 @@ namespace ChibiFantasy.Network
         private readonly SyncVar<float> _y = new SyncVar<float>();
         private readonly SyncVar<float> _z = new SyncVar<float>();
 
+        /// <summary>
+        /// How many times the server has had this monster swing.
+        /// </summary>
+        /// <remarks>
+        /// <b>A count, not an event.</b> A client that joins late, or misses a packet, sees
+        /// the number it should and simply does not replay the swings it was not there for.
+        /// An RPC per swing would be a message per monster per second, and a missed one
+        /// would leave a monster attacking in silence.
+        ///
+        /// <b>A hit needs no equivalent.</b> Health already falls when a monster is struck,
+        /// and the presentation reads the fall -- so a hit reaction costs nothing on the
+        /// wire, and cannot disagree with the health it is reacting to.
+        /// </remarks>
+        private readonly SyncVar<int> _swings = new SyncVar<int>();
+
+        /// <summary>
+        /// Which way the monster is facing, in degrees of yaw.
+        /// </summary>
+        /// <remarks>
+        /// <b>Replicated rather than inferred, because of the jump attack.</b> Facing used to
+        /// be guessed on the client from the direction the monster was seen to travel, which
+        /// is fine while it is walking and useless at the moment it matters most: a monster
+        /// standing still in reach, about to leap, has no travel to infer from, so it would
+        /// jump whichever way it last happened to walk.
+        ///
+        /// The server knows what it is looking at. One float is the cheapest honest answer,
+        /// and it also makes a chase face its target exactly rather than approximately.
+        /// </remarks>
+        private readonly SyncVar<float> _facing = new SyncVar<float>();
+
         /// <summary>Which monster this is, as the server knows it.</summary>
         public InstanceId Instance => new InstanceId(_instanceId.Value);
 
@@ -60,6 +90,14 @@ namespace ChibiFantasy.Network
         public float Y => _y.Value;
 
         public float Z => _z.Value;
+
+        /// <summary>Which way the server says it is facing, in degrees of yaw.</summary>
+        public float Facing => _facing.Value;
+
+        /// <summary>How many swings the server has had this monster throw.</summary>
+        /// <remarks>Presentation reads the change, never the value: what matters is that it
+        /// went up, which is when an attack animation should play.</remarks>
+        public int Swings => _swings.Value;
 
         /// <summary>Whether the server says it is standing.</summary>
         /// <remarks>Derived from replicated health rather than synced separately, so the two
@@ -93,12 +131,30 @@ namespace ChibiFantasy.Network
         /// authoritative runtime has already decided both -- this never computes either.
         /// </remarks>
         [Server]
-        public void ServerPublishState(float x, float y, float z, int health)
+        public void ServerPublishState(float x, float y, float z, int health, float facing)
         {
             _x.Value = x;
             _y.Value = y;
             _z.Value = z;
             _health.Value = health < 0 ? 0 : health;
+
+            // Compared before assigning: yaw changes far less often than position, and a
+            // SyncVar written with the value it already holds is still a write.
+            if (_facing.Value != facing) _facing.Value = facing;
+        }
+
+        /// <summary>Publishes how many times this monster has swung.</summary>
+        /// <remarks>Separate from the state above because it is written by the thing that
+        /// resolves attacks rather than by the thing that replicates positions, and because
+        /// it changes far less often than either.</remarks>
+        [Server]
+        public void ServerPublishSwings(int swings)
+        {
+            if (swings < 0) swings = 0;
+
+            if (_swings.Value == swings) return;
+
+            _swings.Value = swings;
         }
     }
 }

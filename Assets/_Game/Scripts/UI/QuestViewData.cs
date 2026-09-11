@@ -97,7 +97,8 @@ namespace ChibiFantasy.UI
         private QuestViewData(bool valid, DefinitionId questId, LocalizationKey nameKey,
             LocalizationKey descriptionKey, QuestType questType, QuestStatusView status,
             int levelRequirement, bool repeatable,
-            QuestObjectiveViewData[] objectives, QuestRewardViewData[] rewards)
+            QuestObjectiveViewData[] objectives, QuestRewardViewData[] rewards,
+            bool resetsDaily = false)
         {
             IsValid = valid;
             QuestId = questId;
@@ -107,6 +108,7 @@ namespace ChibiFantasy.UI
             Status = status;
             LevelRequirement = levelRequirement;
             Repeatable = repeatable;
+            ResetsDaily = resetsDaily;
             _objectives = objectives ?? NoObjectives;
             _rewards = rewards ?? NoRewards;
         }
@@ -128,6 +130,12 @@ namespace ChibiFantasy.UI
 
         public bool Repeatable { get; }
 
+        /// <summary>Whether this one comes back tomorrow rather than being taken once.</summary>
+        /// <remarks>Carried separately from <see cref="Repeatable"/> because a player reads
+        /// them differently: "repeatable" is a promise that it is always there, "daily" is a
+        /// promise that it is there again in the morning.</remarks>
+        public bool ResetsDaily { get; }
+
         public IReadOnlyList<QuestObjectiveViewData> Objectives => _objectives;
 
         public IReadOnlyList<QuestRewardViewData> Rewards => _rewards;
@@ -142,10 +150,11 @@ namespace ChibiFantasy.UI
         public static QuestViewData From(DefinitionId questId, LocalizationKey nameKey,
             LocalizationKey descriptionKey, QuestType questType, QuestStatusView status,
             int levelRequirement, bool repeatable,
-            QuestObjectiveViewData[] objectives, QuestRewardViewData[] rewards)
+            QuestObjectiveViewData[] objectives, QuestRewardViewData[] rewards,
+            bool resetsDaily = false)
         {
             return new QuestViewData(true, questId, nameKey, descriptionKey, questType, status,
-                levelRequirement, repeatable, objectives, rewards);
+                levelRequirement, repeatable, objectives, rewards, resetsDaily);
         }
 
         public override string ToString()

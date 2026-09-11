@@ -90,6 +90,29 @@ namespace ChibiFantasy.Gameplay
 
         public bool HasTarget => TargetId.IsValid;
 
+        /// <summary>
+        /// The spot a strolling monster is walking to.
+        /// </summary>
+        /// <remarks>
+        /// <b>Here rather than on the controller, so movement can read it.</b>
+        /// <see cref="MonsterMovement"/> is handed a monster and a state and asks "where is
+        /// this one trying to get to". It already answers that for
+        /// <see cref="MonsterAiState.Return"/> from <see cref="SpawnPosition"/>; a wander
+        /// destination is the same kind of fact and lives beside it, which is what lets
+        /// wandering reuse the movement step instead of growing a second one.
+        ///
+        /// <b>It does not advance the revision.</b> A revision marks a change anything
+        /// watching needs to see, and nothing outside the server ever sees a destination --
+        /// clients are sent positions, which do change as the monster walks. Bumping it here
+        /// would replicate a thought rather than a fact.
+        /// </remarks>
+        public CombatPosition WanderDestination { get; private set; }
+
+        /// <summary>Whether <see cref="WanderDestination"/> currently means anything.</summary>
+        /// <remarks>A flag rather than a nullable, because the position is a struct and
+        /// "(0, 0, 0)" is a real place on every map.</remarks>
+        public bool HasWanderDestination { get; private set; }
+
         public Revision Revision => _revision;
 
         /// <summary>
@@ -132,6 +155,20 @@ namespace ChibiFantasy.Gameplay
             SetTarget(InstanceId.None);
         }
 
+        /// <summary>Sends it strolling toward a spot.</summary>
+        public void SetWanderDestination(CombatPosition destination)
+        {
+            WanderDestination = destination;
+            HasWanderDestination = destination.IsFinite;
+        }
+
+        /// <summary>Forgets where it was strolling to. What arriving and giving up call.</summary>
+        public void ClearWanderDestination()
+        {
+            WanderDestination = default;
+            HasWanderDestination = false;
+        }
+
         /// <summary>
         /// Claims the one defeat this monster can be defeated.
         /// </summary>
@@ -148,12 +185,36 @@ namespace ChibiFantasy.Gameplay
             if (IsAlive || _defeatClaimed) return false;
 
             _defeatClaimed = true;
+            SecondsSinceDefeat = 0f;
             _revision = _revision.Next();
             return true;
         }
 
         /// <summary>Whether the defeat has already been paid out.</summary>
         public bool IsDefeatClaimed => _defeatClaimed;
+
+        /// <summary>
+        /// How long this has been a corpse, in seconds.
+        /// </summary>
+        /// <remarks>
+        /// <b>Why a corpse has an age at all.</b> Retiring a monster the instant its defeat
+        /// was claimed despawned it about one tick after it died, so the death animation was
+        /// never seen: a slime a player had just killed simply stopped existing. The world
+        /// now leaves it lying for a moment, and this is what that moment is measured
+        /// against.
+        ///
+        /// Advanced by the caller with the tick length it already has, like every other
+        /// elapsed figure in this project. Nothing here reads a clock.
+        /// </remarks>
+        public float SecondsSinceDefeat { get; private set; }
+
+        /// <summary>Ages a corpse by one tick. Does nothing to anything still standing.</summary>
+        public void AdvanceDefeat(float deltaSeconds)
+        {
+            if (IsAlive || !_defeatClaimed || deltaSeconds <= 0f) return;
+
+            SecondsSinceDefeat += deltaSeconds;
+        }
 
         /// <summary>
         /// Returns it to full health at its spawn point, ready to live again.
@@ -166,7 +227,9 @@ namespace ChibiFantasy.Gameplay
             Position = SpawnPosition;
             _currentHealth = MaxHealth;
             _defeatClaimed = false;
+            SecondsSinceDefeat = 0f;
             TargetId = InstanceId.None;
+            ClearWanderDestination();
             _revision = _revision.Next();
         }
 

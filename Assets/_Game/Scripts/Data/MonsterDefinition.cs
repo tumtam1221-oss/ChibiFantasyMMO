@@ -94,6 +94,15 @@ namespace ChibiFantasy.Data
         [Tooltip("World units per second.")]
         [SerializeField] private float _moveSpeed = 2f;
 
+        [Tooltip("Metres per second while strolling near home. Zero uses Move Speed.")]
+        [SerializeField] private float _wanderSpeed;
+
+        [Tooltip("Seconds of anticipation before a swing lands. Zero strikes instantly.")]
+        [SerializeField] private float _attackWindupSeconds;
+
+        [Tooltip("Seconds committed after a swing, during which it neither moves nor swings.")]
+        [SerializeField] private float _attackRecoverySeconds;
+
         [Tooltip("Maps it may be spawned on. Empty means unrestricted.")]
         [SerializeField] private DefinitionId[] _allowedMaps = new DefinitionId[0];
 
@@ -139,6 +148,31 @@ namespace ChibiFantasy.Data
         public float AttackCooldownSeconds => _attackCooldownSeconds;
 
         /// <summary>
+        /// How long it winds up before a swing lands.
+        /// </summary>
+        /// <remarks>
+        /// <b>The pause that makes an attack readable.</b> Without one a monster that walks
+        /// into reach strikes on the same tick it arrives, which a player experiences as
+        /// damage arriving from nowhere -- there was nothing to see coming. Authored rather
+        /// than constant because a boss telegraphing for a second and a slime bobbing for a
+        /// fifth of one is a balance decision, not a code one.
+        ///
+        /// Server-side: this delays the damage, not merely the animation. A windup that only
+        /// existed in the presentation would be a lie the client tells about when it was
+        /// hit.
+        /// </remarks>
+        public float AttackWindupSeconds => _attackWindupSeconds < 0f ? 0f : _attackWindupSeconds;
+
+        /// <summary>
+        /// How long it is committed after a swing, before it can do anything else.
+        /// </summary>
+        /// <remarks>The other half of a readable rhythm: a monster that snaps back to
+        /// chasing the instant it has swung reads as a machine. During recovery it neither
+        /// moves nor swings again.</remarks>
+        public float AttackRecoverySeconds =>
+            _attackRecoverySeconds < 0f ? 0f : _attackRecoverySeconds;
+
+        /// <summary>
         /// How far from home it will chase before giving up.
         /// </summary>
         /// <remarks>Zero means no leash. Measured from the spawn point rather than from the
@@ -147,6 +181,17 @@ namespace ChibiFantasy.Data
         public float LeashRange => _leashRange;
 
         public float MoveSpeed => _moveSpeed;
+
+        /// <summary>
+        /// How fast it strolls when it has nothing to fight.
+        /// </summary>
+        /// <remarks>
+        /// <b>Slower than a chase, on purpose.</b> A creature that mills about its camp at
+        /// the same speed it hunts reads as agitated rather than idle, and a whole camp of
+        /// them reads as a swarm. Falls back to <see cref="MoveSpeed"/> when a monster does
+        /// not author one, so existing content behaves exactly as it did.
+        /// </remarks>
+        public float WanderSpeed => _wanderSpeed > 0f ? _wanderSpeed : _moveSpeed;
 
         /// <summary>References to <see cref="MapDefinition"/>. Empty means unrestricted.</summary>
         public DefinitionId[] AllowedMaps => _allowedMaps ?? NoIds;

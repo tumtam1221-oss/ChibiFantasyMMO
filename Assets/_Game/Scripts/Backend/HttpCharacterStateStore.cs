@@ -158,6 +158,24 @@ namespace ChibiFantasy.Backend
                     row.Int("resulting_level"), row.Int("resulting_experience")));
             }
 
+            var quests = new List<PersistedQuest>();
+
+            foreach (JsonReader row in json.Array("quests"))
+            {
+                var counters = new List<int>();
+
+                foreach (JsonReader counter in row.Array("counters"))
+                {
+                    counters.Add(counter.Int("value"));
+                }
+
+                // completed_day is the database's own day number for when this was
+                // finished, and zero when it never was. Carried rather than recomputed:
+                // it is the half of the daily-reset comparison that comes from storage.
+                quests.Add(new PersistedQuest(new DefinitionId(row.String("quest_id")),
+                    row.Int("status"), counters, row.Int("completed_day")));
+            }
+
             string activePet = json.String("active_pet_instance_id");
 
             // Where they were standing when they last left. Null or absent for a character
@@ -192,7 +210,14 @@ namespace ChibiFantasy.Backend
                 pets,
                 string.IsNullOrEmpty(activePet) ? default : new InstanceId(activePet),
                 applications,
-                hasPosition, px, py, pz);
+                hasPosition, px, py, pz,
+                quests,
+
+                // Today, as the database counts days. The other half of the comparison,
+                // and the reason a world server never has to ask its own machine what the
+                // date is -- which would reset dailies at the wrong midnight.
+                json.Int("server_day"),
+                json.Int("server_day_ends_in"));
 
             return CharacterPersistenceResult.Loaded(persisted);
         }
@@ -454,6 +479,30 @@ namespace ChibiFantasy.Backend
                     .Add("resulting_level", applied.Level)
                     .Add("resulting_experience", (int)applied.Experience)
                     .ToJson());
+            }
+
+            // What they have taken and how far along. Sent whole, so a quest abandoned or
+            // finished on this server leaves the stored log rather than lingering.
+            builder.Append("],\"quests\":[");
+
+            for (int i = 0; i < character.Quests.Count; i++)
+            {
+                if (i > 0) builder.Append(',');
+
+                PersistedQuest quest = character.Quests[i];
+
+                builder.Append("{\"quest_id\":\"").Append(quest.Quest.Value ?? string.Empty)
+                    .Append("\",\"status\":").Append(quest.Status)
+                    .Append(",\"counters\":[");
+
+                for (int c = 0; c < quest.Counters.Count; c++)
+                {
+                    if (c > 0) builder.Append(',');
+
+                    builder.Append("{\"value\":").Append(quest.Counters[c]).Append('}');
+                }
+
+                builder.Append("]}");
             }
 
             builder.Append("]}");

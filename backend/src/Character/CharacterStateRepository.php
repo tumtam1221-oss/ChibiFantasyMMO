@@ -94,6 +94,20 @@ final class CharacterStateRepository
             'stats'         => $this->loadStats($characterId),
             'appearance'    => $this->loadAppearance($characterId),
             'skills'        => $this->loadSkills($characterId),
+            'quests'        => $this->loadQuests($characterId),
+
+            // Today, as MySQL counts days. Sent with the state rather than worked out by
+            // the game, so that "has today's daily been done" is answered by comparing two
+            // numbers that came from the same clock. A world server deciding this from its
+            // own machine clock would reset dailies at a different midnight than the one
+            // the completion times were written in.
+            'server_day'    => $this->serverDay(),
+
+            // How long until that day number changes. A world server runs for days at a
+            // time, so it cannot simply keep the day it was handed at login -- and it must
+            // not ask its own machine when midnight is. This is the boundary, measured by
+            // the same clock that stamps completions, and the game counts down to it.
+            'server_day_ends_in' => $this->secondsUntilNextDay(),
             'items'         => array_merge(
                 $this->loadInventory($characterId),
                 $this->loadEquipment($accountId, $characterId)
@@ -235,6 +249,123 @@ final class CharacterStateRepository
     }
 
     /** @return list<array{skill_id:string,level:int}> */
+    /**
+     * What a character has taken, with each objective's counter.
+     *
+     * Two queries rather than a join: a join would repeat the quest row once per objective
+     * and the reassembly would cost more than the second round trip. Ordered so a saved log
+     * reads back in a stable order, which is what makes a diff of two saves meaningful.
+     *
+     * Counters come back as objects with a `value`, not as bare integers. That is the
+     * shape the world actually sends and the only shape its JSON reader can parse -- every
+     * other collection here is a list of named objects for the same reason, and a bare list
+     * of numbers was the one exception, which is exactly where the two sides disagreed:
+     * the world wrote objects, this returned integers, and every counter read back as zero.
+     *
+     * @return list<array{quest_id:string,status:int,counters:list<array{value:int}>}>
+     */
+    /**
+     * Today's day number, from the same clock that stamps completions.
+     *
+     * TO_DAYS rather than a date string: the only question anybody asks of it is whether
+     * two days differ, and an integer cannot be misparsed, mis-formatted or read in the
+     * wrong timezone on the way.
+     */
+    private function serverDay(): int
+    {
+        $row = $this->pdo->query('SELECT TO_DAYS(NOW(3)) AS today')->fetch();
+
+        return $row === false ? 0 : (int) $row['today'];
+    }
+
+    /**
+     * Seconds from now until the day number increments.
+     *
+     * A duration rather than a time: the game can measure elapsed seconds without knowing
+     * anything about calendars or offsets, and the only calendar arithmetic in the system
+     * stays in the database that owns the clock.
+     */
+    private function secondsUntilNextDay(): int
+    {
+        $row = $this->pdo->query(
+            'SELECT TIMESTAMPDIFF(SECOND, NOW(3),
+                 DATE_ADD(DATE(NOW(3)), INTERVAL 1 DAY)) AS remaining'
+        )->fetch();
+
+        if ($row === false) {
+            return 0;
+        }
+
+        $remaining = (int) $row['remaining'];
+
+        return $remaining < 0 ? 0 : $remaining;
+    }
+
+    private function loadQuests(string $characterId): array
+    {
+        // completed_day and today both come out of MySQL, as day numbers rather than as
+        // timestamps. That is deliberate: "is today a different day from the day this was
+        // finished" is the whole of the daily-reset rule, and two integers from one clock
+        // answer it without the game needing to know the deployment's timezone or parse a
+        // datetime. A timestamp on the wire would be a second clock waiting to disagree.
+        $rows = $this->pdo->prepare(
+            'SELECT quest_definition_id, status,
+                    TO_DAYS(completed_at) AS completed_day
+             FROM character_quest
+             WHERE character_id = :cid ORDER BY quest_definition_id ASC'
+        );
+
+        $rows->execute([':cid' => $characterId]);
+
+        $quests = [];
+
+        foreach ($rows->fetchAll() as $row) {
+            $quests[(string) $row['quest_definition_id']] = [
+                'quest_id'      => (string) $row['quest_definition_id'],
+                'status'        => (int) $row['status'],
+                // Zero means "never finished". A real day number is always far above it,
+                // so the game can treat it as a plain integer with no null handling.
+                'completed_day' => $row['completed_day'] === null
+                    ? 0
+                    : (int) $row['completed_day'],
+                'counters'      => [],
+            ];
+        }
+
+        if ($quests === []) {
+            return [];
+        }
+
+        $counters = $this->pdo->prepare(
+            'SELECT quest_definition_id, objective_index, counter
+             FROM character_quest_objective
+             WHERE character_id = :cid
+             ORDER BY quest_definition_id ASC, objective_index ASC'
+        );
+
+        $counters->execute([':cid' => $characterId]);
+
+        foreach ($counters->fetchAll() as $row) {
+            $quest = (string) $row['quest_definition_id'];
+
+            if (!isset($quests[$quest])) {
+                continue;
+            }
+
+            $quests[$quest]['counters'][(int) $row['objective_index']] =
+                ['value' => (int) $row['counter']];
+        }
+
+        // Re-indexed so a gap in objective_index -- a row lost to a partial write -- comes
+        // back as a dense array rather than as a sparse one the client would misread.
+        foreach ($quests as $id => $quest) {
+            ksort($quests[$id]['counters']);
+            $quests[$id]['counters'] = array_values($quests[$id]['counters']);
+        }
+
+        return array_values($quests);
+    }
+
     private function loadSkills(string $characterId): array
     {
         $statement = $this->pdo->prepare(
@@ -553,6 +684,13 @@ final class CharacterStateRepository
             $this->replaceStats($characterId, $state['stats'] ?? []);
             $this->replaceAppearance($characterId, $state['appearance'] ?? []);
             $this->replaceSkills($characterId, $state['skills'] ?? []);
+
+            // Absent means "this server carries no quest log", which leaves the stored one
+            // alone. A world composed without quest content must not wipe what a player has
+            // taken -- the same rule the bag already follows for inventory_capacity.
+            if (array_key_exists('quests', $state)) {
+                $this->replaceQuests($characterId, $state['quests']);
+            }
             $this->writeInventory(
                 $characterId,
                 $accountId,
@@ -1004,6 +1142,147 @@ final class CharacterStateRepository
                 ':slot'   => (int) ($entry['slot'] ?? 0),
                 ':option' => (string) ($entry['option_id'] ?? ''),
             ]);
+        }
+    }
+
+    /**
+     * Replaces the whole quest log with what the world sent.
+     *
+     * Delete then insert, exactly as skills and stats already do. The world sends its log
+     * whole, so a quest that has left it -- abandoned, or wiped by a character reset --
+     * leaves the database too; merging would leave an abandoned quest in the log for ever.
+     *
+     * The objective rows go in after their quest, because the foreign key says so; they are
+     * removed by the cascade rather than by a second DELETE.
+     *
+     * @param list<array{quest_id:string,status:int,counters:list<array{value:int}>}> $quests
+     */
+    private function replaceQuests(string $characterId, array $quests): void
+    {
+        // What was already finished, and when. The log is replaced wholesale on every
+        // save, so without reading this first a completion time would be destroyed by the
+        // next autosave -- and a daily quest whose completion time is gone is a daily
+        // quest that can be done again immediately.
+        $wasCompleted = $this->pdo->prepare(
+            'SELECT quest_definition_id, status, completed_at
+             FROM character_quest WHERE character_id = :cid'
+        );
+
+        $wasCompleted->execute([':cid' => $characterId]);
+
+        $previous = [];
+
+        foreach ($wasCompleted->fetchAll() as $row) {
+            $previous[(string) $row['quest_definition_id']] = [
+                'status'       => (int) $row['status'],
+                'completed_at' => $row['completed_at'],
+            ];
+        }
+
+        $this->pdo->prepare('DELETE FROM character_quest WHERE character_id = :cid')
+            ->execute([':cid' => $characterId]);
+
+        if ($quests === []) {
+            return;
+        }
+
+        // Two statements rather than one with a CASE, because the difference matters and
+        // should be readable: a quest that has just been finished is stamped with MySQL's
+        // clock, and a quest that was already finished keeps the stamp it had.
+        $insertFreshlyDone = $this->pdo->prepare(
+            'INSERT INTO character_quest
+                (character_id, quest_definition_id, status, completed_at, updated_at)
+             VALUES (:cid, :quest, :status, NOW(3), NOW(3))'
+        );
+
+        $insertCarryingStamp = $this->pdo->prepare(
+            'INSERT INTO character_quest
+                (character_id, quest_definition_id, status, completed_at, updated_at)
+             VALUES (:cid, :quest, :status, :done, NOW(3))'
+        );
+
+        $insertQuest = $this->pdo->prepare(
+            'INSERT INTO character_quest
+                (character_id, quest_definition_id, status, completed_at, updated_at)
+             VALUES (:cid, :quest, :status, NULL, NOW(3))'
+        );
+
+        $insertCounter = $this->pdo->prepare(
+            'INSERT INTO character_quest_objective
+                (character_id, quest_definition_id, objective_index, counter)
+             VALUES (:cid, :quest, :idx, :counter)'
+        );
+
+        foreach ($quests as $quest) {
+            $id = (string) ($quest['quest_id'] ?? '');
+
+            if ($id === '') {
+                continue;
+            }
+
+            // Clamped to the states the game actually has. A number outside them would be
+            // read back as a status nothing knows how to leave.
+            $status = (int) ($quest['status'] ?? 0);
+
+            if ($status < 0 || $status > 3) {
+                $status = 0;
+            }
+
+            $COMPLETED = 3;
+            $before = $previous[$id] ?? null;
+
+            if ($status !== $COMPLETED) {
+                // Not finished. A daily quest taken again today lands here, and clearing
+                // the stamp is correct: it is in progress, not done.
+                $insertQuest->execute([
+                    ':cid'    => $characterId,
+                    ':quest'  => $id,
+                    ':status' => $status,
+                ]);
+            } elseif ($before !== null && (int) $before['status'] === $COMPLETED
+                && $before['completed_at'] !== null) {
+                // Already finished before this save. Re-stamping it would push the daily
+                // reset forward on every autosave and the quest would never come back.
+                $insertCarryingStamp->execute([
+                    ':cid'    => $characterId,
+                    ':quest'  => $id,
+                    ':status' => $status,
+                    ':done'   => $before['completed_at'],
+                ]);
+            } else {
+                $insertFreshlyDone->execute([
+                    ':cid'    => $characterId,
+                    ':quest'  => $id,
+                    ':status' => $status,
+                ]);
+            }
+
+            $counters = $quest['counters'] ?? [];
+
+            if (!is_array($counters)) {
+                continue;
+            }
+
+            $index = 0;
+
+            foreach ($counters as $counter) {
+                // An object with a value, which is what the world sends. A bare number is
+                // accepted too so a hand-written request is not silently stored as one --
+                // casting an array to int quietly yields 1, which is how this went wrong
+                // without anything failing.
+                $value = is_array($counter)
+                    ? (int) ($counter['value'] ?? 0)
+                    : (int) $counter;
+
+                $insertCounter->execute([
+                    ':cid'     => $characterId,
+                    ':quest'   => $id,
+                    ':idx'     => $index,
+                    ':counter' => max(0, $value),
+                ]);
+
+                $index++;
+            }
         }
     }
 

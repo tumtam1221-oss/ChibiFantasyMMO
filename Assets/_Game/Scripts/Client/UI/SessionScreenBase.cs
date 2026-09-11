@@ -25,11 +25,39 @@ namespace ChibiFantasy.Client.UI
     public abstract class SessionScreenBase : MonoBehaviour
     {
         private TextMeshProUGUI _status;
+        private TextMeshProUGUI _titleLabel;
         private readonly List<GameObject> _rows = new List<GameObject>();
         private bool _built;
 
         /// <summary>The controller this screen shows. Bound by the flow driver.</summary>
         public SessionUiController Session { get; private set; }
+
+        /// <summary>
+        /// Where this screen's words are translated. Optional.
+        /// </summary>
+        /// <remarks>
+        /// <b>Taken from the controller rather than injected separately.</b> A screen is
+        /// handed its controller by whoever composed the scene, and the language is a
+        /// property of that same composition -- a second wire would be a second thing to
+        /// forget, and a screen wired for data but not for language is a screen that is half
+        /// translated.
+        ///
+        /// Assigning it relabels immediately, because these screens build their widgets on
+        /// first use and that happens before anything has had a chance to say what language
+        /// the player reads.
+        /// </remarks>
+        public ILocalizedTextSource Text
+        {
+            get => _text;
+            set
+            {
+                _text = value;
+
+                Relabel();
+            }
+        }
+
+        private ILocalizedTextSource _text;
 
         /// <summary>Where rows are put.</summary>
         protected RectTransform Content { get; private set; }
@@ -56,8 +84,12 @@ namespace ChibiFantasy.Client.UI
 
             if (Session == null) return;
 
+            // The language travels with the controller, so a scene wired for data is wired
+            // for language too. Set before anything is drawn, so nothing is drawn twice.
+            if (Session.Text != null) Text = Session.Text;
+
             IsBusy = true;
-            SetStatus("Loading...");
+            SetStatus(UiText.Of(Text, UiStrings.CommonLoading));
 
             Fetch();
 
@@ -82,7 +114,41 @@ namespace ChibiFantasy.Client.UI
         }
 
         /// <summary>What to say when the list is empty. Overridden per screen.</summary>
-        protected virtual string EmptyMessage => "Nothing to show";
+        protected virtual string EmptyMessage => UiText.Of(Text, UiStrings.CommonNothingToShow);
+
+        /// <summary>
+        /// Redraws every word this screen wrote once and would otherwise never revisit.
+        /// </summary>
+        /// <remarks>
+        /// <b>What this exists for.</b> Titles, headers and button captions are written when
+        /// the screen is built and then never touched again -- they have no reason to change,
+        /// until the player changes language. Without this, switching language would redraw
+        /// the rows and the status line and leave the title saying "Choose a server" over a
+        /// Thai list, which looks less like a language setting than like a bug.
+        ///
+        /// Rows are not relabelled here: they are rebuilt from the controller by
+        /// <see cref="Rebuild"/>, which is called after this.
+        /// </remarks>
+        public virtual void Relabel()
+        {
+            if (_titleLabel != null) _titleLabel.text = Title;
+
+            if (Languages != null)
+            {
+                Languages.Text = Text;
+
+                // The running language, not the stored preference. They agree on every path
+                // a player can take, and disagree the moment anything switches language
+                // without remembering it -- which is exactly what a fixture does.
+                ClientApplicationBootstrap root = ClientApplicationBootstrap.Current;
+
+                Languages.Relabel(root != null && root.Language != null
+                    ? root.Language.Current
+                    : LanguagePreference.Current);
+            }
+
+            if (Session != null) Rebuild();
+        }
 
         /// <summary>
         /// Whether this screen actually put anything on itself.
@@ -112,34 +178,41 @@ namespace ChibiFantasy.Client.UI
         /// player told nothing assumes the game is broken, and an unnamed enum value is at
         /// least something a support ticket can quote.
         /// </remarks>
-        protected static string Explain(SessionRejection reason)
+        protected string Explain(SessionRejection reason)
+        {
+            return reason == SessionRejection.None
+                ? string.Empty
+                : UiText.Of(Text, SessionRejectionKey(reason), reason.ToString());
+        }
+
+        /// <summary>Which sentence a refused session step is worded as.</summary>
+        private static string SessionRejectionKey(SessionRejection reason)
         {
             switch (reason)
             {
-                case SessionRejection.None: return string.Empty;
-                case SessionRejection.SessionExpired:
-                    return "Your session expired -- sign in again";
-                case SessionRejection.SessionRevoked: return "Your session was ended";
-                case SessionRejection.SessionInvalid: return "Your session is no longer valid";
-                case SessionRejection.ServerFull: return "That server is full";
-                case SessionRejection.ServerMaintenance:
-                    return "That server is under maintenance";
-                case SessionRejection.ServerUnavailable: return "That server is unavailable";
-                case SessionRejection.ChannelFull: return "That channel is full";
-                case SessionRejection.ChannelMaintenance:
-                    return "That channel is under maintenance";
-                case SessionRejection.ChannelUnavailable: return "That channel is unavailable";
+                case SessionRejection.SessionExpired: return UiStrings.RejectSessionExpired;
+                case SessionRejection.SessionRevoked: return UiStrings.RejectSessionRevoked;
+                case SessionRejection.SessionInvalid: return UiStrings.RejectSessionInvalid;
+                case SessionRejection.ServerFull: return UiStrings.RejectServerFull;
+                case SessionRejection.ServerMaintenance: return UiStrings.RejectServerMaintenance;
+                case SessionRejection.ServerUnavailable: return UiStrings.RejectServerUnavailable;
+                case SessionRejection.ChannelFull: return UiStrings.RejectChannelFull;
+                case SessionRejection.ChannelMaintenance: return UiStrings.RejectChannelMaintenance;
+                case SessionRejection.ChannelUnavailable: return UiStrings.RejectChannelUnavailable;
                 case SessionRejection.UnknownCharacter:
                 case SessionRejection.CharacterNotOwned:
-                    return "That character is unavailable";
+                    return UiStrings.RejectCharacterUnavailable;
                 case SessionRejection.CharacterUnavailable:
-                    return "That character cannot be played right now";
-                case SessionRejection.VersionMismatch: return "Your client needs updating";
-                case SessionRejection.AlreadyInWorld:
-                    return "That character is already in the world";
-                default: return reason.ToString();
+                    return UiStrings.RejectCharacterNotPlayable;
+                case SessionRejection.VersionMismatch: return UiStrings.RejectVersionMismatch;
+                case SessionRejection.AlreadyInWorld: return UiStrings.RejectCharacterInWorld;
+
+                // Not a key. An unnamed value falls back to the enum name, which is at least
+                // something a support ticket can quote -- see the caller's fallback.
+                default: return null;
             }
         }
+
 
         /// <summary>
         /// The same, for the login vocabulary.
@@ -153,25 +226,31 @@ namespace ChibiFantasy.Client.UI
         /// password" covers a wrong password and an account that does not exist, because
         /// telling them apart tells an attacker which logins are real.
         /// </remarks>
-        protected static string Explain(LoginRejection reason)
+        protected string Explain(LoginRejection reason)
+        {
+            return reason == LoginRejection.None
+                ? string.Empty
+                : UiText.Of(Text, LoginRejectionKey(reason), reason.ToString());
+        }
+
+        /// <summary>Which sentence a refused sign-in is worded as.</summary>
+        private static string LoginRejectionKey(LoginRejection reason)
         {
             switch (reason)
             {
-                case LoginRejection.None: return string.Empty;
-                case LoginRejection.InvalidCredentials:
-                    return "Incorrect login or password";
-                case LoginRejection.AccountBanned: return "This account is banned";
-                case LoginRejection.AccountSuspended: return "This account is suspended";
-                case LoginRejection.AccountDisabled: return "This account is disabled";
-                case LoginRejection.Maintenance: return "The service is under maintenance";
+                case LoginRejection.InvalidCredentials: return UiStrings.RejectBadCredentials;
+                case LoginRejection.AccountBanned: return UiStrings.RejectAccountBanned;
+                case LoginRejection.AccountSuspended: return UiStrings.RejectAccountSuspended;
+                case LoginRejection.AccountDisabled: return UiStrings.RejectAccountDisabled;
+                case LoginRejection.Maintenance: return UiStrings.RejectMaintenance;
                 case LoginRejection.ClientVersionMismatch:
                 case LoginRejection.ProtocolVersionMismatch:
-                    return "Your client needs updating";
-                case LoginRejection.ServerUnavailable:
-                    return "Could not reach the server -- try again";
-                default: return reason.ToString();
+                    return UiStrings.RejectVersionMismatch;
+                case LoginRejection.ServerUnavailable: return UiStrings.RejectUnreachable;
+                default: return null;
             }
         }
+
 
         protected virtual void Awake()
         {
@@ -215,6 +294,7 @@ namespace ChibiFantasy.Client.UI
 
             TextMeshProUGUI title = UiFactory.CreateLabel("Title", root, Title, 44f,
                 TextAlignmentOptions.Center);
+            _titleLabel = title;
             title.rectTransform.anchorMin = new Vector2(0f, 1f);
             title.rectTransform.anchorMax = new Vector2(1f, 1f);
             title.rectTransform.pivot = new Vector2(0.5f, 1f);
@@ -248,11 +328,51 @@ namespace ChibiFantasy.Client.UI
             _status.rectTransform.anchoredPosition = new Vector2(0f, 30f);
 
             BuildExtra(root);
+
+            BuildLanguagePicker(root);
         }
 
         /// <summary>A hook for a screen that needs more than a list.</summary>
         protected virtual void BuildExtra(RectTransform root)
         {
+        }
+
+        /// <summary>The language picker, on every screen before the world.</summary>
+        /// <remarks>
+        /// <b>On all of them, not only sign-in.</b> A player who picked the wrong language on
+        /// the first screen would otherwise have to guess their way back to it through two
+        /// screens they cannot read. It is a small corner control, so the cost of repeating
+        /// it is a row of two buttons and the benefit is that being lost is recoverable.
+        ///
+        /// <b>It does not switch anything.</b> The press is forwarded to the client root,
+        /// which owns the one language service; a screen that changed language by itself
+        /// would change it for itself alone.
+        /// </remarks>
+        private void BuildLanguagePicker(RectTransform root)
+        {
+            if (Languages != null) return;
+
+            Languages = gameObject.AddComponent<LanguagePicker>();
+
+            Languages.Text = Text;
+
+            Languages.Compose(root, LanguagePreference.Current);
+
+            Languages.Picked += OnLanguagePicked;
+        }
+
+        /// <summary>The picker this screen is wearing. Null before it is built.</summary>
+        public LanguagePicker Languages { get; private set; }
+
+        /// <summary>What a screen does when somebody picks a language.</summary>
+        /// <remarks>Virtual so a test, or a screen composed without a client root, can take
+        /// the choice somewhere else. The default asks the root, which is the only thing that
+        /// can change the language for every screen at once.</remarks>
+        protected virtual void OnLanguagePicked(GameLanguage language)
+        {
+            ClientApplicationBootstrap root = ClientApplicationBootstrap.Current;
+
+            if (root != null) root.UseLanguage(language);
         }
 
         protected Button AddRow(string title, string detail, bool selectable,

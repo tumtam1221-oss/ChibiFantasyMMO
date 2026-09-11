@@ -477,7 +477,8 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(monster.IsAlive, Is.False);
             Assert.That(_runtime.AliveCount, Is.EqualTo(1), "the corpse is still resolvable");
 
-            MonsterTickResult tick = _runtime.Tick(1f);
+            // The body lies where it fell for a moment, so its death can be watched.
+            MonsterTickResult tick = _runtime.Tick(MonsterWorldRuntime.CorpseLingerSeconds);
 
             Assert.That(tick.Retired, Is.EqualTo(1), "retired by the existing lifecycle");
             Assert.That(_runtime.AliveCount, Is.Zero);
@@ -971,15 +972,42 @@ namespace ChibiFantasy.Tests.EditMode
         {
             // If a second place starts applying damage, the two will disagree about
             // minimum damage, defence or death the first time either is tuned.
+            //
+            // One file is named and allowed: the revive authority. It is the only way a
+            // character who reached zero health can ever act again -- health is persisted,
+            // so without it a lost fight is permanent and the only cure is editing the
+            // database. It is not a second damage path, and the assertion below is what
+            // holds that: it may add health and may not take any.
+            const string Revive = "/Server/CharacterReviveAuthority.cs";
+
             string[] files = System.IO.Directory.GetFiles("Assets/_Game/Scripts/Server",
                 "*.cs", System.IO.SearchOption.AllDirectories);
 
+            var sawRevive = false;
+
             foreach (string file in files)
             {
-                Assert.That(System.IO.File.ReadAllText(file),
-                    Does.Not.Contain("ApplyHealthDelta"),
-                    file.Replace('\\', '/') + " writes health outside the combat executor");
+                string normalized = file.Replace('\\', '/');
+                string source = System.IO.File.ReadAllText(file);
+
+                if (normalized.EndsWith(Revive, System.StringComparison.Ordinal))
+                {
+                    sawRevive = true;
+
+                    Assert.That(source, Does.Not.Contain("ApplyHealthDelta(-"),
+                        "the revive authority takes health away, which would make it a "
+                        + "second damage path");
+
+                    continue;
+                }
+
+                Assert.That(source, Does.Not.Contain("ApplyHealthDelta"),
+                    normalized + " writes health outside the combat executor");
             }
+
+            Assert.That(sawRevive, Is.True,
+                "the named exception no longer exists, so this test is allowing something "
+                + "that is not there and should be tightened back");
         }
 
         [Test]
@@ -1005,6 +1033,200 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(callers, Has.Count.EqualTo(1), string.Join(", ", callers));
             Assert.That(callers[0], Does.EndWith("/Server/ServerCombatPipeline.cs"),
                 "exactly one production path may pay a kill out");
+        }
+
+        // ---- and the other direction: a monster hitting a player -------------------------
+
+        /// <summary>The thing that turns a monster's decision to swing into damage.</summary>
+        private MonsterAttackAuthority Swings()
+        {
+            return new MonsterAttackAuthority(_runtime, new DefinitionId(Atk),
+                new DefinitionId(Def), 1);
+        }
+
+        /// <summary>Ticks the world until the monsters have decided to swing at least once.</summary>
+        private MonsterTickResult TickUntilASwingIsDecided(int maxTicks = 200)
+        {
+            MonsterTickResult tick = default;
+
+            for (var i = 0; i < maxTicks; i++)
+            {
+                tick = _runtime.Tick(0.1f);
+
+                if (tick.Attacking.Count > 0) return tick;
+            }
+
+            return tick;
+        }
+
+        [Test]
+        public void AMonsterThatDecidesToSwingActuallyTakesHealthOffThePlayer()
+        {
+            // The gap this closes. MonsterAiController has raised WantsToAttack since
+            // Phase 10 and MonsterWorldRuntime.Tick has reported those intents ever since --
+            // and nothing read the list. Every monster in this project decided to attack,
+            // correctly and on schedule, and no player ever lost a point of health to one.
+            LivingCharacter player = AddPlayer("char-victim");
+
+            // Defensive, so it acquires the player only once it has been given a target --
+            // which is what being attacked does. The player standing next to it is not
+            // enough, and that is the authored behaviour, not an accident of this test.
+            LivingMonster guard = Spawn(Guard, x: 1f);
+
+            _pipeline.Execute(Connection, Attack(guard));
+
+            Assert.That(guard.State.HasTarget, Is.True, "fixture: it fought back");
+
+            int before = player.Combatant.CurrentHealth;
+
+            MonsterAttackAuthority swings = Swings();
+
+            MonsterTickResult tick = TickUntilASwingIsDecided();
+
+            Assert.That(tick.Attacking.Count, Is.GreaterThan(0),
+                "fixture: nothing ever decided to swing");
+
+            MonsterAttackResult resolved = swings.Resolve(tick);
+
+            Assert.That(resolved.Landed, Is.GreaterThan(0), resolved.ToString());
+            Assert.That(resolved.Damage, Is.GreaterThan(0));
+            Assert.That(player.Combatant.CurrentHealth, Is.LessThan(before),
+                "the swing landed and the player is unharmed");
+        }
+
+        [Test]
+        public void ASwingAtSomebodyWhoSteppedOutOfReachDoesNothing()
+        {
+            // The reach is checked again when the swing is resolved, not only when it was
+            // decided -- a player who backed off in between is not hit from across the
+            // clearing.
+            LivingCharacter player = AddPlayer("char-runner");
+            LivingMonster guard = Spawn(Guard, x: 1f);
+
+            _pipeline.Execute(Connection, Attack(guard));
+
+            MonsterAttackAuthority swings = Swings();
+            MonsterTickResult tick = TickUntilASwingIsDecided();
+
+            Assert.That(tick.Attacking.Count, Is.GreaterThan(0), "fixture");
+
+            player.Combatant.Position = new CombatPosition(500f, 0f, 0f);
+
+            int before = player.Combatant.CurrentHealth;
+
+            MonsterAttackResult resolved = swings.Resolve(tick);
+
+            Assert.That(resolved.Attempted, Is.GreaterThan(0), "it did decide to swing");
+            Assert.That(resolved.Landed, Is.Zero, "and it must not have connected");
+            Assert.That(player.Combatant.CurrentHealth, Is.EqualTo(before));
+        }
+
+        [Test]
+        public void ACorpseDoesNotFinishTheSwingItHadDecidedOn()
+        {
+            LivingCharacter player = AddPlayer("char-lucky");
+            LivingMonster guard = Spawn(Guard, x: 1f);
+
+            _pipeline.Execute(Connection, Attack(guard));
+
+            MonsterAttackAuthority swings = Swings();
+            MonsterTickResult tick = TickUntilASwingIsDecided();
+
+            Assert.That(tick.Attacking.Count, Is.GreaterThan(0), "fixture");
+
+            guard.State.ApplyHealthDelta(-100000);
+
+            int before = player.Combatant.CurrentHealth;
+
+            Assert.That(swings.Resolve(tick).Landed, Is.Zero);
+            Assert.That(player.Combatant.CurrentHealth, Is.EqualTo(before));
+        }
+
+        [Test]
+        public void ASwingIsCountedWhenItIsCommittedToRatherThanWhenItLands()
+        {
+            // The client has no other way of knowing a monster swung: positions and health
+            // are replicated, and neither changes at the moment a swing begins.
+            //
+            // Counted at the commitment, not at the damage, because that is where the
+            // animation has to start. An attack animation begun at the moment damage lands
+            // shows the recoil first and the wind-up afterwards, which reads backwards.
+            AddPlayer("char-watcher");
+
+            LivingMonster guard = Spawn(Guard, x: 1f);
+
+            _pipeline.Execute(Connection, Attack(guard));
+
+            Assert.That(guard.Swings, Is.Zero, "fixture");
+
+            TickUntilASwingIsDecided();
+
+            Assert.That(guard.Swings, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void APassiveMonsterNeverSwingsAtAnybody()
+        {
+            // Aggression is content. A passive monster is hit, does not retaliate, and
+            // therefore never reaches the state that decides to swing.
+            LivingCharacter player = AddPlayer("char-bully");
+            LivingMonster shy = Spawn(Shy, x: 1f);
+
+            _pipeline.Execute(Connection, Attack(shy));
+
+            int before = player.Combatant.CurrentHealth;
+
+            MonsterAttackAuthority swings = Swings();
+
+            for (var i = 0; i < 200; i++) swings.Resolve(_runtime.Tick(0.1f));
+
+            Assert.That(swings.TotalLanded, Is.Zero);
+            Assert.That(player.Combatant.CurrentHealth, Is.EqualTo(before));
+        }
+
+        [Test]
+        public void NothingAboutAMonsterSwingingTakesAConnectionOrACommand()
+        {
+            // A monster asks nobody. Routing this through the command boundary would mean
+            // fabricating a client request on the server, which is the fake-command shape
+            // this project avoids -- so there must be no way in from a client at all.
+            foreach (System.Reflection.MethodInfo method in
+                typeof(MonsterAttackAuthority).GetMethods(
+                    System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.DeclaredOnly))
+            {
+                foreach (System.Reflection.ParameterInfo parameter in method.GetParameters())
+                {
+                    Assert.That(parameter.ParameterType, Is.Not.EqualTo(typeof(CombatCommand)),
+                        method.Name + " takes a client command");
+
+                    Assert.That(parameter.Name.ToLowerInvariant(),
+                        Does.Not.Contain("connection"),
+                        method.Name + " takes a connection id");
+                }
+            }
+        }
+
+        [Test]
+        public void TheWorldSimulationActuallyRunsTheSwingsTheTickDecidedOn()
+        {
+            // The wire, asserted on the source. The failure it guards against compiled,
+            // ran, and produced a world of monsters that decided to attack and never did --
+            // which is exactly the shape of the bug that buried every monster in a hillside
+            // when an optional map registry went unpassed.
+            string simulation = System.IO.File.ReadAllText(
+                "Assets/_Game/Scripts/Server/WorldSimulation.cs");
+
+            Assert.That(simulation, Does.Contain("_monsterAttacks?.Resolve("),
+                "the monster tick's attack intents are discarded again");
+
+            string bootstrap = System.IO.File.ReadAllText(
+                "Assets/_Game/Scripts/Server/WorldServerBootstrap.cs");
+
+            Assert.That(bootstrap, Does.Contain("new MonsterAttackAuthority("),
+                "the world server composes no attack authority, so its monsters cannot hit "
+                + "anybody however well they decide to");
         }
 
         [Test]

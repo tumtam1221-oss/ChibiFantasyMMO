@@ -208,7 +208,10 @@ namespace ChibiFantasy.Tests.EditMode
 
             // Retirement follows a claimed defeat, which is what the reward path does.
             _monsters.ClaimDefeat(doomed, doomed, default, null);
-            _monsters.Tick(0.05f);
+
+            // Long enough for the body to be swept away: a corpse is deliberately left
+            // lying for a moment so its death can be seen.
+            _monsters.Tick(MonsterWorldRuntime.CorpseLingerSeconds);
 
             IReadOnlyList<LivingMonster> afterRetire = _monsters.All();
 

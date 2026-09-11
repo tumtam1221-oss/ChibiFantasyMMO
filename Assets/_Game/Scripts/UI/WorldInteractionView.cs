@@ -90,9 +90,7 @@ namespace ChibiFantasy.UI
         {
             if (!map.IsValid) return string.Empty;
 
-            string name = map.NameKey.IsValid
-                ? LocalizedText.Resolve(text, map.NameKey)
-                : map.Map.ToString();
+            string name = UiText.ContentText(text, map.NameKey, map.Map);
 
             var builder = new StringBuilder(name);
 
@@ -144,7 +142,8 @@ namespace ChibiFantasy.UI
 
             if (useButton == null)
             {
-                useButton = WorldUiBuilder.CreateButton(transform, "Enter", new Vector2(8f, 8f));
+                useButton = WorldUiBuilder.CreateButton(transform,
+                    UiText.Of(Text, UiStrings.CommonEnter), new Vector2(8f, 8f));
                 useButton.onClick.AddListener(Request);
             }
 
@@ -193,20 +192,27 @@ namespace ChibiFantasy.UI
         {
             if (!portal.IsValid) return string.Empty;
 
-            string destination = portal.DestinationNameKey.IsValid
-                ? LocalizedText.Resolve(text, portal.DestinationNameKey)
-                : portal.DestinationMap.ToString();
+            string destination = UiText.ContentText(text, portal.DestinationNameKey,
+                portal.DestinationMap);
 
-            var builder = new StringBuilder("To ").Append(destination);
+            var builder = new StringBuilder(UiText.Format(text, UiStrings.WorldPortalTo,
+                destination));
 
             builder.Append(" [").Append(portal.DestinationCategory).Append(']');
 
-            if (!portal.Enabled) builder.Append("\nClosed");
-            else if (!portal.IsInRange) builder.Append("\nToo far");
+            if (!portal.Enabled)
+            {
+                builder.Append('\n').Append(UiText.Of(text, UiStrings.WorldPortalClosed));
+            }
+            else if (!portal.IsInRange)
+            {
+                builder.Append('\n').Append(UiText.Of(text, UiStrings.WorldPortalTooFar));
+            }
 
             if (portal.LevelRequirement > 0)
             {
-                builder.Append("\nLevel ").Append(portal.LevelRequirement);
+                builder.Append('\n').Append(UiText.Format(text, UiStrings.WorldPortalLevel,
+                    portal.LevelRequirement));
             }
 
             return builder.ToString();
@@ -345,12 +351,17 @@ namespace ChibiFantasy.UI
         {
             if (!npc.IsValid) return string.Empty;
 
-            string name = npc.NameKey.IsValid
-                ? LocalizedText.Resolve(text, npc.NameKey)
-                : npc.Npc.ToString();
+            string name = UiText.ContentText(text, npc.NameKey, npc.Npc);
 
-            if (!npc.Enabled) return name + " (unavailable)";
-            return npc.IsInRange ? name : name + " (too far)";
+            if (!npc.Enabled)
+            {
+                return UiText.Format(text, UiStrings.WorldNpcUnavailable, name);
+            }
+
+            return npc.IsInRange
+                ? name
+                : UiText.Format(text, UiStrings.WorldNpcTooFar, name);
+
         }
 
         private void EnsurePool(int count)

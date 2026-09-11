@@ -172,6 +172,21 @@ namespace ChibiFantasy.Server
                 stats.Set(stat.Stat, stat.Value);
             }
 
+            var quests = new CharacterQuestState(persisted.Character);
+
+            for (var i = 0; i < persisted.Quests.Count; i++)
+            {
+                PersistedQuest row = persisted.Quests[i];
+
+                // A row naming a quest this world no longer ships is skipped rather than
+                // adopted: the definition decides how many objectives a quest has, and a
+                // counter with nothing to count would sit in the log for ever.
+                if (!row.Quest.IsValid) continue;
+
+                quests.AdoptAuthoritative(row.Quest, (QuestStatus)row.Status, row.Counters,
+                    row.CompletedDay);
+            }
+
             var skills = new CharacterSkillsState(persisted.Character);
 
             for (int i = 0; i < persisted.Skills.Count; i++)
@@ -228,7 +243,8 @@ namespace ChibiFantasy.Server
             CharacterDevilFruitState devilFruit = null,
             IReadOnlyList<PetInstance> pets = null,
             PetCompanionState companion = null,
-            IReadOnlyList<PersistedRewardApplication> rewardApplications = null)
+            IReadOnlyList<PersistedRewardApplication> rewardApplications = null,
+            CharacterQuestState quests = null)
         {
             if (character == null) return null;
 
@@ -253,6 +269,24 @@ namespace ChibiFantasy.Server
                 if (!option.IsValid) continue;
 
                 appearance.Add(new PersistedAppearance((int)slot, option));
+            }
+
+            var taken = new List<PersistedQuest>();
+
+            if (quests != null)
+            {
+                foreach (KeyValuePair<DefinitionId, QuestProgress> pair in quests.All)
+                {
+                    QuestProgress progress = pair.Value;
+
+                    if (progress == null || !pair.Key.IsValid) continue;
+
+                    var counters = new int[progress.ObjectiveCount];
+
+                    for (var c = 0; c < counters.Length; c++) counters[c] = progress.CountAt(c);
+
+                    taken.Add(new PersistedQuest(pair.Key, (int)progress.Status, counters));
+                }
             }
 
             var learned = new List<PersistedSkill>();
@@ -299,7 +333,8 @@ namespace ChibiFantasy.Server
                 location != null && location.HasArrived,
                 location == null ? 0f : location.Position.X,
                 location == null ? 0f : location.Position.Y,
-                location == null ? 0f : location.Position.Z);
+                location == null ? 0f : location.Position.Z,
+                taken);
         }
 
         /// <summary>

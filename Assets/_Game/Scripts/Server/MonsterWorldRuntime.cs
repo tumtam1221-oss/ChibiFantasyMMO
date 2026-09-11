@@ -16,12 +16,13 @@ namespace ChibiFantasy.Server
     public sealed class LivingMonster
     {
         internal LivingMonster(MonsterRuntimeState state, MonsterAiController ai,
-            MonsterCombatant combatant, DefinitionId map)
+            MonsterCombatant combatant, DefinitionId map, MonsterWanderPlan wander)
         {
             State = state;
             Ai = ai;
             Combatant = combatant;
             Map = map;
+            Wander = wander;
         }
 
         /// <summary>Phase 10's state. Health, target, defeat claim and respawn live here.</summary>
@@ -35,6 +36,30 @@ namespace ChibiFantasy.Server
 
         /// <summary>The map it belongs to. A monster never leaves it.</summary>
         public DefinitionId Map { get; }
+
+        /// <summary>What it does when there is nothing to fight. Never null.</summary>
+        /// <remarks>Held beside the controller rather than inside it, because idling is not
+        /// a combat decision and the nest's geometry is not something the controller
+        /// knows.</remarks>
+        public MonsterWanderPlan Wander { get; }
+
+        /// <summary>
+        /// How many swings this monster has committed to.
+        /// </summary>
+        /// <remarks>Counted so the presentation can play an attack: a client watches the
+        /// number and animates when it goes up. Incremented the moment the monster starts
+        /// winding up, because that is where the animation has to begin -- the damage lands
+        /// one authored windup later and is resolved entirely separately.</remarks>
+        public int Swings { get; internal set; }
+
+        /// <summary>
+        /// Which way it is facing, in degrees of yaw. Presentation, decided by the server.
+        /// </summary>
+        /// <remarks>Held once it commits to a swing. A monster that spun to follow a player
+        /// circling it mid-leap would snap round in the air, and the attack a player dodged
+        /// would follow them anyway -- which is the opposite of what dodging should do.
+        /// </remarks>
+        public float Facing { get; internal set; }
 
         public InstanceId Instance => State.InstanceId;
 
@@ -173,6 +198,26 @@ namespace ChibiFantasy.Server
 
         /// <summary>Reused per spawner, so retiring allocates nothing in a steady state.</summary>
         private readonly List<string> _retiring = new List<string>();
+
+        /// <summary>
+        /// How long a defeated monster stays in the world after its rewards are settled.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this closes.</b> A monster was retired on the tick after its defeat
+        /// was claimed, which despawned it roughly fifty milliseconds after it died -- so the
+        /// death animation a player had just earned was never drawn, and a slime they killed
+        /// simply vanished mid-swing.
+        ///
+        /// Long enough for the longest authored death clip to finish and be read as an
+        /// ending. Deliberately not authored content: this is how long a <i>body</i> is
+        /// visible, which is a presentation-pacing decision that belongs to the world rather
+        /// than to any one monster, and a per-monster figure would let content quietly
+        /// change how long a corpse blocks its own nest.
+        ///
+        /// Rewards are unaffected -- they are claimed once, when the monster dies, and a
+        /// corpse has already paid out. This only delays the sweep.
+        /// </remarks>
+        public const float CorpseLingerSeconds = 2f;
 
         /// <summary>
         /// The spawners a configuration reload owns, by the database row that made them.
@@ -342,7 +387,7 @@ namespace ChibiFantasy.Server
             _candidatesGathered = false;
             _candidatesMap = default;
 
-            int retired = Retire();
+            int retired = Retire(deltaSeconds);
             int spawned = Respawn(deltaSeconds);
 
             int moved = DriveBehaviour(deltaSeconds);
@@ -392,7 +437,7 @@ namespace ChibiFantasy.Server
         /// Which monsters are about to go is therefore worked out <i>before</i> the retire
         /// call, because afterwards they are gone from the list that named them.
         /// </remarks>
-        private int Retire()
+        private int Retire(float deltaSeconds)
         {
             int retired = 0;
 
@@ -404,10 +449,14 @@ namespace ChibiFantasy.Server
                 {
                     if (state.IsAlive || !state.IsDefeatClaimed) continue;
 
+                    state.AdvanceDefeat(deltaSeconds);
+
+                    if (state.SecondsSinceDefeat < CorpseLingerSeconds) continue;
+
                     _retiring.Add(state.InstanceId.Value);
                 }
 
-                int count = _spawners[i].RetireDefeated();
+                int count = _spawners[i].RetireDefeated(CorpseLingerSeconds);
 
                 if (count == 0) continue;
 
@@ -460,8 +509,14 @@ namespace ChibiFantasy.Server
                 state.Position = new CombatPosition(state.Position.X, groundY, state.Position.Z);
             }
 
+            // The disc it strolls inside is the nest, not its own scattered spawn: a camp
+            // authored six metres across should stay six metres across however far from the
+            // middle an individual happened to appear.
+            var wander = new MonsterWanderPlan(state.InstanceId, spawner.Point.Position,
+                spawner.Point.Radius);
+
             var living = new LivingMonster(state, new MonsterAiController(state),
-                new MonsterCombatant(state), spawner.Point.Map);
+                new MonsterCombatant(state), spawner.Point.Map, wander);
 
             _byInstance[state.InstanceId.Value] = living;
 
@@ -508,6 +563,18 @@ namespace ChibiFantasy.Server
 
                     if (living.Ai.WantsToAttack) _attacking.Add(living.Instance);
 
+                    // Counted when it commits, not when the damage lands: the number is what
+                    // a client animates from, and an attack animation has to begin at the
+                    // anticipation or it plays the recoil before the wind-up.
+                    if (living.Ai.BeganSwing) living.Swings++;
+
+                    // Then, and only if that settled on standing about, the stroll. It runs
+                    // after the AI so it can never pre-empt a decision, and before movement
+                    // so a stroll begun this tick is walked this tick.
+                    living.Wander.Tick(deltaSeconds, living.Ai);
+
+                    FaceSomething(living, map, deltaSeconds);
+
                     if (MonsterMovement.Step(state, living.Ai.State,
                         DestinationFor(living, map), deltaSeconds, radius, definition, ground).Moved)
                     {
@@ -517,6 +584,52 @@ namespace ChibiFantasy.Server
             }
 
             return moved;
+        }
+
+        /// <summary>
+        /// Points a monster at whatever it is dealing with.
+        /// </summary>
+        /// <remarks>
+        /// <b>Its target first, where it is going second.</b> A monster in reach of somebody
+        /// is not moving, so the direction it last walked says nothing about what it is about
+        /// to leap at -- and the leap is the one moment facing has to be right.
+        ///
+        /// <b>Frozen once it commits.</b> From the first frame of the anticipation until the
+        /// swing is over, the facing is whatever it was when it decided. A player who runs
+        /// round behind it during the wind-up is behind it when it lands, which is what makes
+        /// moving out of the way worth doing.
+        /// </remarks>
+        private void FaceSomething(LivingMonster living, DefinitionId map, float deltaSeconds)
+        {
+            if (living.Ai.IsCommittedToASwing) return;
+
+            CombatPosition from = living.State.Position;
+
+            CombatPosition? target = DestinationFor(living, map);
+
+            float dx;
+            float dz;
+
+            if (target != null)
+            {
+                dx = target.Value.X - from.X;
+                dz = target.Value.Z - from.Z;
+            }
+            else if (living.State.HasWanderDestination)
+            {
+                dx = living.State.WanderDestination.X - from.X;
+                dz = living.State.WanderDestination.Z - from.Z;
+            }
+            else
+            {
+                return;
+            }
+
+            if (dx * dx + dz * dz < 0.0004f) return;
+
+            // Degrees of yaw, measured the way a client turns a transform: zero looks along
+            // +Z and the angle grows toward +X.
+            living.Facing = (float)(System.Math.Atan2(dx, dz) * 57.29577951308232);
         }
 
         /// <summary>

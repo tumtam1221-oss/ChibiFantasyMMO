@@ -1,0 +1,16 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bf737e1f262d82e4291693b41c4acedd, type: 3}
+  m_Name: LocalizationCatalogue
+  m_EditorClassIdentifier: ChibiFantasy.UI::ChibiFantasy.UI.LocalizationCatalogue
+  _english: {fileID: 4900000, guid: 6d0d9e92115b6b44a855d71b80728b2e, type: 3}
+  _thai: {fileID: 4900000, guid: 97631ae15edf3064390428d0f385e839, type: 3}

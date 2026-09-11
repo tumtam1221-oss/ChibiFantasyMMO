@@ -70,6 +70,11 @@ abstract class BackendTestCase extends TestCase
         'monster_spawn_point',
         'monster_ai_configuration',
         // Phase 17 character state. Children of `character`, so before it.
+        // Phase 19C quest log. Children of `character`, so before it; the objective
+        // rows cascade from the quest rows but are named anyway, because this list is
+        // truncated with foreign key checks off.
+        'character_quest_objective',
+        'character_quest',
         'character_save_revision',
         'character_skill',
         'character_appearance',

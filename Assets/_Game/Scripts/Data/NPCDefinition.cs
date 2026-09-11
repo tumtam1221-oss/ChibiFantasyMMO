@@ -33,7 +33,22 @@ namespace ChibiFantasy.Data
         JobChange = 4,
 
         /// <summary>Offers travel to somewhere else.</summary>
-        Warp = 5
+        Warp = 5,
+
+        /// <summary>
+        /// Upgrades equipment a character already owns.
+        /// </summary>
+        /// <remarks>
+        /// <b>Not a shop, though a blacksmith usually is one too.</b> A shop hands over an
+        /// item in exchange for money and opens a stock list; this consumes an item the
+        /// player already has and may destroy it. They are validated differently and open
+        /// different screens, which is the test this enum applies to every other value.
+        ///
+        /// <b>Appended rather than inserted.</b> These values are authored into assets by
+        /// number, so renumbering the existing ones would silently turn every merchant into
+        /// a storage keeper.
+        /// </remarks>
+        Enhancement = 6
     }
 
     /// <summary>Broad role of an NPC.</summary>
@@ -69,6 +84,9 @@ namespace ChibiFantasy.Data
         [SerializeField] private bool _isJobChanger;
         [SerializeField] private bool _providesStorage;
         [SerializeField] private bool _providesWarp;
+
+        [Tooltip("Whether this NPC upgrades equipment the character already owns.")]
+        [SerializeField] private bool _providesEnhancement;
 
         [Header("Placement")]
         [Tooltip("Map this NPC stands on. Invalid means it is not placed anywhere.")]
@@ -112,6 +130,9 @@ namespace ChibiFantasy.Data
         public bool ProvidesStorage => _providesStorage;
 
         public bool ProvidesWarp => _providesWarp;
+
+        /// <summary>Whether this NPC upgrades equipment. A blacksmith.</summary>
+        public bool ProvidesEnhancement => _providesEnhancement;
 
         /// <summary>Reference to the <see cref="MapDefinition"/> this NPC stands on.</summary>
         public DefinitionId Map => _map;
@@ -168,6 +189,8 @@ namespace ChibiFantasy.Data
                     return _isJobChanger;
                 case NpcRole.Warp:
                     return _providesWarp;
+                case NpcRole.Enhancement:
+                    return _providesEnhancement;
                 default:
                     return false;
             }

@@ -98,6 +98,19 @@ namespace ChibiFantasy.Data
         [SerializeField] private QuestType _questType = QuestType.Normal;
 
         [SerializeField] private int _levelRequirement;
+
+        [Tooltip("Highest level that may still take this. Zero means no ceiling. "
+            + "A daily band is a floor and a ceiling together: 10 and 19 makes a quest "
+            + "that appears at level 10 and is gone at 20.")]
+        [SerializeField] private int _levelMaximum;
+
+        [Tooltip("First day this may be taken, as yyyy-MM-dd. Empty means always. "
+            + "This is what makes a quest a festival quest.")]
+        [SerializeField] private string _availableFrom = string.Empty;
+
+        [Tooltip("Last day this may be taken, inclusive, as yyyy-MM-dd. Empty means always.")]
+        [SerializeField] private string _availableUntil = string.Empty;
+
         [SerializeField] private DefinitionId[] _prerequisiteQuests = new DefinitionId[0];
 
         [SerializeField] private QuestObjective[] _objectives = new QuestObjective[0];
@@ -114,6 +127,43 @@ namespace ChibiFantasy.Data
         public QuestType QuestType => _questType;
 
         public int LevelRequirement => _levelRequirement;
+
+        /// <summary>
+        /// The level this quest stops being offered above. Zero means never.
+        /// </summary>
+        /// <remarks>
+        /// <b>What a ceiling is for.</b> A repeatable quest with no ceiling stays on the
+        /// board for ever, and at level thirty "defeat five training slimes for 120
+        /// experience" is not content, it is clutter that a player has to read past every
+        /// time they open the journal. A band retires a daily when it stops being worth
+        /// doing and lets the next band take its place.
+        /// </remarks>
+        public int LevelMaximum => _levelMaximum;
+
+        /// <summary>First day this may be taken, as a day number. Zero means always.</summary>
+        public int AvailableFromDay => ParseDay(_availableFrom);
+
+        /// <summary>Last day this may be taken, inclusive. Zero means always.</summary>
+        public int AvailableUntilDay => ParseDay(_availableUntil);
+
+        /// <summary>Whether this quest is only open during an authored window.</summary>
+        public bool HasEventWindow => AvailableFromDay != ServerDay.Never
+            || AvailableUntilDay != ServerDay.Never;
+
+        /// <summary>
+        /// How often this quest comes back.
+        /// </summary>
+        /// <remarks>Read from the quest's own type rather than from a second field, so the
+        /// category a designer picks and the rule the game runs cannot disagree. A quest
+        /// typed Daily resets at midnight; everything else is taken once.</remarks>
+        public bool ResetsDaily => _questType == QuestType.Daily;
+
+        private static int ParseDay(string text)
+        {
+            int day;
+
+            return ServerDay.TryParse(text, out day) ? day : ServerDay.Never;
+        }
 
         public DefinitionId[] PrerequisiteQuests => _prerequisiteQuests;
 

@@ -37,7 +37,47 @@ namespace ChibiFantasy.Client.UI
         private Button _submit;
         private TextMeshProUGUI _submitLabel;
 
-        protected override string Title => "Chibi Fantasy";
+        protected override string Title => UiText.Of(Text, UiStrings.LoginTitle);
+
+        private TextMeshProUGUI _footer;
+        private TextMeshProUGUI _rememberLabel;
+        private TextMeshProUGUI _tagline;
+
+        /// <summary>Rewrites the words this screen painted once, after a language change.</summary>
+        public override void Relabel()
+        {
+            if (_footer != null) _footer.text = UiText.Of(Text, UiStrings.LoginFooter);
+            if (_tagline != null) _tagline.text = UiText.Of(Text, UiStrings.LoginTagline);
+
+            if (_rememberLabel != null)
+            {
+                _rememberLabel.text = UiText.Of(Text, UiStrings.LoginRemember);
+            }
+
+            if (_account != null)
+            {
+                SetPlaceholder(_account, UiText.Of(Text, UiStrings.LoginFieldAccount));
+            }
+
+            if (_password != null)
+            {
+                SetPlaceholder(_password, UiText.Of(Text, UiStrings.LoginFieldPassword));
+            }
+
+            // Not simply "Sign in": a language change while a request is in flight must
+            // not tell the player the button is ready when it is not.
+            SetSubmitEnabled(_submit == null || _submit.interactable);
+
+            base.Relabel();
+        }
+
+        /// <summary>Rewrites a field's ghost text, wherever the factory put it.</summary>
+        private static void SetPlaceholder(TMP_InputField field, string text)
+        {
+            var placeholder = field.placeholder as TextMeshProUGUI;
+
+            if (placeholder != null) placeholder.text = text;
+        }
 
         /// <summary>
         /// Where the typed credentials go.
@@ -87,14 +127,14 @@ namespace ChibiFantasy.Client.UI
 
             if (string.IsNullOrWhiteSpace(account) || string.IsNullOrEmpty(password))
             {
-                SetStatus("Enter your login and password");
+                SetStatus(UiText.Of(Text, UiStrings.LoginPromptCredentials));
 
                 return;
             }
 
             IsBusy = true;
             SetSubmitEnabled(false);
-            SetStatus("Connecting...");
+            SetStatus(UiText.Of(Text, UiStrings.LoginStatusConnecting));
 
             Credentials?.Invoke(account, password);
 
@@ -224,7 +264,9 @@ namespace ChibiFantasy.Client.UI
 
             // The line under the mark. Text, not art, so it can be translated.
             TextMeshProUGUI tagline = UiFactory.CreateLabel("Tagline", root,
-                "SMALL HEROES    BIG ADVENTURES", 18f, TextAlignmentOptions.Center);
+                UiText.Of(Text, UiStrings.LoginTagline), 18f, TextAlignmentOptions.Center);
+
+            _tagline = tagline;
 
             tagline.color = new Color(0.90f, 0.95f, 1f, 1f);
             tagline.characterSpacing = 6f;
@@ -242,15 +284,16 @@ namespace ChibiFantasy.Client.UI
             // One width, one left edge, one height for both fields and the button, so nothing
             // can drift out of alignment. Only the vertical position differs.
 
-            _account = Field(panel, "Account", "Login ID", skin.LoginFieldId, IdOpaque,
-                AccountY, false);
+            _account = Field(panel, "Account", UiText.Of(Text, UiStrings.LoginFieldAccount),
+                skin.LoginFieldId, IdOpaque, AccountY, false);
 
-            _password = Field(panel, "Password", "Password", skin.LoginFieldPassword,
-                PasswordOpaque, PasswordY, true);
+            _password = Field(panel, "Password", UiText.Of(Text, UiStrings.LoginFieldPassword),
+                skin.LoginFieldPassword, PasswordOpaque, PasswordY, true);
 
             BuildRemember(panel, skin);
 
-            _submit = UiFactory.CreateButton("Submit", panel, "Sign in", out _submitLabel);
+            _submit = UiFactory.CreateButton("Submit", panel,
+                UiText.Of(Text, UiStrings.LoginButtonSubmit), out _submitLabel);
 
             RectTransform submitRect = _submit.GetComponent<RectTransform>();
             submitRect.anchorMin = new Vector2(0.5f, 0.5f);
@@ -287,7 +330,9 @@ namespace ChibiFantasy.Client.UI
             _submit.onClick.AddListener(Submit);
 
             TextMeshProUGUI footer = UiFactory.CreateLabel("Footer", panel,
-                "Welcome to Chibi Fantasy", 16f, TextAlignmentOptions.Center);
+                UiText.Of(Text, UiStrings.LoginFooter), 16f, TextAlignmentOptions.Center);
+
+            _footer = footer;
 
             footer.color = new Color(0.62f, 0.74f, 0.92f, 1f);
 
@@ -485,7 +530,10 @@ namespace ChibiFantasy.Client.UI
 
             box.GetComponent<Button>().onClick.AddListener(ToggleRemember);
 
-            TextMeshProUGUI label = UiFactory.CreateLabel("Label", row, "Remember me", 18f);
+            TextMeshProUGUI label = UiFactory.CreateLabel("Label", row,
+                UiText.Of(Text, UiStrings.LoginRemember), 18f);
+
+            _rememberLabel = label;
             label.color = new Color(0.78f, 0.86f, 0.97f, 1f);
 
             RectTransform labelRect = label.rectTransform;
@@ -561,13 +609,16 @@ namespace ChibiFantasy.Client.UI
             frame.offsetMin = Vector2.zero;
             frame.offsetMax = Vector2.zero;
 
-            _account = UiFactory.CreateField("Account", form, "Login");
+            _account = UiFactory.CreateField("Account", form,
+                UiText.Of(Text, UiStrings.LoginFieldAccountShort));
             Place(_account.GetComponent<RectTransform>(), 200f);
 
-            _password = UiFactory.CreateField("Password", form, "Password", password: true);
+            _password = UiFactory.CreateField("Password", form,
+                UiText.Of(Text, UiStrings.LoginFieldPassword), password: true);
             Place(_password.GetComponent<RectTransform>(), 130f);
 
-            _submit = UiFactory.CreateButton("Submit", form, "Sign in", out _submitLabel);
+            _submit = UiFactory.CreateButton("Submit", form,
+                UiText.Of(Text, UiStrings.LoginButtonSubmit), out _submitLabel);
             Place(_submit.GetComponent<RectTransform>(), 50f);
 
             _submit.onClick.AddListener(Submit);
@@ -588,7 +639,9 @@ namespace ChibiFantasy.Client.UI
 
             if (_submitLabel != null)
             {
-                _submitLabel.text = enabled ? "Sign in" : "Signing in...";
+                _submitLabel.text = UiText.Of(Text, enabled
+                    ? UiStrings.LoginButtonSubmit
+                    : UiStrings.LoginButtonSubmitting);
             }
         }
     }

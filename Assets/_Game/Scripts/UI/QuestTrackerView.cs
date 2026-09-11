@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
@@ -119,28 +120,23 @@ namespace ChibiFantasy.UI
 
             var builder = new StringBuilder();
 
-            builder.Append(quest.NameKey.IsValid
-                ? LocalizedText.Resolve(text, quest.NameKey)
-                : quest.QuestId.ToString());
+            // Content name, so an unauthored quest reads as words rather than as a key.
+            builder.Append(UiText.ContentText(text, quest.NameKey, quest.QuestId));
 
-            if (quest.IsReadyToComplete) builder.Append(" (complete)");
+            if (quest.IsReadyToComplete)
+            {
+                builder.Append(UiText.Of(text, UiStrings.QuestTrackerComplete));
+            }
 
             for (int i = 0; i < quest.Objectives.Count; i++)
             {
-                QuestObjectiveViewData objective = quest.Objectives[i];
-
-                builder.Append("\n  ").Append(objective.Type).Append(' ');
-
-                if (objective.TargetNameKey.IsValid)
-                {
-                    builder.Append(LocalizedText.Resolve(text, objective.TargetNameKey)).Append(' ');
-                }
-                else if (objective.Target.IsValid)
-                {
-                    builder.Append(objective.Target).Append(' ');
-                }
-
-                builder.Append(objective.Current).Append('/').Append(objective.Required);
+                // The same wording the journal uses. A tracker reading "KillMonster 1/3"
+                // beside a journal reading "Defeat Training Slime 1 / 3" is two games.
+                // The line break and indent are layout, not language: there is nothing for
+                // a translator to decide and a whitespace-only "translation" is
+                // indistinguishable from an untranslated row.
+                builder.Append(Environment.NewLine).Append("  ");
+                builder.Append(QuestListView.FormatObjective(quest.Objectives[i], text));
             }
 
             return builder.ToString();

@@ -85,6 +85,19 @@ namespace ChibiFantasy.Data
         [SerializeField] private DropTableDefinition[] _dropTables =
             new DropTableDefinition[0];
 
+        [Header("Townspeople")]
+        /// <summary>The NPCs a player can walk up to.</summary>
+        /// <remarks>Shipped here rather than found in a scene, because the server resolves
+        /// an interaction without ever loading one. An NPC a client can see and the server
+        /// cannot name is an NPC that refuses every interaction.</remarks>
+        [SerializeField] private NPCDefinition[] _npcs = new NPCDefinition[0];
+
+        [Tooltip("What the merchants sell. A merchant with no shop opens nothing.")]
+        [SerializeField] private ShopDefinition[] _shops = new ShopDefinition[0];
+
+        [Tooltip("Quests, so a quest giver's list resolves to something.")]
+        [SerializeField] private QuestDefinition[] _quests = new QuestDefinition[0];
+
         [Header("Stat roles")]
         [Tooltip("Which derived stat is the health ceiling.")]
         [SerializeField] private DefinitionId _maxHealthStat;
@@ -109,6 +122,11 @@ namespace ChibiFantasy.Data
             + "budget, never a client's.")]
         [SerializeField] private float _walkMetresPerSecond = 4f;
 
+        [Tooltip("How much of their maximum health a character gets back when they get up "
+            + "in town after falling, 0..1. A world rule rather than a class or monster one.")]
+        [Range(0.05f, 1f)]
+        [SerializeField] private float _reviveHealthFraction = 0.5f;
+
         public DefinitionId MaxHealthStat => _maxHealthStat;
 
         public DefinitionId MaxManaStat => _maxManaStat;
@@ -126,6 +144,17 @@ namespace ChibiFantasy.Data
         /// <remarks>The one place the world says what resists a spell. Combat code reads it
         /// through <c>SkillExecutionRules</c> and names no stat itself.</remarks>
         public DefinitionId MagicDefenceStat => _magicDefenceStat;
+
+        /// <summary>
+        /// How much health a character wakes up with in town, as a fraction of their
+        /// ceiling.
+        /// </summary>
+        /// <remarks>Half by default: enough to walk somewhere safe, not enough to make dying
+        /// free. Authored here rather than on a class or a map because it is a rule about
+        /// this world, and a second copy of it somewhere would be a second answer.</remarks>
+        public float ReviveHealthFraction => _reviveHealthFraction <= 0f
+            ? 0.5f
+            : (_reviveHealthFraction > 1f ? 1f : _reviveHealthFraction);
 
         public float WalkMetresPerSecond => _walkMetresPerSecond <= 0f
             ? 1f
@@ -166,6 +195,12 @@ namespace ChibiFantasy.Data
         public DefinitionRegistry<DropTableDefinition> BuildDropTables() =>
             Build(_dropTables);
 
+        public DefinitionRegistry<NPCDefinition> BuildNpcs() => Build(_npcs);
+
+        public DefinitionRegistry<ShopDefinition> BuildShops() => Build(_shops);
+
+        public DefinitionRegistry<QuestDefinition> BuildQuests() => Build(_quests);
+
         /// <summary>
         /// Whether this catalogue describes a world that can actually run.
         /// </summary>
@@ -196,6 +231,9 @@ namespace ChibiFantasy.Data
             Check(_items, "item", faults);
             Check(_devilFruits, "devil fruit", faults);
             Check(_dropTables, "drop table", faults);
+            Check(_npcs, "npc", faults);
+            Check(_shops, "shop", faults);
+            Check(_quests, "quest", faults);
 
             // --- the four roles a world cannot run without --------------------------------
             DefinitionRegistry<StatDefinition> stats = Build(_stats);
@@ -284,6 +322,66 @@ namespace ChibiFantasy.Data
                     {
                         faults.Add("monster '" + monster.Id + "' allows unknown map '"
                             + allowed[m] + "'");
+                    }
+                }
+            }
+
+            // --- an NPC nobody can reach, or that opens nothing ---------------------------
+            //
+            // Checked here because this is the only place that can see the NPC, the map it
+            // stands on, the spawn that says where, and the shop or quest its role opens.
+            // At runtime each of these is a silent refusal: the player walks up, clicks, and
+            // is told no for a reason only a log would explain.
+            DefinitionRegistry<SpawnPointDefinition> spawnsForNpcs = Build(_spawnPoints);
+            DefinitionRegistry<ShopDefinition> shopsForNpcs = Build(_shops);
+            DefinitionRegistry<QuestDefinition> questsForNpcs = Build(_quests);
+
+            for (var i = 0; i < _npcs.Length; i++)
+            {
+                NPCDefinition npc = _npcs[i];
+
+                if (npc == null) continue;
+
+                if (!npc.Map.IsValid || !maps.TryGet(npc.Map, out MapDefinition _))
+                {
+                    faults.Add("npc '" + npc.Id + "' stands on unknown map '"
+                        + npc.Map + "'");
+                }
+
+                if (!npc.SpawnPoint.IsValid)
+                {
+                    faults.Add("npc '" + npc.Id + "' has no spawn point, so how far away a "
+                        + "player is standing cannot be decided");
+                }
+                else if (!spawnsForNpcs.TryGet(npc.SpawnPoint, out SpawnPointDefinition at))
+                {
+                    faults.Add("npc '" + npc.Id + "' stands at unknown spawn '"
+                        + npc.SpawnPoint + "'");
+                }
+                else if (at.Map != npc.Map)
+                {
+                    faults.Add("npc '" + npc.Id + "' is on map '" + npc.Map
+                        + "' but its spawn '" + at.Id + "' is on '" + at.Map
+                        + "': nobody could ever stand close enough");
+                }
+
+                if (npc.HasRole(NpcRole.Shop)
+                    && !shopsForNpcs.TryGet(npc.Shop, out ShopDefinition _))
+                {
+                    faults.Add("npc '" + npc.Id + "' is a merchant carrying unknown shop '"
+                        + npc.Shop + "'");
+                }
+
+                DefinitionId[] offered = npc.Quests;
+
+                for (var q = 0; q < offered.Length; q++)
+                {
+                    if (!offered[q].IsValid) continue;
+
+                    if (!questsForNpcs.TryGet(offered[q], out QuestDefinition _))
+                    {
+                        faults.Add("npc '" + npc.Id + "' offers unknown quest '"
+                            + offered[q] + "'");
                     }
                 }
             }

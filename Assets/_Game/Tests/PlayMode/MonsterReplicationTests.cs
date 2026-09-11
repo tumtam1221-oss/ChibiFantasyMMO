@@ -373,7 +373,7 @@ namespace ChibiFantasy.Tests.PlayMode
 
             try
             {
-                observed.ServerPublishState(999f, 999f, 999f, 1);
+                observed.ServerPublishState(999f, 999f, 999f, 1, 0f);
             }
             catch (System.Exception)
             {
@@ -612,7 +612,7 @@ namespace ChibiFantasy.Tests.PlayMode
 
             try
             {
-                ClientObserved().ServerPublishState(0f, 0f, 0f, 100);
+                ClientObserved().ServerPublishState(0f, 0f, 0f, 100, 0f);
             }
             catch (System.Exception)
             {

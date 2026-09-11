@@ -133,12 +133,15 @@ namespace ChibiFantasy.UI
         {
             if (!data.IsValid) return string.Empty;
 
-            string name = data.NameKey.IsValid
-                ? LocalizedText.Resolve(text, data.NameKey)
-                : data.DefinitionId.ToString();
+            // A monster's name is content and is deliberately not translated, so it comes
+            // back through the content path: the authored name if there is one, the
+            // identifier read as words if there is not. What this must never draw is
+            // "monster.training_slime.name", which is exactly what resolving the key
+            // directly did for as long as nothing supplied a table.
+            string name = UiText.ContentText(text, data.NameKey, data.DefinitionId);
 
-            return "Lv" + data.Level + " " + name + "  "
-                + data.CurrentHealth + "/" + data.MaxHealth;
+            return UiText.Format(text, UiStrings.WorldMonsterLabel,
+                data.Level, name, data.CurrentHealth, data.MaxHealth);
         }
     }
 }

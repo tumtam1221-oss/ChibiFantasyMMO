@@ -1,0 +1,657 @@
+{
+  "_comment": "Thai. One entry per key the screens use. Keys come from UiStrings; a test fails if one is missing here. Placeholders {0} {1} ... must survive translation and may be reordered.",
+  "entries": [
+    {
+      "key": "ui.common.back",
+      "text": "ย้อนกลับ"
+    },
+    {
+      "key": "ui.common.enter",
+      "text": "เข้า"
+    },
+    {
+      "key": "ui.common.close",
+      "text": "ปิด"
+    },
+    {
+      "key": "ui.common.accept",
+      "text": "รับ"
+    },
+    {
+      "key": "ui.common.none",
+      "text": "-"
+    },
+    {
+      "key": "ui.common.header.status",
+      "text": "สถานะ"
+    },
+    {
+      "key": "ui.common.header.players",
+      "text": "ผู้เล่น"
+    },
+    {
+      "key": "ui.common.header.ping",
+      "text": "ปิง"
+    },
+    {
+      "key": "ui.common.population",
+      "text": "{0}  ~  {1} คนออนไลน์"
+    },
+    {
+      "key": "ui.common.loading",
+      "text": "กำลังโหลด..."
+    },
+    {
+      "key": "ui.common.nothing_to_show",
+      "text": "ไม่มีข้อมูล"
+    },
+    {
+      "key": "ui.common.language",
+      "text": "ภาษา"
+    },
+    {
+      "key": "ui.quest.title",
+      "text": "เควส"
+    },
+    {
+      "key": "ui.quest.title.available",
+      "text": "เควส - รับได้"
+    },
+    {
+      "key": "ui.quest.title.active",
+      "text": "เควส - กำลังทำ"
+    },
+    {
+      "key": "ui.quest.title.completed",
+      "text": "เควส - สำเร็จแล้ว"
+    },
+    {
+      "key": "ui.quest.tab.available",
+      "text": "รับได้"
+    },
+    {
+      "key": "ui.quest.tab.active",
+      "text": "กำลังทำ"
+    },
+    {
+      "key": "ui.quest.tab.completed",
+      "text": "สำเร็จแล้ว"
+    },
+    {
+      "key": "ui.quest.button.ready",
+      "text": "พร้อมส่ง"
+    },
+    {
+      "key": "ui.quest.button.in_progress",
+      "text": "กำลังทำ"
+    },
+    {
+      "key": "ui.quest.button.done",
+      "text": "เสร็จแล้ว"
+    },
+    {
+      "key": "ui.quest.empty",
+      "text": "ไม่มีเควสในหมวดนี้"
+    },
+    {
+      "key": "ui.quest.select",
+      "text": "เลือกเควส"
+    },
+    {
+      "key": "ui.quest.section.giver",
+      "text": "ผู้มอบเควส"
+    },
+    {
+      "key": "ui.quest.section.description",
+      "text": "รายละเอียด"
+    },
+    {
+      "key": "ui.quest.section.objective",
+      "text": "เป้าหมาย"
+    },
+    {
+      "key": "ui.quest.section.rewards",
+      "text": "รางวัล"
+    },
+    {
+      "key": "ui.quest.requires_level",
+      "text": "ต้องเลเวล {0}"
+    },
+    {
+      "key": "ui.quest.reward.experience",
+      "text": "ค่าประสบการณ์ {0}"
+    },
+    {
+      "key": "ui.quest.reward.currency",
+      "text": "เงิน {0}"
+    },
+    {
+      "key": "ui.quest.reward.stack",
+      "text": "{0} x {1}"
+    },
+    {
+      "key": "ui.quest.objective.progress",
+      "text": "{0} {1} {2} / {3}"
+    },
+    {
+      "key": "ui.quest.objective.plain",
+      "text": "{0} {1}"
+    },
+    {
+      "key": "ui.quest.verb.defeat",
+      "text": "ปราบ"
+    },
+    {
+      "key": "ui.quest.verb.collect",
+      "text": "เก็บ"
+    },
+    {
+      "key": "ui.quest.verb.talk",
+      "text": "คุยกับ"
+    },
+    {
+      "key": "ui.quest.verb.travel",
+      "text": "เดินทางไป"
+    },
+    {
+      "key": "ui.quest.verb.reach_level",
+      "text": "ไปให้ถึงเลเวล"
+    },
+    {
+      "key": "ui.quest.verb.deliver",
+      "text": "ส่งมอบ"
+    },
+    {
+      "key": "ui.quest.verb.other",
+      "text": "เป้าหมาย"
+    },
+    {
+      "key": "ui.quest.hint.turn_in.named",
+      "text": "กลับไปหา {0} เพื่อรับรางวัล"
+    },
+    {
+      "key": "ui.quest.hint.turn_in.unknown",
+      "text": "กลับไปหาผู้มอบเควสนี้เพื่อรับรางวัล"
+    },
+    {
+      "key": "ui.quest.hint.accept.named",
+      "text": "คุยกับ {0} เพื่อรับเควสนี้"
+    },
+    {
+      "key": "ui.quest.hint.accept.unknown",
+      "text": "ตามหาผู้มอบเควสนี้เพื่อรับเควส"
+    },
+    {
+      "key": "ui.quest.finished_note",
+      "text": "เสร็จสิ้นแล้ว ขอบคุณที่ช่วยเหลือ"
+    },
+    {
+      "key": "ui.quest.finished_note.repeatable",
+      "text": "เสร็จสิ้นแล้ว กลับมารับใหม่ได้ทุกเมื่อ"
+    },
+    {
+      "key": "ui.quest.repeatable",
+      "text": "ทำซ้ำได้ -- รับใหม่ได้อีก"
+    },
+    {
+      "key": "ui.quest.one_time",
+      "text": "ทำได้ครั้งเดียว"
+    },
+    {
+      "key": "ui.quest.row.repeatable",
+      "text": "{0}  [ซ้ำ]"
+    },
+    {
+      "key": "ui.quest.tracker.complete",
+      "text": " (ครบแล้ว)"
+    },
+    {
+      "key": "ui.npc.button.turn_in",
+      "text": "ส่งเควส"
+    },
+    {
+      "key": "ui.npc.quest.offered",
+      "text": "-- เควสใหม่ --"
+    },
+    {
+      "key": "ui.npc.quest.finished",
+      "text": "-- เควสสำเร็จแล้ว --"
+    },
+    {
+      "key": "npc.service.generic",
+      "text": "สวัสดี"
+    },
+    {
+      "key": "npc.service.quest",
+      "text": "ยินดีต้อนรับสู่ฮาร์เบอร์ทาวน์\nที่นี่ปลอดภัยสำหรับนักผจญภัยหน้าใหม่"
+    },
+    {
+      "key": "npc.service.shop",
+      "text": "ของใช้ทั่วไป ราคาเป็นธรรม\n[บริการร้านค้า]"
+    },
+    {
+      "key": "npc.service.storage",
+      "text": "ฝากของไว้กับข้าได้อย่างปลอดภัย\n[บริการคลังเก็บของ]"
+    },
+    {
+      "key": "npc.service.jobchange",
+      "text": "ข้าชี้ทางให้เจ้าตามสายที่เลือกได้\nการเปลี่ยนอาชีพครั้งแรกเริ่มที่เลเวล 15"
+    },
+    {
+      "key": "npc.service.warp",
+      "text": "ข้าพาเจ้าไปที่อื่นได้\n[บริการเดินทาง]"
+    },
+    {
+      "key": "npc.service.enhancement",
+      "text": "เอาเหล็กของเจ้ามา ข้าจะตีให้คมขึ้น\n[บริการช่างตีเหล็ก]"
+    },
+    {
+      "key": "ui.npc.refused.too_far",
+      "text": "อยู่ไกลเกินไป"
+    },
+    {
+      "key": "ui.npc.refused.wrong_map",
+      "text": "เขาไม่ได้อยู่ที่นี่"
+    },
+    {
+      "key": "ui.npc.refused.disabled",
+      "text": "ตอนนี้เขายังไม่มีอะไรจะพูด"
+    },
+    {
+      "key": "ui.npc.refused.other",
+      "text": "เขาช่วยเรื่องนี้ไม่ได้"
+    },
+    {
+      "key": "ui.world.portal.to",
+      "text": "ไป {0}"
+    },
+    {
+      "key": "ui.world.portal.closed",
+      "text": "ปิดอยู่"
+    },
+    {
+      "key": "ui.world.portal.too_far",
+      "text": "ไกลเกินไป"
+    },
+    {
+      "key": "ui.world.portal.level",
+      "text": "เลเวล {0}"
+    },
+    {
+      "key": "ui.world.npc.unavailable",
+      "text": "{0} (ใช้งานไม่ได้)"
+    },
+    {
+      "key": "ui.world.npc.too_far",
+      "text": "{0} (ไกลเกินไป)"
+    },
+    {
+      "key": "ui.world.monster.label",
+      "text": "Lv{0} {1}  {2}/{3}"
+    },
+    {
+      "key": "ui.hud.inventory",
+      "text": "กระเป๋า"
+    },
+    {
+      "key": "ui.hud.hints",
+      "text": "คลิกซ้าย: เดิน / เลือก / โจมตี / เก็บของ\nลากคลิกขวา: หมุนกล้อง\nล้อเมาส์: ซูม"
+    },
+    {
+      "key": "ui.hud.defeated",
+      "text": "คุณหมดสติแล้ว"
+    },
+    {
+      "key": "ui.hud.return_to_town",
+      "text": "กลับไปเกิดที่เมือง"
+    },
+    {
+      "key": "ui.login.title",
+      "text": "Chibi Fantasy"
+    },
+    {
+      "key": "ui.login.prompt.credentials",
+      "text": "กรอกชื่อผู้ใช้และรหัสผ่าน"
+    },
+    {
+      "key": "ui.login.status.connecting",
+      "text": "กำลังเชื่อมต่อ..."
+    },
+    {
+      "key": "ui.login.field.account",
+      "text": "ชื่อผู้ใช้"
+    },
+    {
+      "key": "ui.login.field.account_short",
+      "text": "ชื่อผู้ใช้"
+    },
+    {
+      "key": "ui.login.field.password",
+      "text": "รหัสผ่าน"
+    },
+    {
+      "key": "ui.login.button.submit",
+      "text": "เข้าสู่ระบบ"
+    },
+    {
+      "key": "ui.login.button.submitting",
+      "text": "กำลังเข้าสู่ระบบ..."
+    },
+    {
+      "key": "ui.login.remember",
+      "text": "จำชื่อผู้ใช้ไว้"
+    },
+    {
+      "key": "ui.login.footer",
+      "text": "ยินดีต้อนรับสู่ Chibi Fantasy"
+    },
+    {
+      "key": "ui.login.tagline",
+      "text": "ฮีโร่ตัวจิ๋ว    ผจญภัยยิ่งใหญ่"
+    },
+    {
+      "key": "ui.server.title",
+      "text": "เลือกเซิร์ฟเวอร์"
+    },
+    {
+      "key": "ui.server.empty",
+      "text": "ไม่มีเซิร์ฟเวอร์ที่ใช้ได้"
+    },
+    {
+      "key": "ui.server.subtitle",
+      "text": "เลือกเซิร์ฟเวอร์เพื่อเริ่มการผจญภัย"
+    },
+    {
+      "key": "ui.server.header.name",
+      "text": "ชื่อเซิร์ฟเวอร์"
+    },
+    {
+      "key": "ui.server.state.online",
+      "text": "ออนไลน์"
+    },
+    {
+      "key": "ui.channel.title",
+      "text": "เลือกแชนแนล"
+    },
+    {
+      "key": "ui.channel.empty",
+      "text": "ไม่มีแชนแนลที่ใช้ได้"
+    },
+    {
+      "key": "ui.channel.subtitle",
+      "text": "เลือกแชนแนลเพื่อเข้าสู่โลก"
+    },
+    {
+      "key": "ui.channel.header.name",
+      "text": "ชื่อแชนแนล"
+    },
+    {
+      "key": "ui.channel.state.open",
+      "text": "เปิด"
+    },
+    {
+      "key": "ui.character.title",
+      "text": "เลือกตัวละคร"
+    },
+    {
+      "key": "ui.character.empty",
+      "text": "บัญชีนี้ยังไม่มีตัวละคร"
+    },
+    {
+      "key": "ui.character.heading",
+      "text": "เลือกตัวละคร"
+    },
+    {
+      "key": "ui.character.subtitle",
+      "text": "เลือกฮีโร่ของคุณเพื่อเข้าสู่โลก"
+    },
+    {
+      "key": "ui.character.level",
+      "text": "เลเวล {0}"
+    },
+    {
+      "key": "ui.character.slot_detail",
+      "text": "Lv. {0}   {1}"
+    },
+    {
+      "key": "ui.character.info.level",
+      "text": "เลเวล"
+    },
+    {
+      "key": "ui.character.info.class",
+      "text": "คลาส"
+    },
+    {
+      "key": "ui.character.info.location",
+      "text": "สถานที่"
+    },
+    {
+      "key": "ui.character.button.enter_world",
+      "text": "เข้าสู่โลก"
+    },
+    {
+      "key": "ui.character.create",
+      "text": "สร้างตัวละคร"
+    },
+    {
+      "key": "ui.character.create.unavailable",
+      "text": "ยังเปิดให้สร้างตัวละครไม่ได้"
+    },
+    {
+      "key": "ui.character.entering_world",
+      "text": "กำลังเข้าสู่โลก..."
+    },
+    {
+      "key": "ui.reject.session_expired",
+      "text": "เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่"
+    },
+    {
+      "key": "ui.reject.session_revoked",
+      "text": "เซสชันถูกยกเลิกแล้ว"
+    },
+    {
+      "key": "ui.reject.session_invalid",
+      "text": "เซสชันนี้ใช้ไม่ได้แล้ว"
+    },
+    {
+      "key": "ui.reject.server_full",
+      "text": "เซิร์ฟเวอร์เต็ม"
+    },
+    {
+      "key": "ui.reject.server_maintenance",
+      "text": "เซิร์ฟเวอร์กำลังปิดปรับปรุง"
+    },
+    {
+      "key": "ui.reject.server_unavailable",
+      "text": "เซิร์ฟเวอร์ใช้งานไม่ได้"
+    },
+    {
+      "key": "ui.reject.channel_full",
+      "text": "แชนแนลเต็ม"
+    },
+    {
+      "key": "ui.reject.channel_maintenance",
+      "text": "แชนแนลกำลังปิดปรับปรุง"
+    },
+    {
+      "key": "ui.reject.channel_unavailable",
+      "text": "แชนแนลใช้งานไม่ได้"
+    },
+    {
+      "key": "ui.reject.character_unavailable",
+      "text": "ใช้ตัวละครนี้ไม่ได้"
+    },
+    {
+      "key": "ui.reject.character_not_playable",
+      "text": "ตอนนี้ยังเล่นตัวละครนี้ไม่ได้"
+    },
+    {
+      "key": "ui.reject.character_in_world",
+      "text": "ตัวละครนี้อยู่ในโลกอยู่แล้ว"
+    },
+    {
+      "key": "ui.reject.version_mismatch",
+      "text": "ต้องอัปเดตเกมก่อน"
+    },
+    {
+      "key": "ui.reject.bad_credentials",
+      "text": "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง"
+    },
+    {
+      "key": "ui.reject.account_banned",
+      "text": "บัญชีนี้ถูกแบน"
+    },
+    {
+      "key": "ui.reject.account_suspended",
+      "text": "บัญชีนี้ถูกระงับชั่วคราว"
+    },
+    {
+      "key": "ui.reject.account_disabled",
+      "text": "บัญชีนี้ถูกปิดใช้งาน"
+    },
+    {
+      "key": "ui.reject.maintenance",
+      "text": "ระบบกำลังปิดปรับปรุง"
+    },
+    {
+      "key": "ui.reject.unreachable",
+      "text": "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาลองใหม่"
+    },
+    {
+      "key": "ui.reject.unknown",
+      "text": "เกิดข้อผิดพลาด กรุณาลองใหม่"
+    },
+    {
+      "key": "ui.inventory.title",
+      "text": "กระเป๋า"
+    },
+    {
+      "key": "ui.inventory.waiting",
+      "text": "กำลังรอข้อมูลจากเซิร์ฟเวอร์"
+    },
+    {
+      "key": "ui.inventory.empty_slot",
+      "text": "ว่าง"
+    },
+    {
+      "key": "ui.inventory.weight",
+      "text": "น้ำหนัก {0} / {1}"
+    },
+    {
+      "key": "ui.inventory.capacity",
+      "text": "ช่อง {0} / {1}"
+    },
+    {
+      "key": "ui.inventory.action.equip",
+      "text": "สวมใส่"
+    },
+    {
+      "key": "ui.inventory.action.unequip",
+      "text": "ถอด"
+    },
+    {
+      "key": "ui.inventory.action.use",
+      "text": "ใช้"
+    },
+    {
+      "key": "ui.inventory.action.split",
+      "text": "แบ่ง"
+    },
+    {
+      "key": "ui.inventory.action.drop",
+      "text": "ทิ้ง"
+    },
+    {
+      "key": "ui.inventory.action.cancel",
+      "text": "ยกเลิก"
+    },
+    {
+      "key": "ui.split.title",
+      "text": "แบ่งไอเทม"
+    },
+    {
+      "key": "ui.split.confirm",
+      "text": "แบ่ง"
+    },
+    {
+      "key": "ui.split.cancel",
+      "text": "ยกเลิก"
+    },
+    {
+      "key": "ui.split.amount",
+      "text": "จำนวน"
+    },
+    {
+      "key": "quest.harbor_first_hunt.name",
+      "text": "การล่าครั้งแรก"
+    },
+    {
+      "key": "quest.harbor_first_hunt.description",
+      "text": "สไลม์ฝึกหัดเริ่มเข้ามาใกล้ท่าเรือมากเกินไป ปราบมันสักสามตัวแล้วกลับมาหาข้า"
+    },
+    {
+      "key": "quest.harbor_slime_cleanup.name",
+      "text": "เคลียร์เส้นทาง"
+    },
+    {
+      "key": "quest.harbor_slime_cleanup.description",
+      "text": "สามตัวเป็นแค่จุดเริ่มต้น ถนนออกนอกเมืองยังเต็มไปด้วยสไลม์ ปราบให้เบาบางลงจริงๆ สักแปดตัว พวกพ่อค้าเกวียนจะได้สบายใจ"
+    },
+    {
+      "key": "quest.harbor_daily_patrol.name",
+      "text": "ลาดตระเวนท่าเรือ"
+    },
+    {
+      "key": "quest.harbor_daily_patrol.description",
+      "text": "ยามไม่พอ และสไลม์ก็กลับมาไม่มีวันหมด เดินลาดตระเวนปราบสักห้าตัว แล้วแวะมาหาข้าได้ทุกเมื่อที่ว่าง งานมีให้ทำเสมอ"
+    },
+    {
+      "key": "quest.harbor_steel_proof.name",
+      "text": "พิสูจน์ฝีมือ"
+    },
+    {
+      "key": "quest.harbor_steel_proof.description",
+      "text": "ช่างตีเหล็กมีดาบวางอยู่บนชั้นแต่ยังไม่เจอคนที่คู่ควร ปราบให้ได้สิบห้าตัว แล้วข้าจะบอกเขาว่าเจ้าสมควรได้มัน"
+    },
+    {
+      "key": "quest.harbor_slime_king.name",
+      "text": "ราชาสไลม์โบราณ"
+    },
+    {
+      "key": "quest.harbor_slime_king.description",
+      "text": "มีบางอย่างเก่าแก่ตื่นขึ้นบนเนินเขา และพวกตัวเล็กก็ฟังคำสั่งมัน อย่าไปคนเดียว และอย่าไปแบบไม่เตรียมตัว"
+    },
+    {
+      "key": "quest.harbor_daily_patrol_10.name",
+      "text": "เฝ้าเส้นทาง"
+    },
+    {
+      "key": "quest.harbor_daily_patrol_10.description",
+      "text": "พ่อค้าเกวียนใช้ถนนฝั่งตะวันออกทุกเช้า และพวกสไลม์ก็รู้ดี เคลียร์ให้ได้แปดตัวก่อนพวกเขาออกเดินทาง พรุ่งนี้กลับมาอีก เดี๋ยวก็มีอีกแปดตัว"
+    },
+    {
+      "key": "quest.harbor_daily_patrol_20.name",
+      "text": "ลาดตระเวนชั้นใน"
+    },
+    {
+      "key": "quest.harbor_daily_patrol_20.description",
+      "text": "ยามไม่กล้าเลยโค้งแม่น้ำไปแล้ว แต่เจ้าไปได้ สิบสี่ตัวทุกวัน แล้วถนนจะเปิดอยู่ต่อไป"
+    },
+    {
+      "key": "quest.event_slime_festival.name",
+      "text": "เทศกาลสไลม์"
+    },
+    {
+      "key": "quest.event_slime_festival.description",
+      "text": "ปีละครั้งที่ท่าเรือแขวนโคมไฟ แล้วพวกสไลม์ก็ออกมาดู ปราบให้ได้ยี่สิบตัวก่อนโคมจะถูกเก็บ"
+    },
+    {
+      "key": "ui.quest.daily",
+      "text": "รายวัน -- รีเซ็ตตอนเที่ยงคืน"
+    },
+    {
+      "key": "ui.quest.row.daily",
+      "text": "{0}  [รายวัน]"
+    }
+  ]
+}

@@ -18,15 +18,16 @@ MonoBehaviour:
     _key: npc.harbor_guide.name
   _category: 2
   _model:
-    _address:
+    _address: 
   _dialogue:
-    _value:
+    _value: 
   _shop:
-    _value:
+    _value: 
   _isQuestGiver: 1
   _isJobChanger: 0
   _providesStorage: 0
   _providesWarp: 0
+  _providesEnhancement: 0
   _map:
     _value: map.harbor_town
   _spawnPoint:
@@ -35,5 +36,12 @@ MonoBehaviour:
   _interactionRadius: 3
   _quests:
   - _value: quest.harbor_first_hunt
+  - _value: quest.harbor_slime_cleanup
+  - _value: quest.harbor_daily_patrol
+  - _value: quest.harbor_steel_proof
+  - _value: quest.harbor_slime_king
+  - _value: quest.harbor_daily_patrol_10
+  - _value: quest.harbor_daily_patrol_20
+  - _value: quest.event_slime_festival
   _classesOffered: []
   _jobsOffered: []

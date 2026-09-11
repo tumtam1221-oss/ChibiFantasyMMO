@@ -169,6 +169,13 @@ foreach ([
 // One AI override per behaviour worth distinguishing, including the defensive one this
 // phase completed. Nulls are left where nothing is overridden, which is the case the
 // endpoint has to carry as "use the authored value" rather than as zero.
+//
+// The partial row is deliberately NOT monster.training_slime, and that is worth saying.
+// This database is also the one a developer's world server reads, so a fixture row pinning
+// a monster's aggression pins it in the running game too: the slimes in Harbor Town stood
+// there and took a beating without reacting, because a test had configured them to notice
+// nobody. A fixture may prove that a detection range of zero survives the round trip; it
+// may not decide how the game plays. monster.fixture_partial exists for nothing else.
 $ai = $pdo->prepare(
     'INSERT INTO monster_ai_configuration
         (monster_definition_id, aggression_type, detection_range, chase_range,
@@ -178,7 +185,7 @@ $ai = $pdo->prepare(
 );
 
 foreach ([
-    ['monster.training_slime', 0, 0.0, null, null, null, 1.5],
+    ['monster.fixture_partial', 0, 0.0, null, null, null, 1.5],
     ['monster.ancient_slime_king', 1, 9.0, 18.0, 1.75, 2.5, 3.25],
     ['monster.hidden', 2, 14.0, null, null, null, null],
 ] as [$monster, $aggression, $detection, $chase, $attackRange, $cooldown, $speed]) {

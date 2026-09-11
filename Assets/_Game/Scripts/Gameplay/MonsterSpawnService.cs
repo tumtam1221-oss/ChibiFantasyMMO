@@ -207,7 +207,7 @@ namespace ChibiFantasy.Gameplay
             }
 
             var monster = new MonsterRuntimeState(InstanceId.New(), definition,
-                at ?? _point.Position, maxHealth, team);
+                at ?? Scatter(), maxHealth, team);
 
             _alive.Add(monster);
             return monster;
@@ -221,12 +221,32 @@ namespace ChibiFantasy.Gameplay
         /// and experience were handed out.</remarks>
         public int RetireDefeated()
         {
+            return RetireDefeated(0f);
+        }
+
+        /// <summary>
+        /// Removes the defeated that have lain long enough, and starts their respawn timers.
+        /// </summary>
+        /// <param name="lingerSeconds">
+        /// How long a claimed corpse stays in the world before it is swept away. Zero
+        /// retires it the moment its rewards are settled, which is what this did before a
+        /// monster had a death animation worth watching.
+        /// </param>
+        /// <remarks>A separate method rather than a defaulted argument: a caller that means
+        /// to leave a corpse lying has to say so, and a caller that does not keeps exactly
+        /// the behaviour it had.</remarks>
+        public int RetireDefeated(float lingerSeconds)
+        {
             int retired = 0;
 
             for (int i = _alive.Count - 1; i >= 0; i--)
             {
                 MonsterRuntimeState monster = _alive[i];
                 if (monster.IsAlive || !monster.IsDefeatClaimed) continue;
+
+                // Still being looked at. It has already paid out; it is only the body that
+                // is still here.
+                if (monster.SecondsSinceDefeat < lingerSeconds) continue;
 
                 _alive.RemoveAt(i);
                 _pendingRespawns.Add(RespawnDelay(monster.Definition));
@@ -264,6 +284,72 @@ namespace ChibiFantasy.Gameplay
             }
 
             return due;
+        }
+
+        /// <summary>
+        /// Somewhere inside the nest for one monster to appear.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this closes.</b> <see cref="MonsterSpawnPoint.Radius"/> has been
+        /// authored, stored, carried through the database and documented as "how far from
+        /// the point a spawn may appear" since Phase 10 -- and nothing ever read it. Every
+        /// monster from a nest appeared at the exact centre, so a camp of six stood inside
+        /// one another, and a monster respawning after a kill materialised inside its
+        /// neighbours. From outside that is indistinguishable from a respawn that did not
+        /// happen.
+        ///
+        /// <b>Uniform over the disc.</b> The square root is what stops the draw clustering
+        /// in the middle, which is exactly the fault being fixed.
+        ///
+        /// <b>Deterministic and engine-free.</b> A small xorshift owned by this nest, so the
+        /// same server produces the same camp twice and a test can say where a monster will
+        /// be. No clock, no <c>UnityEngine.Random</c>, and no shared generator whose output
+        /// would depend on how many other nests were filled first.
+        /// </remarks>
+        private CombatPosition Scatter()
+        {
+            if (_point.Radius <= 0f) return _point.Position;
+
+            float angle = NextFloat() * 6.2831853f;
+            float distance = _point.Radius * (float)System.Math.Sqrt(NextFloat());
+
+            return new CombatPosition(
+                _point.Position.X + (float)System.Math.Cos(angle) * distance,
+                _point.Position.Y,
+                _point.Position.Z + (float)System.Math.Sin(angle) * distance);
+        }
+
+        private uint _random;
+
+        private float NextFloat()
+        {
+            if (_random == 0u)
+            {
+                // Seeded from what makes this nest itself: its monster and where it stands.
+                // FNV-1a rather than string.GetHashCode, which is randomised per process and
+                // would make a camp lay out differently on every restart.
+                uint hash = 2166136261u;
+                string id = _point.Monster.Value ?? string.Empty;
+
+                for (var i = 0; i < id.Length; i++)
+                {
+                    hash ^= id[i];
+                    hash *= 16777619u;
+                }
+
+                hash ^= (uint)_point.Position.X.GetHashCode();
+                hash *= 16777619u;
+                hash ^= (uint)_point.Position.Z.GetHashCode();
+                hash *= 16777619u;
+
+                _random = hash == 0u ? 2463534242u : hash;
+            }
+
+            _random ^= _random << 13;
+            _random ^= _random >> 17;
+            _random ^= _random << 5;
+
+            return (_random >> 8) * (1f / 16777216f);
         }
 
         /// <summary>Forgets everything, for a shutdown or an area reset.</summary>

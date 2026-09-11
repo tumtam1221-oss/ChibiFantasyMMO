@@ -40,7 +40,16 @@ namespace ChibiFantasy.Gameplay
         InvalidReward = 10,
 
         /// <summary>There is not enough room for the item rewards.</summary>
-        InventoryFull = 11
+        InventoryFull = 11,
+
+        /// <summary>The character has outgrown it. Daily bands retire this way.</summary>
+        LevelTooHigh = 12,
+
+        /// <summary>Today is outside the quest's authored window. A festival has closed.</summary>
+        OutsideEventWindow = 13,
+
+        /// <summary>A daily quest already done today. It comes back after midnight.</summary>
+        AlreadyDoneToday = 14
     }
 
     /// <summary>What a quest operation did.</summary>
@@ -132,12 +141,13 @@ namespace ChibiFantasy.Gameplay
         {
             public Context(IDefinitionRegistry<QuestDefinition> quests,
                 IDefinitionRegistry<ItemDefinition> items = null,
-                int characterLevel = 1, OwnerId owner = default)
+                int characterLevel = 1, OwnerId owner = default, int today = 0)
             {
                 Quests = quests;
                 Items = items;
                 CharacterLevel = characterLevel;
                 Owner = owner;
+                Today = today;
             }
 
             public IDefinitionRegistry<QuestDefinition> Quests { get; }
@@ -150,32 +160,103 @@ namespace ChibiFantasy.Gameplay
             /// <summary>Stamped on reward items, so they arrive already owned.</summary>
             public OwnerId Owner { get; }
 
+            /// <summary>
+            /// Today, as the database counts days. Zero when nobody has said.
+            /// </summary>
+            /// <remarks>
+            /// <b>Supplied, never read from a clock.</b> Whoever composes this context has
+            /// the day the database handed over with the character; a rule that read
+            /// <c>DateTime.Now</c> here would be a second clock, and dailies would reset at
+            /// a different midnight than the one their completion times were stamped in.
+            ///
+            /// <b>Zero disables the time rules rather than failing them.</b> A context with
+            /// no day -- an old caller, a unit test about level requirements -- gets the
+            /// behaviour the game had before dailies existed: a finished quest stays
+            /// finished. Refusing everything instead would turn a missing wire into a
+            /// player who cannot take any quest at all.
+            /// </remarks>
+            public int Today { get; }
+
+            /// <summary>Whether the time-based rules can be answered at all.</summary>
+            public bool KnowsToday => Today > 0;
+
             public bool IsUsable => Quests != null;
         }
 
         // ---- accepting -----------------------------------------------------------------
 
-        /// <summary>Takes a quest, if the character may.</summary>
-        public static QuestResult TryAccept(CharacterQuestState state, DefinitionId questId,
+        /// <summary>
+        /// Whether a character could take a quest right now, and why not if they could not.
+        /// </summary>
+        /// <remarks>
+        /// <b>The same rules <see cref="TryAccept"/> applies, asked without taking it.</b> A
+        /// quest list needs to know what is on offer, and a list that worked that out for
+        /// itself would be a second copy of these rules -- one that says a quest is
+        /// available and then watches the server refuse it. <c>TryAccept</c> calls this, so
+        /// there is one answer and the list is asking the decider.
+        ///
+        /// <see cref="QuestRejection.None"/> means yes.
+        /// </remarks>
+        public static QuestRejection CanAccept(CharacterQuestState state, DefinitionId questId,
             in Context context)
         {
-            if (state == null || !context.IsUsable)
-                return QuestResult.Rejected(QuestRejection.MissingContext, questId);
+            if (state == null || !context.IsUsable) return QuestRejection.MissingContext;
 
             QuestDefinition quest;
             if (!questId.IsValid || !context.Quests.TryGet(questId, out quest) || quest == null)
-                return QuestResult.Rejected(QuestRejection.UnknownQuest, questId);
+                return QuestRejection.UnknownQuest;
 
             QuestStatus status = state.StatusOf(questId);
 
             if (status == QuestStatus.Active || status == QuestStatus.ReadyToComplete)
-                return QuestResult.Rejected(QuestRejection.AlreadyActive, questId);
+                return QuestRejection.AlreadyActive;
 
-            if (status == QuestStatus.Completed && !quest.Repeatable)
-                return QuestResult.Rejected(QuestRejection.AlreadyCompleted, questId);
+            // ---- when a quest is open at all ------------------------------------------
+            //
+            // Checked before the finished-ness rules, because "the festival is over" is
+            // the more useful thing to be told about a festival quest, and because a
+            // window that has closed should hide the quest whether or not it was ever run.
+            if (quest.HasEventWindow)
+            {
+                if (!context.KnowsToday) return QuestRejection.OutsideEventWindow;
 
+                int from = quest.AvailableFromDay;
+                int until = quest.AvailableUntilDay;
+
+                if (from != 0 && context.Today < from) return QuestRejection.OutsideEventWindow;
+                if (until != 0 && context.Today > until) return QuestRejection.OutsideEventWindow;
+            }
+
+            // ---- whether being finished still counts -----------------------------------
+            if (status == QuestStatus.Completed)
+            {
+                if (quest.ResetsDaily)
+                {
+                    // A daily comes back at midnight. Without a day from the database this
+                    // cannot be decided, so it stays finished -- refusing to guess is the
+                    // only answer that cannot hand out a second reward on the same day.
+                    if (!context.KnowsToday) return QuestRejection.AlreadyCompleted;
+
+                    QuestProgress done;
+
+                    int finishedOn = state.TryGet(questId, out done) ? done.CompletedDay : 0;
+
+                    if (finishedOn >= context.Today) return QuestRejection.AlreadyDoneToday;
+                }
+                else if (!quest.Repeatable)
+                {
+                    return QuestRejection.AlreadyCompleted;
+                }
+            }
+
+            // ---- who it is for ----------------------------------------------------------
             if (quest.LevelRequirement > 0 && context.CharacterLevel < quest.LevelRequirement)
-                return QuestResult.Rejected(QuestRejection.LevelTooLow, questId);
+                return QuestRejection.LevelTooLow;
+
+            // Outgrown. This is what stops a level-one daily sitting on the board for the
+            // rest of the game, and what lets the next band replace it.
+            if (quest.LevelMaximum > 0 && context.CharacterLevel > quest.LevelMaximum)
+                return QuestRejection.LevelTooHigh;
 
             DefinitionId[] prerequisites = quest.PrerequisiteQuests;
 
@@ -186,7 +267,7 @@ namespace ChibiFantasy.Gameplay
                     if (!prerequisites[i].IsValid) continue;
                     if (state.IsCompleted(prerequisites[i])) continue;
 
-                    return QuestResult.Rejected(QuestRejection.PrerequisiteNotMet, questId);
+                    return QuestRejection.PrerequisiteNotMet;
                 }
             }
 
@@ -196,10 +277,25 @@ namespace ChibiFantasy.Gameplay
             {
                 // A quest with nothing to do could never be finished, so taking it would
                 // leave it stuck in the log for good.
-                return QuestResult.Rejected(QuestRejection.NoObjectives, questId);
+                return QuestRejection.NoObjectives;
             }
 
-            state.Begin(questId, objectives.Length);
+            return QuestRejection.None;
+        }
+
+        /// <summary>Takes a quest, if the character may.</summary>
+        public static QuestResult TryAccept(CharacterQuestState state, DefinitionId questId,
+            in Context context)
+        {
+            QuestRejection refusal = CanAccept(state, questId, context);
+
+            if (refusal != QuestRejection.None)
+                return QuestResult.Rejected(refusal, questId);
+
+            QuestDefinition quest;
+            context.Quests.TryGet(questId, out quest);
+
+            state.Begin(questId, quest.Objectives.Length);
             Reevaluate(state, quest, questId);
 
             return QuestResult.Accepted(questId, state.StatusOf(questId));
@@ -413,7 +509,18 @@ namespace ChibiFantasy.Gameplay
             }
 
             QuestProgress progress;
-            if (state.TryGet(questId, out progress)) progress.Status = QuestStatus.Completed;
+
+            if (state.TryGet(questId, out progress))
+            {
+                progress.Status = QuestStatus.Completed;
+
+                // Stamped here so the journal stops offering a daily the moment it is
+                // handed in, rather than only after the next save round-trips through the
+                // database. The authoritative stamp is still MySQL's -- this is the same
+                // day number, written by the clock that supplied it.
+                if (context.KnowsToday) progress.CompletedDay = context.Today;
+            }
+
             state.Touch();
 
             return QuestResult.Accepted(questId, QuestStatus.Completed, experience, currency,

@@ -1,0 +1,41 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 65cd661aeb977aa458fc6cb25669ab6d, type: 3}
+  m_Name: quest_harbor_steel_proof
+  m_EditorClassIdentifier: ChibiFantasy.Data::ChibiFantasy.Data.QuestDefinition
+  _id:
+    _value: quest.harbor_steel_proof
+  _nameKey:
+    _key: quest.harbor_steel_proof.name
+  _descriptionKey:
+    _key: quest.harbor_steel_proof.description
+  _questType: 0
+  _levelRequirement: 10
+  _prerequisiteQuests:
+  - _value: quest.harbor_slime_cleanup
+  _objectives:
+  - _type: 1
+    _target:
+      _value: monster.training_slime
+    _requiredAmount: 15
+  _rewards:
+  - _type: 2
+    _target:
+      _value: 
+    _amount: 400
+  - _type: 1
+    _target:
+      _value: item.apprentice_cutlass
+    _amount: 1
+  _repeatable: 0
+  _repeatCooldownSeconds: 0
+  _expirationSeconds: 0
