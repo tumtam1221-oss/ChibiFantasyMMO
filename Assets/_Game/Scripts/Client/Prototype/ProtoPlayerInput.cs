@@ -66,6 +66,40 @@ namespace ChibiFantasy.Client.Prototype
 
         public bool IsReady => _map != null;
 
+        /// <summary>
+        /// Whether orbiting requires the right mouse button to be held.
+        /// </summary>
+        /// <remarks>
+        /// <b>Off by default, so the prototype scenes are unchanged.</b> They were built
+        /// around a camera that follows the mouse continuously, and their tests assert that.
+        ///
+        /// <b>On in the production world.</b> Once the left button means "walk there" and
+        /// "attack that", a camera that also spins with every mouse movement makes the game
+        /// unusable: a player cannot point at anything without turning the view. Holding the
+        /// right button is the ordinary MMO gesture for "now I am looking around", and it
+        /// keeps the two gestures from fighting over the same pointer.
+        ///
+        /// The gesture is also what stops the view snapping: <see cref="Look"/> reads a
+        /// frame delta, and a delta accumulated while the button was up is never applied.
+        /// </remarks>
+        public bool RequireHoldToLook { get; set; }
+
+        /// <summary>Whether the look gesture is active right now.</summary>
+        public bool IsLooking => !RequireHoldToLook
+            || (UnityEngine.InputSystem.Mouse.current != null
+                && UnityEngine.InputSystem.Mouse.current.rightButton.isPressed);
+
+        /// <summary>
+        /// The mouse movement the camera is allowed to act on this frame.
+        /// </summary>
+        /// <remarks>Zero rather than stale when the gesture is not active. Returning the
+        /// last value would make the camera drift, and remembering it across the gesture
+        /// would make it jump the moment the button went down.</remarks>
+        private Vector2 LookThisFrame()
+        {
+            return IsLooking ? _look.ReadValue<Vector2>() : Vector2.zero;
+        }
+
         public void SetControls(InputActionAsset asset)
         {
             controls = asset;
@@ -124,7 +158,7 @@ namespace ChibiFantasy.Client.Prototype
             if (move.sqrMagnitude > 1f) move.Normalize();
 
             Move = move;
-            Look = _look.ReadValue<Vector2>();
+            Look = LookThisFrame();
             Zoom = _zoom.ReadValue<float>();
             AttackPressed = _attack != null && _attack.WasPressedThisFrame();
             SkillPrimaryPressed = _skill1 != null && _skill1.WasPressedThisFrame();

@@ -28,12 +28,71 @@ namespace ChibiFantasy.Tests.EditMode
     [TestFixture]
     internal sealed class ServerEntryTests
     {
+        /// <summary>
+        /// The world server and the client must look for the account API in the same place.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this pins.</b> The world server prefab pointed at
+        /// <c>127.0.0.1:8080</c> while everything else in the project -- the client, the
+        /// development launcher, the integration tests -- used <c>8099</c>. The server
+        /// resolves every joining player's token with <c>GET /api/session</c> against that
+        /// address, so every admission was refused and every player was dropped with
+        /// <c>RemoteConnectionClose</c> immediately after connecting.
+        ///
+        /// <b>Why nothing caught it.</b> Every in-process test injects a fake
+        /// <c>IWorldSessionAuthority</c> and never opens a socket to the API at all, so the
+        /// serialized address was exercised by exactly one thing: a real dedicated server
+        /// talking to a real PHP process. Worse than a dead port, 8080 happened to be
+        /// answering -- an unrelated local service returning 404 -- so the failure looked
+        /// like a rejected session rather than a misdirected request.
+        ///
+        /// <b>Asserted as agreement, not as a number.</b> The two values are compared with
+        /// each other, so moving the API to another port stays a one-line change and cannot
+        /// silently move only one side of it.
+        /// </remarks>
+        [Test]
+        public void TheWorldServerAsksTheSameApiTheClientSignedInAgainst()
+        {
+            string server = Serialized(
+                "Assets/_Game/Prefabs/Network/World_NetworkManager.prefab", "_apiBaseAddress");
+
+            string client = Serialized(Login, "_apiBaseAddress");
+
+            Assert.That(server, Is.Not.Null.And.Not.Empty,
+                "the world server has no account API address, so it can admit nobody");
+
+            Assert.That(server, Is.EqualTo(client),
+                "the world server resolves tokens at " + server + " while the client signs "
+                + "in at " + client + "; every player would be admitted by the account "
+                + "service and then refused by the world");
+        }
+
+        /// <summary>Reads one serialized string straight out of a YAML asset.</summary>
+        /// <remarks>Text rather than the object model, so this asserts what is committed
+        /// rather than what an importer reconstructed.</remarks>
+        private static string Serialized(string assetPath, string field)
+        {
+            foreach (string line in File.ReadAllLines(assetPath))
+            {
+                string trimmed = line.Trim();
+
+                if (!trimmed.StartsWith(field + ":")) continue;
+
+                return trimmed.Substring(field.Length + 1).Trim();
+            }
+
+            return null;
+        }
+
         private const string Login = "Assets/_Game/Scenes/Client/Login.unity";
         private const string World = "Assets/_Game/Scenes/World/World_Server.unity";
 
         /// <summary>The one prototype asset the shipped world legitimately reaches.</summary>
         private const string KnownPrototypeAnimator =
             "Assets/_Game/Prefabs/Prototype/Proto_Locomotion.controller";
+
+        private const string KnownPrototypeFemaleAnimator =
+            "Assets/_Game/Prefabs/Prototype/Proto_Locomotion_Female.overrideController";
 
         /// <summary>The development-only load driver, which production must not contain.</summary>
         private const string Harness =
@@ -380,11 +439,24 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(File.Exists(KnownPrototypeAnimator), Is.True,
                 "the allowance below names an asset that no longer exists");
 
+            Assert.That(File.Exists(KnownPrototypeFemaleAnimator), Is.True,
+                "the allowance below names an asset that no longer exists");
+
             var allowed = new System.Collections.Generic.HashSet<string>(
                 AssetDatabase.GetDependencies(KnownPrototypeAnimator, true))
             {
                 KnownPrototypeAnimator,
+                KnownPrototypeFemaleAnimator,
             };
+
+            // The female graph is an override of the same controller, so its closure is the
+            // male one plus the female clips. Named rather than folded into a folder
+            // exemption, for the same reason as the controller itself.
+            foreach (string dependency in
+                AssetDatabase.GetDependencies(KnownPrototypeFemaleAnimator, true))
+            {
+                allowed.Add(dependency);
+            }
 
             foreach (string dependency in AssetDatabase.GetDependencies(World, true))
             {

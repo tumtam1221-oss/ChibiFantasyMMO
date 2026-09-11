@@ -81,6 +81,16 @@ namespace ChibiFantasy.Data
             + "unbounded: the server will not refuse a position for being far away.")]
         [SerializeField] private float _movementRadius;
 
+        [Tooltip("Where the ground is on this map, baked from its environment scene "
+            + "(ChibiFantasy > World > Bake Map Height Field). Leave empty for a flat map: "
+            + "the server then carries a character's height through unchanged.")]
+        [SerializeField] private MapHeightField _heightField;
+
+        [Tooltip("Circles where no monster may spawn, walk or take aim -- a walled town, a "
+            + "mountain path. With at least one zone, a town map stays open to monsters "
+            + "everywhere else; with none, IsTown closes the whole map as before.")]
+        [SerializeField] private MapSafeZone[] _safeZones = new MapSafeZone[0];
+
         [SerializeField] private MapPortal[] _portals = new MapPortal[0];
         [SerializeField] private DefinitionId _monsterSpawnTable;
         [SerializeField] private DefinitionId _npcPlacement;
@@ -118,6 +128,35 @@ namespace ChibiFantasy.Data
         /// jump or a staircase.
         /// </remarks>
         public float MovementRadius => _movementRadius < 0f ? 0f : _movementRadius;
+
+        /// <summary>
+        /// The map's ground, or null for a flat map.
+        /// </summary>
+        /// <remarks>Null is the state every map shipped in before hills existed, and it
+        /// means "carry Y through unchanged" -- so authoring nothing changes nothing.</remarks>
+        public MapHeightField HeightField => _heightField;
+
+        /// <summary>The authored safe circles. Empty for a map with none.</summary>
+        public MapSafeZone[] SafeZones => _safeZones ?? new MapSafeZone[0];
+
+        /// <summary>
+        /// Whether a horizontal position lies inside any authored safe zone.
+        /// </summary>
+        /// <remarks>Only the zones: a map that is safe as a whole answers through
+        /// <see cref="IsSafeZone"/>, and <c>MonsterSpawnPlacement</c> combines the two.</remarks>
+        public bool IsInsideSafeZone(float x, float z)
+        {
+            MapSafeZone[] zones = _safeZones;
+
+            if (zones == null) return false;
+
+            for (int i = 0; i < zones.Length; i++)
+            {
+                if (zones[i].Contains(x, z)) return true;
+            }
+
+            return false;
+        }
 
         public MapPortal[] Portals => _portals;
 

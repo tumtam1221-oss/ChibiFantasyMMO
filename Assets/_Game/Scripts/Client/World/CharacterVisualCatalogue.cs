@@ -58,6 +58,15 @@ namespace ChibiFantasy.Client.World
         [Tooltip("Height above the character root that the name sits at.")]
         [SerializeField] private float _nameplateHeight = 1.9f;
 
+        [Tooltip("Metres to raise the male model so its soles sit on the ground. The Meshy "
+            + "rig's origin is above the soles, so a model placed at ground level sinks its "
+            + "feet by this much. Measured Animator-driven at the planted stance: 0.063.")]
+        [SerializeField] private float _maleGroundOffset = 0.063f;
+
+        [Tooltip("The same correction for the female model, whose origin sits a little "
+            + "lower. Measured Animator-driven at the planted stance: 0.051.")]
+        [SerializeField] private float _femaleGroundOffset = 0.051f;
+
         [Tooltip("Show the local player their own nameplate. Off is the usual MMO choice.")]
         [SerializeField] private bool _showOwnNameplate;
 
@@ -101,6 +110,25 @@ namespace ChibiFantasy.Client.World
         public float MoveThreshold => _moveThreshold < 0f ? 0f : _moveThreshold;
 
         public float NameplateHeight => _nameplateHeight;
+
+        /// <summary>
+        /// How far to raise a model so its soles rest on the ground.
+        /// </summary>
+        /// <remarks>
+        /// <b>Corrects the rig, not the world.</b> The network object sits at the server's
+        /// position and the ground is at y = 0; both are right. What is wrong is that the
+        /// imported rig's origin is a few centimetres above its soles, so a model hung
+        /// straight off the object stands with its feet in the floor. Lifting the model by the
+        /// measured depth puts the soles at the origin, which is where every ground expects
+        /// them. Per gender because the two rigs differ by about a centimetre. Presentation
+        /// only: nothing about position authority moves.
+        /// </remarks>
+        public float GroundOffsetFor(int genderCode)
+        {
+            return GenderOf(genderCode) == CharacterGender.Female
+                ? _femaleGroundOffset
+                : _maleGroundOffset;   // male, and the fallback model, use the male figure
+        }
 
         public bool ShowOwnNameplate => _showOwnNameplate;
 

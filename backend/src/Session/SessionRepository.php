@@ -191,6 +191,48 @@ final class SessionRepository
     }
 
     /**
+     * Sessions still recorded as being inside one particular world.
+     *
+     * **What a fresh world server needs to know.** A process that has just started
+     * is, by definition, empty: nobody has connected to it yet. So any session the
+     * database still believes is inside that server and channel belongs to the
+     * process that died -- a crash, a kill, a power cut -- and is a ghost holding a
+     * character its owner can no longer play.
+     *
+     * Scoped to one server and channel rather than swept globally, because the
+     * other channels of the same server are their own worlds and may be full of
+     * people at this exact moment.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function findInWorld(string $serverId, string $channelId): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT *, ' . self::LAPSED_EXPRESSION . ' AS is_lapsed
+             FROM account_session
+             WHERE selected_server_id = :sid
+               AND selected_channel_id = :cid
+               AND state IN (:entering, :active)
+             ORDER BY issued_at'
+        );
+
+        $statement->execute([
+            ':sid'      => $serverId,
+            ':cid'      => $channelId,
+            ':entering' => self::ENTERING_WORLD,
+            ':active'   => self::ACTIVE,
+        ]);
+
+        $rows = [];
+
+        foreach ($statement->fetchAll() as $row) {
+            $rows[] = $this->hydrate($row);
+        }
+
+        return $rows;
+    }
+
+    /**
      * Moves a session to a new state and records a selection, guarded by revision.
      *
      * One statement, so the state, the selection and the revision advance together

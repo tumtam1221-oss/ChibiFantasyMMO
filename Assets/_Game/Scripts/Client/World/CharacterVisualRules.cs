@@ -50,6 +50,67 @@ namespace ChibiFantasy.Client.World
         }
 
         /// <summary>
+        /// Eases the number the blend tree is shown towards the number just measured.
+        /// </summary>
+        /// <remarks>
+        /// <b>Why the raw measurement is not good enough.</b> Speed is inferred from how far
+        /// the visible transform moved since the last frame, and that distance arrives in
+        /// steps: the server replicates position roughly ten times a second, so a frame that
+        /// lands between two snapshots measures a smaller gap than one that lands on top of
+        /// a fresh one. Fed straight to a blend tree the result is a walk cycle that
+        /// stutters in and out even though the character is travelling at a constant pace.
+        /// Easing turns that staircase into a ramp.
+        ///
+        /// <b>Why it is computed here rather than by the animator.</b> Unity offers
+        /// <c>Animator.SetFloat(hash, value, dampTime, deltaTime)</c>, which does the same
+        /// arithmetic inside the animator -- and stops doing it when the animator is culled,
+        /// which happens to every character the camera is not looking at. The parameter then
+        /// freezes part-way through a blend and the character is found mid-stride when the
+        /// camera comes back. Doing it out here means the value handed over is already
+        /// correct, and culling cannot reach it. It also makes the easing something a test
+        /// can assert on without an <c>Animator</c>.
+        ///
+        /// <b>Soft at the start, but it has to actually arrive.</b> An exponential alone
+        /// approaches its target without ever reaching it, and the tail is long: at a
+        /// smoothing of 0.15 s a character who stopped walking still carries a tenth of a
+        /// walk in the blend a third of a second later, and a residue of it for the best
+        /// part of a second. So the exponential is paired with a floor rate, and whichever
+        /// of the two is further along wins. The exponential is the faster of the two while
+        /// the gap is wide, which is where the softness is wanted; the floor takes over once
+        /// the gap is small, which is where the exponential has nothing left to give. The
+        /// result reaches its target in a bounded time -- about twice the smoothing -- and
+        /// still leans in rather than snapping.
+        ///
+        /// <b>Frame-rate independent.</b> Both halves are expressed against elapsed time
+        /// rather than per frame, so a machine at thirty frames and one at two hundred ease
+        /// at the same visible rate.
+        ///
+        /// <b>Presentation only.</b> This changes which frame of which clip is drawn. It has
+        /// no path to position, which the server owns and replicates.
+        /// </remarks>
+        public static float DampedSpeed(float current, float target, float deltaSeconds,
+            float smoothingSeconds)
+        {
+            if (deltaSeconds <= 0f) return current;
+
+            // No smoothing configured is the honest identity, not a division by zero.
+            if (smoothingSeconds <= 0.0001f) return target;
+
+            float t = 1f - Mathf.Exp(-deltaSeconds / smoothingSeconds);
+
+            float eased = Mathf.Lerp(current, target, Mathf.Clamp01(t));
+
+            // The floor: the whole range crossed in twice the smoothing time, no slower.
+            float floored = Mathf.MoveTowards(current, target,
+                deltaSeconds / (2f * smoothingSeconds));
+
+            // Whichever got closer. Standing still has to end up exactly zero, because a
+            // blend tree fed a residue is a character shuffling on the spot forever -- the
+            // same reason SpeedFor floors small measurements rather than passing them on.
+            return Mathf.Abs(target - floored) < Mathf.Abs(target - eased) ? floored : eased;
+        }
+
+        /// <summary>
         /// Which way to face, in degrees.
         /// </summary>
         /// <remarks>

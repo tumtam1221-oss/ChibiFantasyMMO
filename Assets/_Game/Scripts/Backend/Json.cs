@@ -51,6 +51,26 @@ namespace ChibiFantasy.Backend
             return this;
         }
 
+        /// <summary>
+        /// Writes a decimal number.
+        /// </summary>
+        /// <remarks>
+        /// Invariant culture, always. This machine's locale writes a decimal comma, and a
+        /// comma inside a JSON number does not mean a smaller number -- it ends the value
+        /// and starts a new one, so the body stops being JSON at all.
+        /// "R" round-trips: the float that comes back is the float that went out.
+        /// </remarks>
+        public JsonWriter Add(string key, float value)
+        {
+            Separate();
+            _builder.Append('"').Append(Escape(key)).Append("\":");
+
+            if (float.IsNaN(value) || float.IsInfinity(value)) _builder.Append("null");
+            else _builder.Append(value.ToString("R", CultureInfo.InvariantCulture));
+
+            return this;
+        }
+
         public JsonWriter AddObject(string key, JsonWriter nested)
         {
             Separate();

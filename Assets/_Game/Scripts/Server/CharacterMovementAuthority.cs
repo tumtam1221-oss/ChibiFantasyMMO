@@ -133,14 +133,17 @@ namespace ChibiFantasy.Server
                 return;
             }
 
+            MapDefinition map = MapOf(character);
+
             MovementResult result = CharacterMovementSimulator.Advance(
                 new CharacterMovementIntent(inputX, inputZ, sequence),
                 character.Location,
-                BudgetFor(character),
+                BudgetFor(map),
                 character.LastMovementSequence,
                 character.LastMovementTimestamp,
                 _nowMilliseconds,
-                character.Combatant == null || character.Combatant.IsAlive());
+                character.Combatant == null || character.Combatant.IsAlive(),
+                map != null ? map.HeightField : null);
 
             LastResult = result;
 
@@ -158,7 +161,7 @@ namespace ChibiFantasy.Server
         /// <remarks>Built per request rather than cached, because a character can travel and
         /// a cached radius would be the previous map's. The speed is the server's authored
         /// figure; the bounds are the map's.</remarks>
-        private MovementBudget BudgetFor(LivingCharacter character)
+        private MapDefinition MapOf(LivingCharacter character)
         {
             MapDefinition map = null;
 
@@ -167,6 +170,11 @@ namespace ChibiFantasy.Server
                 _maps.TryGet(character.Location.CurrentMap, out map);
             }
 
+            return map;
+        }
+
+        private MovementBudget BudgetFor(MapDefinition map)
+        {
             return MovementValidator.BudgetFor(_metresPerSecond, map, _toleranceFactor,
                 _maxStepMilliseconds);
         }

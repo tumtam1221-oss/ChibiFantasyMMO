@@ -139,6 +139,74 @@ namespace ChibiFantasy.Tests.EditMode
                 "the driver no longer recognises the scene it lives in");
         }
 
+        /// <summary>
+        /// Every client scene must be able to draw itself.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this pins.</b> The four screens before the world contained no
+        /// camera at all. Their canvases are built at runtime and are screen-space overlays,
+        /// which reads like it should not need one -- but a scene with no camera gives the
+        /// render pipeline nothing to render, so pressing Play showed "Display 1 -- No
+        /// cameras rendering" over an invisible login form. A person could not sign in.
+        ///
+        /// <b>Why no test caught it.</b> Every screen test drives the screens in code and
+        /// asserts what they hold; none of them ever asked whether the scene would put
+        /// anything on a display. Existence of components is not the same question as
+        /// whether a frame appears.
+        ///
+        /// <b>What is asserted.</b> One enabled camera, on an active object, pointed at the
+        /// display a player is looking at. One, because two cameras drawing the same screen
+        /// is the other way to make a menu unreadable.
+        /// </remarks>
+        [TestCase(Login)]
+        [TestCase("Assets/_Game/Scenes/Client/ServerSelect.unity")]
+        [TestCase("Assets/_Game/Scenes/Client/ChannelSelect.unity")]
+        [TestCase("Assets/_Game/Scenes/Client/CharacterSelect.unity")]
+        [TestCase(World)]
+        public void EveryClientSceneRendersToTheFirstDisplay(string scenePath)
+        {
+            EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
+
+            Camera[] cameras = Object.FindObjectsByType<Camera>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+            var rendering = 0;
+
+            foreach (Camera camera in cameras)
+            {
+                if (!camera.enabled) continue;
+                if (!camera.gameObject.activeInHierarchy) continue;
+                if (camera.targetDisplay != 0) continue;
+                if (camera.targetTexture != null) continue;
+
+                rendering++;
+            }
+
+            Assert.That(rendering, Is.EqualTo(1),
+                scenePath + " has " + rendering + " cameras rendering to display 1; a "
+                + "player sees \"No cameras rendering\" unless there is exactly one");
+        }
+
+        /// <summary>A scene a player looks at should also be a scene they can hear.</summary>
+        /// <remarks>Unity warns about a scene with no audio listener, and about a scene with
+        /// two. Both are the kind of thing nobody notices until a build is in somebody's
+        /// hands.</remarks>
+        [TestCase(Login)]
+        [TestCase("Assets/_Game/Scenes/Client/ServerSelect.unity")]
+        [TestCase("Assets/_Game/Scenes/Client/ChannelSelect.unity")]
+        [TestCase("Assets/_Game/Scenes/Client/CharacterSelect.unity")]
+        [TestCase(World)]
+        public void EveryClientSceneHasExactlyOneAudioListener(string scenePath)
+        {
+            EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
+
+            AudioListener[] listeners = Object.FindObjectsByType<AudioListener>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+            Assert.That(listeners.Length, Is.EqualTo(1),
+                scenePath + " has " + listeners.Length + " audio listeners");
+        }
+
         [Test]
         public void EveryClientSceneIsInTheBuild()
         {

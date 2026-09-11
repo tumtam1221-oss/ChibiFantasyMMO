@@ -27,6 +27,10 @@ namespace ChibiFantasy.Client.World
         [Tooltip("Seconds between pickup requests while the key is held.")]
         [SerializeField] private float _interval = 0.4f;
 
+        [Tooltip("Development only: also pick up on F. Off in normal play, where the "
+            + "mouse is the only control.")]
+        [SerializeField] private bool _developmentKeyboard;
+
         private NetworkManager _networkManager;
         private CharacterNetworkEntity _owned;
         private long _sequence;
@@ -52,6 +56,12 @@ namespace ChibiFantasy.Client.World
 
             Follow();
 
+            // Picking up is a click on the pile, decided by WorldPointerInput. F remains
+            // only as a development shortcut and is off unless somebody switches it on, so
+            // it cannot interfere with the normal player flow.
+#if DEVELOPMENT_BUILD || UNITY_EDITOR
+            if (!_developmentKeyboard) return;
+
             Keyboard keyboard = Keyboard.current;
 
             if (keyboard == null || !keyboard.fKey.isPressed) return;
@@ -61,6 +71,7 @@ namespace ChibiFantasy.Client.World
             _next = Time.time + _interval;
 
             RequestPickup();
+#endif
         }
 
         /// <summary>Keeps listening to whichever character object this client owns.</summary>
@@ -100,7 +111,40 @@ namespace ChibiFantasy.Client.World
 
             LootEntrySnapshot entry = Snapshot.Entries[0];
 
-            _owned.RequestPickup(entry.LootId, entry.Index, ++_sequence);
+            return RequestPickup(entry.LootId, entry.Index);
+        }
+
+        /// <summary>
+        /// Asks the server for one particular pile.
+        /// </summary>
+        /// <remarks>
+        /// <b>Which pile matters once a player can click one.</b> Taking whatever happened
+        /// to be first was fine when the only way to pick anything up was to stand on it and
+        /// press a key; it is wrong the moment a person points at the pile they want.
+        ///
+        /// The named pile must be one the server is currently offering this character. That
+        /// is checked here only to avoid sending a request that cannot succeed -- the server
+        /// checks ownership, reach and whether the pile still exists, and this client's
+        /// opinion changes none of it.
+        /// </remarks>
+        /// <returns>False when this client was not offered that pile.</returns>
+        public bool RequestPickup(string lootId, int index)
+        {
+            if (_owned == null || string.IsNullOrEmpty(lootId)) return false;
+
+            if (Snapshot.Entries == null) return false;
+
+            var offered = false;
+
+            for (var i = 0; i < Snapshot.Entries.Length && !offered; i++)
+            {
+                offered = Snapshot.Entries[i].LootId == lootId
+                    && Snapshot.Entries[i].Index == index;
+            }
+
+            if (!offered) return false;
+
+            _owned.RequestPickup(lootId, index, ++_sequence);
 
             PickupsRequested++;
 

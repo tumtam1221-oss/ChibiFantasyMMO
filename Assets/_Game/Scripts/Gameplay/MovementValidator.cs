@@ -45,7 +45,15 @@ namespace ChibiFantasy.Gameplay
         OutOfOrder = 8,
 
         /// <summary>No time passed, so no movement can have happened.</summary>
-        NoElapsedTime = 9
+        NoElapsedTime = 9,
+
+        /// <summary>
+        /// The step lands where the map has no walkable ground.
+        /// </summary>
+        /// <remarks>Water, a cliff face or the void past the terrain's edge, as answered by
+        /// the map's <see cref="ChibiFantasy.Core.IGroundHeight"/>. Only raised on maps that
+        /// author one; a flat map has no ground data and refuses nothing on this rule.</remarks>
+        Unwalkable = 10
     }
 
     /// <summary>
@@ -275,7 +283,16 @@ namespace ChibiFantasy.Gameplay
             if (elapsed > budget.MaxElapsedMilliseconds) elapsed = budget.MaxElapsedMilliseconds;
 
             float allowed = budget.MetresPerSecond * (elapsed / 1000f) * budget.ToleranceFactor;
-            float squaredDistance = authoritative.SqrDistanceTo(request.Position);
+
+            // Horizontal only, for the same reason the map bound below is horizontal: a
+            // client asks to move across the map and never up or down. Height is the
+            // server's own doing -- it reads it from the map's ground -- so a step onto a
+            // bridge deck or up a stair carries a vertical change nobody requested. Spending
+            // the client's budget on it would refuse that step at every rise, forever, and
+            // leave the character stuck at the foot of the bridge with no way to explain it.
+            float dx = request.Position.X - authoritative.X;
+            float dz = request.Position.Z - authoritative.Z;
+            float squaredDistance = (dx * dx) + (dz * dz);
 
             // Compared squared, so no square root runs on the hot path.
             if (squaredDistance > allowed * allowed)

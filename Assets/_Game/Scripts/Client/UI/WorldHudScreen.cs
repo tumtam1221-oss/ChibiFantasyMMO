@@ -208,7 +208,43 @@ namespace ChibiFantasy.Client.UI
 
             bag.onClick.AddListener(() => InventoryRequested?.Invoke());
 
+            BuildHints(root);
+
             _panel.gameObject.SetActive(false);
+        }
+
+        /// <summary>
+        /// What the mouse does, said once, quietly.
+        /// </summary>
+        /// <remarks>
+        /// <b>Only the controls that exist.</b> This game is played with the mouse: the left
+        /// button walks, selects, attacks and picks up; the right button held turns the view;
+        /// the wheel zooms. WASD, Space and F are development aids that are switched off in
+        /// normal play, so telling a player about them would be telling them something
+        /// untrue.
+        ///
+        /// Deliberately three short lines in a corner rather than a tutorial. This gate is
+        /// about the controls working, not about teaching them.
+        /// </remarks>
+        private void BuildHints(RectTransform root)
+        {
+            // Environment.NewLine rather than an escape, so the three lines survive being
+            // edited by tools that rewrite this file.
+            string newline = System.Environment.NewLine;
+
+            TextMeshProUGUI hints = UiFactory.CreateLabel("Hints", root,
+                "Left Click: Move / Select / Attack / Pick up" + newline
+                + "Right Drag: Camera" + newline
+                + "Mouse Wheel: Zoom", 15f);
+
+            hints.color = UiFactory.Muted;
+
+            RectTransform rect = hints.rectTransform;
+            rect.anchorMin = new Vector2(0f, 0f);
+            rect.anchorMax = new Vector2(0f, 0f);
+            rect.pivot = new Vector2(0f, 0f);
+            rect.sizeDelta = new Vector2(360f, 70f);
+            rect.anchoredPosition = new Vector2(24f, 24f);
         }
 
         /// <summary>The target readout: a name, a bar and a number.</summary>

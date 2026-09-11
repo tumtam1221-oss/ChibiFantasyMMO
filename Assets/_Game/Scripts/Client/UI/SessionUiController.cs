@@ -246,6 +246,15 @@ namespace ChibiFantasy.Client.UI
 
             var command = new SessionCommand(request, _session.SessionId, _session.Account);
 
+            SessionRejection told = TellAuthority(api => api.SelectServer(request, server));
+
+            if (told != SessionRejection.None)
+            {
+                LastSessionResult = SessionResult.Rejected(told);
+                Refresh();
+                return LastSessionResult;
+            }
+
             LastSessionResult = SessionFlowService.TrySelectServer(command, server, FlowContext);
 
             if (LastSessionResult.IsAccepted) FetchChannels();
@@ -286,6 +295,15 @@ namespace ChibiFantasy.Client.UI
                 return SessionResult.Rejected(SessionRejection.MissingContext);
 
             var command = new SessionCommand(request, _session.SessionId, _session.Account);
+
+            SessionRejection told = TellAuthority(api => api.SelectChannel(request, channel));
+
+            if (told != SessionRejection.None)
+            {
+                LastSessionResult = SessionResult.Rejected(told);
+                Refresh();
+                return LastSessionResult;
+            }
 
             LastSessionResult = SessionFlowService.TrySelectChannel(command, channel, FlowContext);
 
@@ -332,6 +350,15 @@ namespace ChibiFantasy.Client.UI
 
             var command = new SessionCommand(request, _session.SessionId, _session.Account);
 
+            SessionRejection told = TellAuthority(api => api.SelectCharacter(request, character));
+
+            if (told != SessionRejection.None)
+            {
+                LastSessionResult = SessionResult.Rejected(told);
+                Refresh();
+                return LastSessionResult;
+            }
+
             LastSessionResult = SessionFlowService.TrySelectCharacter(command, character,
                 FlowContext);
 
@@ -369,7 +396,18 @@ namespace ChibiFantasy.Client.UI
             ApiResult<bool> noted = _api.NotifyWorldEntry(_session.Account, _session.SessionId,
                 _session.Character, _session.Server, _session.Channel);
 
-            if (!noted.IsOk) LastApiError = noted.Error;
+            if (!noted.IsOk)
+            {
+                // The local flow agreed and the authority did not. The authority wins: a
+                // client that reported success here would walk into a world server that
+                // resolves the same session over HTTP, be refused, and be disconnected with
+                // no explanation -- which is exactly what happened.
+                LastApiError = noted.Error;
+                LastEnterWorldResult = EnterWorldResult.Rejected(Explain(noted.Error.Kind));
+                Refresh();
+
+                return LastEnterWorldResult;
+            }
 
             Refresh();
 
@@ -377,6 +415,129 @@ namespace ChibiFantasy.Client.UI
             if (handler != null) handler(LastEnterWorldResult);
 
             return LastEnterWorldResult;
+        }
+
+        /// <summary>
+        /// Tells the account authority what the player chose, before believing it locally.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this closes.</b> Selection was decided entirely by
+        /// <see cref="SessionFlowService"/> against this client's own
+        /// <c>SessionDirectory</c>. <see cref="HttpAccountApi.SelectServer"/> and its two
+        /// siblings existed for exactly this purpose -- their own summary calls them "the
+        /// transport call a client makes so the server's copy of the session agrees with the
+        /// client's" -- and nothing in production ever called them. So a player picked a
+        /// server, a channel and a character, and the authority's session stayed at
+        /// <c>Authenticated</c> with no character on it. Entering the world then looked
+        /// fine locally and was refused by PHP, and the world server -- which asks PHP over
+        /// HTTP who a connection is -- saw a session with no character and dropped every
+        /// player with <c>UnknownCharacter</c>.
+        ///
+        /// <b>Told first, believed second.</b> The authority is asked before the local flow
+        /// transitions, so a refusal leaves this client's session exactly where it was
+        /// rather than holding a state the server never agreed to.
+        ///
+        /// <b>A client with no wire tells nobody.</b> The selection calls are deliberately
+        /// not on <see cref="IAccountApi"/>, so a controller composed against a scripted API
+        /// -- every deterministic test in this project -- has nothing to inform and carries
+        /// on exactly as before. The live fixtures are what prove the real one is told.
+        /// </remarks>
+        private SessionRejection TellAuthority(
+            System.Func<HttpAccountApi, ApiResult<bool>> call)
+        {
+            var remote = _api as HttpAccountApi;
+
+            if (remote == null) return SessionRejection.None;
+
+            ApiResult<bool> result = call(remote);
+
+            if (result.IsOk) return SessionRejection.None;
+
+            LastApiError = result.Error;
+
+            return Explain(result.Error.Kind);
+        }
+
+        /// <summary>Says what a transport-level failure means for a session.</summary>
+        /// <remarks>"The authority said no" and "the authority could not be asked" are
+        /// different facts and a player is told different things about them.</remarks>
+        private static SessionRejection Explain(ApiErrorKind kind)
+        {
+            switch (kind)
+            {
+                case ApiErrorKind.Unreachable:
+                case ApiErrorKind.Timeout:
+                case ApiErrorKind.Cancelled:
+                case ApiErrorKind.ServerError:
+                    return SessionRejection.ServerUnavailable;
+
+                case ApiErrorKind.RateLimited:
+                    return SessionRejection.RateLimited;
+
+                default:
+                    return SessionRejection.SessionInvalid;
+            }
+        }
+
+        /// <summary>
+        /// Hands the session back and returns this client to the login screen.
+        /// </summary>
+        /// <remarks>
+        /// <b>A real sign-out, not a screen change.</b> There are two records of a live
+        /// session and both have to end. The remote one is handed back through the same
+        /// <c>ReleaseSession</c> the world uses when a player leaves; the local one lives in
+        /// the <see cref="SessionDirectory"/> this client logged in against, and is revoked
+        /// here. Dropping only the controller's reference leaves the directory still holding
+        /// a usable session for the account, and the next sign-in is refused with
+        /// "already active" -- which is exactly the failure a "back" button is supposed to
+        /// avoid.
+        ///
+        /// <b>A failed hand-back is reported, not swallowed.</b> If the authority could not
+        /// be reached the session may well still be live on its side, and the honest thing
+        /// is to leave the error where the login screen can show it rather than let the
+        /// player meet it as an unexplained refusal on their next attempt.
+        ///
+        /// <b>The flow moves because the state moved.</b> Nothing here names a screen. With
+        /// no session the flow reads Unauthenticated, and the driver takes the client to the
+        /// login screen for the same reason it takes it anywhere else.
+        /// </remarks>
+        /// <returns>False when there was nothing to sign out of.</returns>
+        public bool SignOut()
+        {
+            if (!_bound || _session == null) return false;
+
+            SessionId ending = _session.SessionId;
+
+            ApiError handedBack = ApiError.None;
+
+            var remote = _api as HttpAccountApi;
+
+            if (remote != null)
+            {
+                ApiResult<bool> released = remote.ReleaseSession(RequestId.New());
+
+                if (!released.IsOk) handedBack = released.Error;
+            }
+
+            // The directory is what TryLogin asks whether the account already has a session,
+            // so this -- not clearing the field below -- is what makes signing in again work.
+            _directory?.Revoke(ending);
+
+            _session = null;
+            _account = default;
+
+            _serverInfo.Clear();
+            _channelInfo.Clear();
+            _characterInfo.Clear();
+
+            LastLoginResult = default;
+            LastSessionResult = default;
+            LastEnterWorldResult = default;
+            LastApiError = handedBack;
+
+            Refresh();
+
+            return true;
         }
 
         // ---- resolvers for Phase 13 panels ---------------------------------------------

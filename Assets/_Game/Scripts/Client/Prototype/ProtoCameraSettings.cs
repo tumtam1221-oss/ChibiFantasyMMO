@@ -30,8 +30,22 @@ namespace ChibiFantasy.Client.Prototype
         [Tooltip("Degrees of pitch per unit of mouse Y delta.")]
         public float orbitSensitivityY = 0.12f;
 
-        [Tooltip("Metres of zoom per unit of scroll. One wheel notch is typically 120.")]
-        public float zoomSensitivity = 0.004f;
+        /// <summary>
+        /// How far one wheel notch moves the camera, in metres.
+        /// </summary>
+        /// <remarks>
+        /// <b>Per notch, not per raw unit.</b> This was metres-per-raw-unit at 0.004, sized
+        /// for the legacy Input Manager's 120-per-notch wheel. The Input System reports
+        /// roughly 1.0 per notch, which made a notch worth four millimetres against a range
+        /// of 4.8 metres -- about twelve hundred notches to cross it. It read as a camera
+        /// that did not zoom at all, and it was measured doing exactly that: a live rig sat
+        /// at 3.016 metres after several notches against a 3.0 default.
+        ///
+        /// <see cref="ProtoThirdPersonCamera.NotchesFrom"/> is what turns a raw wheel value
+        /// into notches, so this number means the same thing on a backend that reports 120.
+        /// </remarks>
+        [Tooltip("Metres the camera moves per wheel notch.")]
+        public float zoomMetresPerNotch = 0.6f;
 
         [Header("Smoothing - PROTOTYPE")]
         public float positionSmoothTime = 0.06f;

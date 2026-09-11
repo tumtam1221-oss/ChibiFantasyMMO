@@ -32,9 +32,12 @@ namespace ChibiFantasy.Server
     /// the connection is failed. Failing silently would leave a player staring at a
     /// progress bar with no idea that their session had expired.
     ///
-    /// <b>Nothing here is logged.</b> The join request contains a session token. There is no
-    /// logging call in this file, which is the only reliable way to ensure one is never
-    /// written to a server log.
+    /// <b>A refusal says why, and nothing else.</b> The reason and the connection id are
+    /// written to the server log; the token, the account, the character and the message
+    /// itself never are. That line is the difference between a dedicated server that
+    /// silently drops every player and one that reports <c>reason=MissingContext</c> --
+    /// which is exactly how an API address pointing at the wrong port stayed invisible
+    /// through a whole gate.
     /// </remarks>
     public sealed class WorldAuthenticator : Authenticator
     {
@@ -137,6 +140,12 @@ namespace ChibiFantasy.Server
 
         private void Reject(NetworkConnection connection, SessionRejection reason)
         {
+            // The reason and the connection, and deliberately nothing else. No token, no
+            // account, no character, no message: a server log is read by more people than a
+            // database is, and a refusal is diagnosable without any of them.
+            Debug.Log("[world] join refused reason=" + reason + " connection="
+                + connection.ClientId);
+
             NetworkManager.ServerManager.Broadcast(connection, new WorldJoinResponseMessage
             {
                 Admitted = false,

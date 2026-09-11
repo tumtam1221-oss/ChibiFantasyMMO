@@ -185,6 +185,16 @@ PrefabInstance:
         type: 2}
     - target: {fileID: 1199570223300177901, guid: 3219f49f317e95a4f912f8cc01e0f697,
         type: 3}
+      propertyPath: _serverId
+      value: itest-server
+      objectReference: {fileID: 0}
+    - target: {fileID: 1199570223300177901, guid: 3219f49f317e95a4f912f8cc01e0f697,
+        type: 3}
+      propertyPath: _channelId
+      value: itest-channel
+      objectReference: {fileID: 0}
+    - target: {fileID: 1199570223300177901, guid: 3219f49f317e95a4f912f8cc01e0f697,
+        type: 3}
       propertyPath: _startOnAwake
       value: 1
       objectReference: {fileID: 0}

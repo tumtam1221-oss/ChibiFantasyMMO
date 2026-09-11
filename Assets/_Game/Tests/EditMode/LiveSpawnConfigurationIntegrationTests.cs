@@ -36,8 +36,14 @@ namespace ChibiFantasy.Tests.EditMode
         private const string BaseAddress = "http://127.0.0.1:8099";
 
         private const string MaxHp = "stat.maxhp";
-        private const string Poring = "monster.poring";
-        private const string Lunatic = "monster.lunatic";
+        /// <summary>The ordinary monster the fixture seeds two of.</summary>
+        /// <remarks>A real content id, because the world server validates every nest
+        /// against authored content and silently accepts none that names a monster the
+        /// project does not ship. The names here are opaque to this fixture -- it
+        /// registers its own definitions -- but they are not opaque to a dedicated
+        /// server reading the same rows.</remarks>
+        private const string Poring = "monster.training_slime";
+        private const string Lunatic = "monster.ancient_slime_king";
         private const string Hidden = "monster.hidden";
 
         private IntegrationFixture _fixture;
@@ -233,19 +239,34 @@ namespace ChibiFantasy.Tests.EditMode
 
             var loader = new MonsterConfigurationLoader(_source, runtime, maps);
 
-            // Two valid nests: one asked for two of five, the other for one of one.
-            Assert.That(loader.Load(Map), Is.EqualTo(3),
+            // The integration database is also the development world's database, so the map
+            // carries the fixture's two nests plus whatever camps the seed authors. The
+            // property under test is the same either way: every row the API hands over
+            // becomes exactly its initial count of living monsters.
+            MapSpawnConfiguration handedOver = _source.Load(Map);
+            int expectedPopulation = 0;
+
+            foreach (MonsterSpawnConfiguration row in handedOver.SpawnPoints)
+            {
+                expectedPopulation += row.InitialCount;
+            }
+
+            Assert.That(handedOver.SpawnPoints.Count, Is.GreaterThanOrEqualTo(2),
+                "the fixture's two valid nests are always present");
+            Assert.That(loader.Load(Map), Is.EqualTo(expectedPopulation),
                 "the initial counts in MySQL are the populations on the server");
-            Assert.That(loader.LastResult.Accepted, Is.EqualTo(2));
+            Assert.That(loader.LastResult.Accepted, Is.EqualTo(handedOver.SpawnPoints.Count));
 
             // Nothing for Unity to reject: the impossible row was refused by the API before
             // it ever crossed the wire, which is where a database mistake should be caught.
             Assert.That(loader.LastResult.Rejected, Is.Zero);
             Assert.That(_source.LastRejected, Has.Count.EqualTo(1),
                 "and it is still reported rather than silently dropped");
-            Assert.That(runtime.AliveCount, Is.EqualTo(3));
+            Assert.That(runtime.AliveCount, Is.EqualTo(expectedPopulation));
 
-            var porings = 0;
+            // The fixture's own nest: two porings, standing exactly where the row says.
+            // Other nests on the map (the seeded camps) are somebody else's rows.
+            var fixturePorings = 0;
 
             foreach (LivingMonster monster in runtime.All())
             {
@@ -253,18 +274,19 @@ namespace ChibiFantasy.Tests.EditMode
 
                 if (monster.State.DefinitionId.Value != Poring) continue;
 
-                porings++;
-
                 // The position in the database, through PHP, through HTTP, onto a monster.
-                Assert.That(monster.State.SpawnPosition.X, Is.EqualTo(12.5f).Within(0.0001f));
-                Assert.That(monster.State.SpawnPosition.Z, Is.EqualTo(-7.25f).Within(0.0001f));
+                if (Mathf.Abs(monster.State.SpawnPosition.X - 12.5f) < 0.0001f
+                    && Mathf.Abs(monster.State.SpawnPosition.Z - -7.25f) < 0.0001f)
+                {
+                    fixturePorings++;
+                }
             }
 
-            Assert.That(porings, Is.EqualTo(2));
+            Assert.That(fixturePorings, Is.EqualTo(2));
 
             // And reloading the same configuration does not double the map.
             Assert.That(loader.Load(Map), Is.Zero);
-            Assert.That(runtime.AliveCount, Is.EqualTo(3));
+            Assert.That(runtime.AliveCount, Is.EqualTo(expectedPopulation));
         }
 
         /// <summary>A store nothing asks anything of: this fixture places no players.</summary>

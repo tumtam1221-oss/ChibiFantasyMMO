@@ -102,10 +102,20 @@ MonoBehaviour:
   m_EditorClassIdentifier: ChibiFantasy.Server::ChibiFantasy.Server.WorldServerBootstrap
   _serverId: 
   _channelId: 
-  _apiBaseAddress: http://127.0.0.1:8080
+  _apiBaseAddress: http://127.0.0.1:8099
   _apiTimeoutSeconds: 10
   _port: 7770
   _startOnAwake: 0
+  _content: {fileID: 0}
+  _meleeReachMetres: 2.5
+  _monsterTeam: 2
+  _characterPrefab: {fileID: 0}
+  _monsterPrefab: {fileID: 0}
+  _rewardRangeMetres: 40
+  _lootReachMetres: 4
+  _lootLifetimeSeconds: 300
+  _lootPersonalWindowSeconds: 30
+  _petExperienceShare: 0.25
 --- !u!114 &7326777954106199815
 MonoBehaviour:
   m_ObjectHideFlags: 0

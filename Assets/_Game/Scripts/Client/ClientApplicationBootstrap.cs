@@ -128,6 +128,8 @@ namespace ChibiFantasy.Client
         private SessionDirectory _sessions;
         private System.IDisposable _transportLifetime;
         private DefinitionRegistry<ItemDefinition> _items;
+        private DefinitionRegistry<MapDefinition> _maps;
+        private DefinitionRegistry<SpawnPointDefinition> _spawns;
 
         private void Awake()
         {
@@ -207,6 +209,31 @@ namespace ChibiFantasy.Client
         }
 
         /// <summary>
+        /// Says so when a player's password would leave this machine unencrypted.
+        /// </summary>
+        /// <remarks>
+        /// <b>Warned here, not refused.</b> The world server refuses the same situation
+        /// because a server that will not start is fixed by the person who deployed it. A
+        /// client belongs to a player who cannot fix anything and would only be locked out of
+        /// a game somebody else misconfigured -- so this is loud in the log the developer
+        /// reads, and does not punish the player for it.
+        ///
+        /// <b>What it is about.</b> The very first request a client makes carries a password.
+        /// Over a plaintext connection to anywhere but this machine, so does anyone watching.
+        /// </remarks>
+        private void WarnIfTheAccountApiIsInTheClear()
+        {
+            var endpoint = new HttpEndpoint(_apiBaseAddress, _apiTimeoutSeconds);
+
+            if (!endpoint.IsUnencryptedOverNetwork) return;
+
+            Debug.LogError("[client] the account API is at " + endpoint + ", which is not "
+                + "encrypted and is not this machine. What a player types to sign in would "
+                + "be readable by anything on that network. Use https before this build "
+                + "reaches anybody.", this);
+        }
+
+        /// <summary>
         /// Builds the account stack and the session the screens submit through.
         /// </summary>
         /// <remarks>The existing pieces, in the order they depend on each other: a transport
@@ -215,6 +242,8 @@ namespace ChibiFantasy.Client
         /// of it into what a screen draws.</remarks>
         private void Compose()
         {
+            WarnIfTheAccountApiIsInTheClear();
+
             var transport = new UnityWebRequestTransport(_apiBaseAddress, _apiTimeoutSeconds);
 
             _transportLifetime = transport;
@@ -236,6 +265,17 @@ namespace ChibiFantasy.Client
             _items = _content == null
                 ? new DefinitionRegistry<ItemDefinition>()
                 : _content.BuildItems();
+
+            // The map and spawn registries the environment presenter resolves an
+            // authoritative map id to a scene through. Built from the same catalogue as the
+            // items, so a client resolves content locally and the wire carries only ids.
+            _maps = _content == null
+                ? new DefinitionRegistry<MapDefinition>()
+                : _content.BuildMaps();
+
+            _spawns = _content == null
+                ? new DefinitionRegistry<SpawnPointDefinition>()
+                : _content.BuildSpawnPoints();
         }
 
         // ---- scenes ----------------------------------------------------------------------
@@ -592,8 +632,66 @@ namespace ChibiFantasy.Client
 
             binder.Compose(NetworkManager, hud, bag, _items, camera);
 
+            ComposeEnvironment(binder);
+
             ComposeInteraction(hud, camera);
         }
+
+        /// <summary>
+        /// Makes the additive environment follow the map the server has the owner on.
+        /// </summary>
+        /// <remarks>
+        /// <b>One loader, one presenter, on the world connection.</b> Both live on the
+        /// network manager's object, beside the other things that exist only while a world
+        /// does, so leaving the world takes them -- and the environment they brought up --
+        /// with it. There is exactly one of each: the presenter drives the single
+        /// <see cref="MapSceneLoader"/> and nothing else loads a map scene.
+        ///
+        /// <b>The authority is read, never chosen.</b> The presenter is handed a delegate
+        /// that returns the owned character's replicated map, so the environment it shows is
+        /// whatever the server put the player on. When the binder holds no character yet --
+        /// before the owner spawns, or between a disconnect and a reconnect -- the delegate
+        /// returns <see cref="DefinitionId.None"/> and the presenter waits.
+        /// </remarks>
+        private void ComposeEnvironment(WorldPresentationBinder binder)
+        {
+            GameObject host = NetworkManager.gameObject;
+
+            MapSceneLoader loader = host.GetComponent<MapSceneLoader>();
+
+            if (loader == null) loader = host.AddComponent<MapSceneLoader>();
+
+            WorldEnvironmentPresenter presenter = host.GetComponent<WorldEnvironmentPresenter>();
+
+            if (presenter == null) presenter = host.AddComponent<WorldEnvironmentPresenter>();
+
+            presenter.Compose(loader, _maps, _spawns,
+                () => binder != null && binder.Bound != null
+                    ? binder.Bound.Map
+                    : DefinitionId.None);
+
+            // GameWorld's flat placeholder floor. Found by name because it is authored scene
+            // content with no script of its own; a test pins the name to the scene file.
+            presenter.UseFallbackGround(GameObject.Find(FallbackGroundName));
+
+            // GameWorld's own sun, for the same reason as its own floor: it is there so a
+            // world with no environment yet is not black, and it has to step aside when one
+            // arrives. Left on, every environment was lit by two suns, and the second was
+            // one the day and night cycle could not reach -- so arriving in the world looked
+            // like daylight until the environment finished loading, whatever hour it was.
+            presenter.UseFallbackLight(GameObject.Find(FallbackLightName));
+
+            // And the question it waits on: has the world said what hour it is? Until it
+            // has, bringing the environment up would show its authored daylight and then
+            // correct it, which is exactly the flash this removes.
+            presenter.UseHourKnown(() => World != null && World.LastTime.SecondsPerDay > 0f);
+        }
+
+        /// <summary>The name of GameWorld's placeholder floor, as authored in the scene.</summary>
+        public const string FallbackGroundName = "World Ground";
+
+        /// <summary>The name of GameWorld's stand-in sun, as authored in the scene.</summary>
+        public const string FallbackLightName = "Directional Light";
 
         /// <summary>
         /// The interactions a person needs: choosing a monster, hitting it, taking what it left.
@@ -633,6 +731,10 @@ namespace ChibiFantasy.Client
 
             Pointer.Compose(NetworkManager, camera == null ? null : camera.Camera, Combat,
                 Loot);
+
+            // Clicks route around obstacles over the map's baked ground -- the same data
+            // the server walks the character on, so the route and the authority agree.
+            Pointer.UsePathfinding(_maps);
 
             // Orbiting now needs the right button held. Without this the camera would spin
             // whenever the player moved the mouse to point at something, which is exactly

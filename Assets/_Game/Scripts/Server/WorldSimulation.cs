@@ -52,9 +52,17 @@ namespace ChibiFantasy.Server
         /// pick it up; it simply never volunteers that a pile is there, which is what the
         /// world did until 18.18B1.</remarks>
         private readonly CharacterLootAuthority _lootAuthority;
+
+        /// <summary>Who tells players what is in their bag. Optional.</summary>
+        /// <remarks>A world composed without one still grants items and still persists
+        /// them; it simply never tells the player they arrived, which is what the world did
+        /// until this gate.</remarks>
+        private readonly CharacterInventoryAuthority _inventoryAuthority;
         private readonly MonsterRewardAuthority _rewards;
         private readonly CharacterReplicationService _replication;
         private readonly MonsterReplicationService _monsterReplication;
+        private readonly WorldClock _clock;
+        private readonly WeatherDirector _weather;
 
         public WorldSimulation(WorldCharacterRegistry characters,
             CharacterReplicationService replication = null,
@@ -66,9 +74,13 @@ namespace ChibiFantasy.Server
             MonsterLootRegistry loot = null,
             MonsterReplicationService monsterReplication = null,
             MonsterRewardAuthority rewards = null,
-            CharacterLootAuthority lootAuthority = null)
+            CharacterLootAuthority lootAuthority = null,
+            CharacterInventoryAuthority inventoryAuthority = null,
+            WorldClock clock = null,
+            WeatherDirector weather = null)
         {
             _lootAuthority = lootAuthority;
+            _inventoryAuthority = inventoryAuthority;
             _characters = characters;
             _replication = replication;
             _status = status;
@@ -79,6 +91,8 @@ namespace ChibiFantasy.Server
             _loot = loot;
             _monsterReplication = monsterReplication;
             _rewards = rewards;
+            _clock = clock ?? new WorldClock();
+            _weather = weather ?? new WeatherDirector();
         }
 
         /// <summary>How many ticks have run. For diagnostics and for the no-work test.</summary>
@@ -86,6 +100,24 @@ namespace ChibiFantasy.Server
 
         /// <summary>The seconds of world time this simulation has advanced.</summary>
         public double Elapsed { get; private set; }
+
+        /// <summary>
+        /// The sky every player stands under.
+        /// </summary>
+        /// <remarks>Exposed rather than hidden because the thing that replicates it lives in
+        /// the network assembly and has to read it once a tick. It is read-only from out
+        /// here: <see cref="Tick"/> is the only thing that advances it, so the world's time
+        /// cannot be moved by whoever happens to hold a reference.</remarks>
+        public WorldClock Clock => _clock;
+
+        /// <summary>
+        /// The weather every player is standing in.
+        /// </summary>
+        /// <remarks>Exposed for the same reason as <see cref="Clock"/>: the thing that
+        /// broadcasts a change lives in the network assembly and subscribes to
+        /// <see cref="WeatherDirector.Changed"/>. Advancing it stays with
+        /// <see cref="Tick"/>.</remarks>
+        public WeatherDirector Weather => _weather;
 
         /// <summary>
         /// Admits a character into the world with correct stats from its first instant.
@@ -160,11 +192,38 @@ namespace ChibiFantasy.Server
         /// <remarks>Time arrives as an argument, matching every authority underneath. The
         /// checks are cheap -- a revision comparison per character -- and the work behind
         /// them happens only when something actually moved.</remarks>
-        public void Tick(float deltaSeconds)
+        public void Tick(float deltaSeconds) => Tick(deltaSeconds, deltaSeconds);
+
+        /// <summary>
+        /// One tick, where the calendar is allowed to run on a different measure of time to
+        /// the simulation.
+        /// </summary>
+        /// <remarks>
+        /// <b>Why the sky gets its own number.</b> The engine clamps a frame's reported delta
+        /// -- a third of a second in this project -- so a server that stalls for two seconds
+        /// is told a third of one went by. That is the right answer for movement and combat,
+        /// which must not resolve two seconds of the world in a single step, and the wrong
+        /// answer for a calendar, which has just lost time it can never get back. Left alone,
+        /// every hitch permanently lengthens the day, and "one real hour is one game day"
+        /// slowly stops being true on a long-running server.
+        ///
+        /// <b>Still an argument, not a clock read.</b> This does not reach for the wall clock
+        /// itself; whoever drives the server measures it and passes it in, so a test can still
+        /// run a week of world time in a millisecond.
+        /// </remarks>
+        public void Tick(float deltaSeconds, float calendarSeconds)
         {
             Ticks++;
 
             if (deltaSeconds > 0f) Elapsed += deltaSeconds;
+
+            // 0. The sky. First because it is the cheapest thing here and because every
+            //    other system is entitled to ask what time it is during its own tick.
+            _clock.Advance(calendarSeconds);
+
+            // 0b. And the weather, which announces itself when it turns rather than being
+            //     polled. Nothing downstream reads it, so its place in the order is free.
+            _weather.Tick(calendarSeconds);
 
             // 1. Status first: an effect that expires this tick must be gone before
             //    anything asks what modifiers are in force.
@@ -178,6 +237,11 @@ namespace ChibiFantasy.Server
             _movement?.Tick(deltaSeconds);
             _combat?.Tick(deltaSeconds);
 
+            // 3b. Anybody who has walked since they were last written down. Nothing else
+            //     saves a walking character, so without this a player who moved and then
+            //     lost their connection comes back where they started.
+            _characters?.TickAutosave(deltaSeconds);
+
             // 4. Monsters: spawning, thinking, retiring, and the piles they left.
             _monsters?.Tick(deltaSeconds);
             _loot?.Tick(deltaSeconds);
@@ -185,6 +249,10 @@ namespace ChibiFantasy.Server
             // And anybody standing near a pile that has just appeared, gone, or been dipped
             // into is told. Nothing is sent when the ground has not changed.
             _lootAuthority?.PublishChanged();
+
+            // And anybody whose bag changed -- because they picked something up, or because
+            // they have just arrived and have never been told what they are carrying.
+            _inventoryAuthority?.PublishChanged();
 
             // A defeat whose party turn would not commit is decided but unpaid. Retried
             // here because this is already the step that owns monsters and their piles,

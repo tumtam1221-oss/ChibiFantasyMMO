@@ -107,6 +107,99 @@ namespace ChibiFantasy.Client.UI
             return image;
         }
 
+        /// <summary>
+        /// Sizes and places a rect so the drawn part of its sprite lands on an exact box.
+        /// </summary>
+        /// <remarks>
+        /// <b>Why this is needed at all.</b> The art in this project's UI packs is drawn at
+        /// different sizes and different offsets inside identically sized canvases -- two
+        /// login fields whose bars differ by 138 pixels, two checkbox states differing by
+        /// half, two buttons with different margins. Given equal rects they render at
+        /// visibly unequal sizes. Inflating the rect by the inverse of the drawn extent puts
+        /// the artwork where the layout asked for it, whatever the canvas around it does.
+        ///
+        /// <b>Sprites are drawn unsliced when this is used.</b> The mapping from texture to
+        /// rect has to be linear for the arithmetic to hold, so callers set
+        /// <see cref="Image.Type.Simple"/>.
+        /// </remarks>
+        /// <param name="opaque">Drawn extent as fractions of the texture: left, bottom,
+        /// right, top.</param>
+        /// <param name="centre">Where the drawn box should be centred, in the parent.</param>
+        public static void FitSprite(RectTransform rect, Vector4 opaque, float width,
+            float height, Vector2 centre)
+        {
+            if (rect == null) return;
+
+            float spanX = opaque.z - opaque.x;
+            float spanY = opaque.w - opaque.y;
+
+            if (spanX <= 0f || spanY <= 0f) return;
+
+            float w = width / spanX;
+            float h = height / spanY;
+
+            rect.sizeDelta = new Vector2(w, h);
+
+            rect.anchoredPosition = new Vector2(
+                centre.x + (w * (0.5f - ((opaque.x + opaque.z) * 0.5f))),
+                centre.y + (h * (0.5f - ((opaque.y + opaque.w) * 0.5f))));
+
+            ConfineHitArea(rect, opaque);
+        }
+
+        /// <summary>The child a fitted rect hands its pointer target to.</summary>
+        private const string HitAreaName = "Hit Area";
+
+        /// <summary>
+        /// Moves a fitted rect's pointer target onto the drawn part of its art.
+        /// </summary>
+        /// <remarks>
+        /// <b>Fitting inflates the rect, and a rect is what UGUI hit-tests.</b> A login
+        /// field whose bar fills 44% of its image is given a rect more than twice the height
+        /// of the bar, and the invisible remainder still swallows clicks -- enough for the
+        /// two fields to overlap, so that clicking the login field put the caret in the
+        /// password one. Rows on the selection screens overlap each other the same way.
+        ///
+        /// <b>The graphic stops being the target and a child takes over.</b> The child is
+        /// anchored to the drawn fractions, so it tracks the artwork through every resize
+        /// and every change of sprite. It carries a fully transparent image because UGUI
+        /// hit-tests graphics, not rects, and it is a child rather than a sibling so the
+        /// click still reaches whatever handler the fitted object carries.
+        /// </remarks>
+        private static void ConfineHitArea(RectTransform rect, Vector4 opaque)
+        {
+            Transform found = rect.Find(HitAreaName);
+
+            if (found == null)
+            {
+                var graphic = rect.GetComponent<Graphic>();
+
+                // Nothing to move: a rect with no graphic of its own, or one already told
+                // not to take clicks, was never a pointer target to begin with.
+                if (graphic == null || !graphic.raycastTarget) return;
+
+                graphic.raycastTarget = false;
+
+                var host = new GameObject(HitAreaName, typeof(RectTransform), typeof(Image));
+                host.layer = rect.gameObject.layer;
+                host.transform.SetParent(rect, false);
+                host.transform.SetAsFirstSibling();
+
+                Image fill = host.GetComponent<Image>();
+                fill.color = new Color(0f, 0f, 0f, 0f);
+                fill.raycastTarget = true;
+
+                found = host.transform;
+            }
+
+            var area = (RectTransform)found;
+
+            area.anchorMin = new Vector2(opaque.x, opaque.y);
+            area.anchorMax = new Vector2(opaque.z, opaque.w);
+            area.offsetMin = Vector2.zero;
+            area.offsetMax = Vector2.zero;
+        }
+
         /// <summary>A line of text.</summary>
         public static TextMeshProUGUI CreateLabel(string name, Transform parent, string text,
             float size = 24f, TextAlignmentOptions alignment = TextAlignmentOptions.Left)
@@ -133,6 +226,10 @@ namespace ChibiFantasy.Client.UI
             var button = background.gameObject.AddComponent<Button>();
             button.targetGraphic = background;
 
+            // Art if this build has any, Unity's colour tint if not. A screen must look
+            // right in a player's client and still build in a bare test scene.
+            PreWorldUiSkin.Active?.Dress(button);
+
             label = CreateLabel("Label", background.transform, text, 22f,
                 TextAlignmentOptions.Center);
 
@@ -155,6 +252,10 @@ namespace ChibiFantasy.Client.UI
             string placeholder, bool password = false)
         {
             Image background = CreatePanel(name, parent, Slot);
+
+            PreWorldUiSkin skin = PreWorldUiSkin.Active;
+
+            if (skin != null) skin.Dress(background, skin.InputNormal);
 
             var field = background.gameObject.AddComponent<TMP_InputField>();
 
@@ -186,6 +287,18 @@ namespace ChibiFantasy.Client.UI
             {
                 field.contentType = TMP_InputField.ContentType.Password;
                 field.asteriskChar = '*';
+            }
+
+            // TMP builds its caret object in OnEnable, and only when it already has a text
+            // component to build it beside. AddComponent above ran OnEnable there and then,
+            // before any of these lines -- so a field composed in code ends up with no caret
+            // at all: it takes focus, it accepts typing, and it never shows a cursor.
+            // Cycling the component runs OnEnable a second time, now that it has what it
+            // needs. Only play mode builds one, which is also the only place it is seen.
+            if (Application.isPlaying)
+            {
+                field.enabled = false;
+                field.enabled = true;
             }
 
             return field;

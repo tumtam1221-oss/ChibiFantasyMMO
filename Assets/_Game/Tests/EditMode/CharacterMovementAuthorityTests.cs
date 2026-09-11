@@ -591,15 +591,60 @@ namespace ChibiFantasy.Tests.EditMode
 
             Assert.That(source, Does.Not.Contain("SyncVar<InventorySnapshot>"),
                 "a synchronised bag is a bag everybody can read");
-            Assert.That(source, Does.Not.Contain("[ObserversRpc]"),
-                "an observers message would tell every player what is in somebody's bag");
             Assert.That(source, Does.Contain("[TargetRpc]"),
                 "the owner is addressed directly, which is what makes it private");
+
+            // 18.18B1-G added the first observers message on this object: an accepted attack,
+            // so that everybody watching a fight sees the swing. The blanket ban on
+            // [ObserversRpc] that stood here is restated rather than deleted, the same way
+            // 18.4 restated 18.3's ban on the word "inventory": what must hold is that
+            // nothing private travels to observers, not that no observer is ever told
+            // anything. A broadcast that carries no arguments cannot carry a bag.
+            foreach (string signature in ObserversSignatures(source))
+            {
+                Assert.That(signature, Does.Contain("()"),
+                    "an observers message with a payload is how private state leaks to "
+                    + "every player; this one carries: " + signature);
+            }
 
             // And no live domain object crosses the wire: the snapshot is ids and numbers.
             Assert.That(source, Does.Not.Contain("ItemInstance "),
                 "a client must never be handed an authoritative item object");
             Assert.That(source, Does.Not.Contain("ItemContainerState"));
+        }
+
+        /// <summary>
+        /// Every method declaration that follows an <c>[ObserversRpc]</c> attribute.
+        /// </summary>
+        /// <remarks>Read from the source rather than by reflection because the point is what
+        /// a person wrote, not what the weaver produced: FishNet generates companion methods
+        /// for each RPC, and asserting against those would be asserting about FishNet.
+        /// </remarks>
+        private static System.Collections.Generic.IEnumerable<string> ObserversSignatures(
+            string source)
+        {
+            const string Marker = "[ObserversRpc]";
+
+            var found = new System.Collections.Generic.List<string>();
+
+            int at = source.IndexOf(Marker, System.StringComparison.Ordinal);
+
+            while (at >= 0)
+            {
+                int lineStart = source.IndexOf('\n', at);
+
+                if (lineStart < 0) break;
+
+                int lineEnd = source.IndexOf('\n', lineStart + 1);
+
+                if (lineEnd < 0) lineEnd = source.Length;
+
+                found.Add(source.Substring(lineStart + 1, lineEnd - lineStart - 1).Trim());
+
+                at = source.IndexOf(Marker, lineEnd, System.StringComparison.Ordinal);
+            }
+
+            return found;
         }
     }
 }

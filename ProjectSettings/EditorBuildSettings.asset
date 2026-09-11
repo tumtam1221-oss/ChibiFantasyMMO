@@ -26,5 +26,11 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/_Game/Scenes/World/World_Server.unity
     guid: ed66475f4f1af174ba9070714be729af
+  - enabled: 1
+    path: Assets/_Game/Scenes/World/HarborTown.unity
+    guid: fafd82d6f6c19294196590b8c28f6b79
+  - enabled: 1
+    path: Assets/_Game/Scenes/World/HarborOutskirts.unity
+    guid: 4f6c8aa4552ba4f4f980656fe5bbd92f
   m_configObjects: {}
   m_UseUCBPForAssetBundles: 0

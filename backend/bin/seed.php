@@ -129,24 +129,41 @@ try {
             updated_at = NOW(3)'
     );
 
-    $spawn->execute([
-        ':id'        => 'spawn.harbor_town.slime_king',
-        ':map'       => 'map.harbor_town',
-        ':monster'   => 'monster.ancient_slime_king',
-        ':x'         => 40.0,
-        ':y'         => 0.0,
-        ':z'         => 40.0,
-        ':radius'    => 0.0,
-        ':initial'   => 1,
-        ':max_alive' => 1,
-        // Thirty minutes, matching the authored RespawnSettings the runtime already uses.
-        ':respawn'   => 1800.0,
-        ':grp'       => null,
-    ]);
+    // The camps around the walled town. Every position is outside the map's authored safe
+    // zones (the town wall, r 30 at the origin; the mountain path, r 24 at (-8, 55)) -- the
+    // server refuses a row inside one, so a typo here empties a camp rather than putting
+    // a slime in the plaza. Y is 0 on purpose: the server drops each monster onto the
+    // baked ground when it spawns.
+    $camps = [
+        // id, monster, x, z, radius, initial, max alive, respawn seconds
+        ['spawn.harbor_town.south_meadow', 'monster.training_slime',    0.0,  -58.0, 6.0, 4, 6, 20.0],
+        ['spawn.harbor_town.west_shore',   'monster.training_slime',  -58.0,   -8.0, 6.0, 3, 5, 25.0],
+        ['spawn.harbor_town.east_woods',   'monster.training_slime',   54.0,   12.0, 6.0, 3, 5, 25.0],
+        ['spawn.harbor_town.river_bend',   'monster.training_slime',   38.0,  -52.0, 6.0, 3, 5, 30.0],
+        // The world boss keeps the far knoll. Thirty minutes, matching the authored
+        // RespawnSettings the runtime already uses.
+        ['spawn.harbor_town.slime_king',   'monster.ancient_slime_king', -46.0, 40.0, 0.0, 1, 1, 1800.0],
+    ];
+
+    foreach ($camps as [$id, $monster, $x, $z, $radius, $initial, $maxAlive, $respawn]) {
+        $spawn->execute([
+            ':id'        => $id,
+            ':map'       => 'map.harbor_town',
+            ':monster'   => $monster,
+            ':x'         => $x,
+            ':y'         => 0.0,
+            ':z'         => $z,
+            ':radius'    => $radius,
+            ':initial'   => $initial,
+            ':max_alive' => $maxAlive,
+            ':respawn'   => $respawn,
+            ':grp'       => null,
+        ]);
+    }
 
     echo 'seeded ' . ($useTest ? 'test' : 'application') . ' database' . PHP_EOL;
     echo '  1 currency, 1 server, 2 channels (one with PK enabled)' . PHP_EOL;
-    echo '  1 world-boss spawn point (monster.ancient_slime_king on map.harbor_town)' . PHP_EOL;
+    echo '  5 monster camps on map.harbor_town (4 slime camps outside the wall + the slime king on the far knoll)' . PHP_EOL;
     echo '  no accounts: fixtures never ship credentials' . PHP_EOL;
 
     exit(0);

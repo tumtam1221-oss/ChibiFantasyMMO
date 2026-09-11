@@ -60,7 +60,8 @@ namespace ChibiFantasy.Backend
         public static IWorldSessionAuthority WorldServicesOverHttp(string baseAddress,
             int timeoutSeconds, out ICharacterStateStore characters,
             out IMonsterSpawnConfigurationSource spawns, out IDisposable lifetime,
-            out IPartyStateStore parties, out IMonsterRewardOutbox rewards)
+            out IPartyStateStore parties, out IMonsterRewardOutbox rewards,
+            out IWorldClockStore clock, out IWorldReclaim reclaim)
         {
             var transport = new UnityWebRequestTransport(baseAddress, timeoutSeconds);
 
@@ -72,6 +73,11 @@ namespace ChibiFantasy.Backend
             spawns = new HttpMonsterSpawnConfigurationSource(transport);
             parties = new HttpPartyStateStore(transport, authority);
             rewards = new HttpMonsterRewardOutbox(transport, authority);
+
+            // The two services here with no player behind them: their key comes from the
+            // environment this process was launched in, never from the project.
+            clock = new HttpWorldClockStore(transport);
+            reclaim = new HttpWorldReclaim(transport);
 
             return authority;
         }

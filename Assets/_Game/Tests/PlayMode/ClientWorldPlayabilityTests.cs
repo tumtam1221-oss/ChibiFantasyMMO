@@ -437,6 +437,184 @@ namespace ChibiFantasy.Tests.PlayMode
             return counted;
         }
 
+        /// <summary>
+        /// A walking character is drawn at a steady pace, over a real socket.
+        /// </summary>
+        /// <remarks>
+        /// <b>Why this exists and the other stepping tests do not replace it.</b> Everything
+        /// else that measures this feeds <c>AdvancePresentation</c> a position by hand. That
+        /// is a model of the game, and a model only contains the faults its author thought
+        /// of. This drives the shipped chain end to end: real input on a real
+        /// <c>CharacterMovementInput</c>, a real socket, the real authority moving a real
+        /// character on the real server, FishNet replicating on its own tick, and the real
+        /// <c>CharacterVisualPresenter</c> deriving the animator's Speed from what it sees.
+        /// Whatever makes the walk uneven in the running game has to show up here.
+        ///
+        /// <b>What it measures.</b> How far the visible character moved each frame, and what
+        /// the animator was told. A run cycle plays at a fixed rate, so ground that surges
+        /// and stalls under it is exactly what makes the feet slip and catch.
+        ///
+        /// It also writes the per-frame trace to <c>Builds/walk-trace.txt</c> when one is
+        /// asked for, because a distribution is what turns "it stutters" into a number.
+        /// </remarks>
+        [UnityTest]
+        public IEnumerator TheOwnedCharacterIsDrawnAtASteadyPaceWhileWalking()
+        {
+            yield return StartServer();
+
+            yield return StartClient();
+
+            yield return Until(() => Owned() != null, 900);
+
+            CharacterNetworkEntity owned = Owned();
+
+            Assert.That(owned, Is.Not.Null, "the client never received a character it owns");
+
+            var visual = owned.GetComponent<CharacterVisualPresenter>();
+            var input = owned.GetComponent<CharacterMovementInput>();
+
+            Assert.That(input, Is.Not.Null, "the owned character carries no movement input");
+
+            yield return Until(() => visual != null && visual.HasVisual, 900);
+
+            // Click-to-move writes the intent every frame and would zero this one back out,
+            // so it stands down for the duration. What is under measurement is the walk, not
+            // what chose the direction.
+            foreach (WorldPointerInput pointer in
+                Object.FindObjectsByType<WorldPointerInput>(FindObjectsSortMode.None))
+            {
+                pointer.enabled = false;
+            }
+
+            // South, down the open approach. North of the plaza spawn is the pond, which
+            // the server rightly refuses to walk into -- and a character standing at the
+            // water's edge measures nothing.
+            input.Intent = Walking;
+
+            // Let the connection, the cadence and the blend all settle before measuring.
+            for (var i = 0; i < 180; i++)
+            {
+                input.Intent = Walking;
+
+                yield return null;
+            }
+
+            var drawnSteps = new List<float>();
+            var animatorSpeed = new List<float>();
+            var authoritativeSteps = new List<float>();
+            var trace = new System.Text.StringBuilder();
+
+            Vector3 previousDrawn = owned.transform.position;
+            var previousAuthoritative = new Vector3(owned.X, owned.Y, owned.Z);
+            var framesSinceServerMoved = 0;
+
+            for (var frame = 0; frame < 600; frame++)
+            {
+                input.Intent = Walking;
+
+                yield return null;
+
+                Vector3 drawn = owned.transform.position;
+                var authoritative = new Vector3(owned.X, owned.Y, owned.Z);
+
+                float drawnStep = new Vector2(drawn.x - previousDrawn.x,
+                    drawn.z - previousDrawn.z).magnitude;
+
+                float authoritativeStep = new Vector2(
+                    authoritative.x - previousAuthoritative.x,
+                    authoritative.z - previousAuthoritative.z).magnitude;
+
+                if (authoritativeStep > 0f)
+                {
+                    authoritativeSteps.Add(authoritativeStep);
+                    framesSinceServerMoved = 0;
+                }
+                else
+                {
+                    framesSinceServerMoved++;
+                }
+
+                // The server has stopped moving them -- refused by the ground, or blocked.
+                // Measuring a character that is standing still measures nothing.
+                if (framesSinceServerMoved > 40) break;
+
+                drawnSteps.Add(drawnStep / Mathf.Max(Time.deltaTime, 0.0001f));
+                animatorSpeed.Add(visual.Speed01);
+
+                trace.AppendLine(frame + ", " + (Time.deltaTime * 1000f).ToString("F2")
+                    + ", " + drawnStep.ToString("F5") + ", " + authoritativeStep.ToString("F5")
+                    + ", " + visual.MeasuredSpeed01.ToString("F3")
+                    + ", " + visual.Speed01.ToString("F3"));
+
+                previousDrawn = drawn;
+                previousAuthoritative = authoritative;
+            }
+
+            input.Intent = Vector2.zero;
+
+            System.IO.File.WriteAllText("Builds/walk-trace.txt",
+                "frame, deltaMs, drawnStep, authStep, measured01, shown01" + System.Environment.NewLine + trace);
+
+            float drawnMean = Mean(drawnSteps);
+            float drawnDeviation = Deviation(drawnSteps, drawnMean);
+            float authoritativeMean = Mean(authoritativeSteps);
+            float authoritativeDeviation = Deviation(authoritativeSteps, authoritativeMean);
+            var stalled = 0;
+
+            foreach (float speed in drawnSteps) if (speed < drawnMean * 0.35f) stalled++;
+
+            float animatorLow = float.MaxValue;
+
+            foreach (float speed in animatorSpeed) animatorLow = Mathf.Min(animatorLow, speed);
+
+            string summary = "drawn pace " + drawnMean.ToString("F3") + " m/s, spread "
+                + (100f * drawnDeviation / drawnMean).ToString("F0") + "%"
+                + "; server steps spread "
+                + (100f * authoritativeDeviation / Mathf.Max(authoritativeMean, 0.0001f))
+                    .ToString("F0") + "%"
+                + "; frames under a third of pace " + stalled
+                + "; lowest animator Speed " + animatorLow.ToString("F3");
+
+            Assert.That(drawnSteps.Count, Is.GreaterThan(250),
+                "the server stopped moving the character after " + drawnSteps.Count
+                + " frames, so there is not enough walking to judge -- " + summary);
+
+            Assert.That(drawnMean, Is.GreaterThan(0.2f),
+                "the character never actually walked: " + summary);
+
+            Assert.That(drawnDeviation / drawnMean, Is.LessThan(0.35f),
+                "the visible walk is uneven over a real socket -- " + summary);
+
+            Assert.That(animatorLow, Is.GreaterThan(0.5f),
+                "the animator was dropped towards idle mid-walk, which is the run cycle "
+                + "breaking stride -- " + summary);
+        }
+
+        /// <summary>The direction this walks. South, where the ground is open.</summary>
+        private static Vector2 Walking => new Vector2(0f, -1f);
+
+        private static float Mean(List<float> values)
+        {
+            if (values.Count == 0) return 0f;
+
+            var total = 0f;
+
+            foreach (float value in values) total += value;
+
+            return total / values.Count;
+        }
+
+        private static float Deviation(List<float> values, float mean)
+        {
+            if (values.Count == 0) return 0f;
+
+            var total = 0f;
+
+            foreach (float value in values) total += (value - mean) * (value - mean);
+
+            return Mathf.Sqrt(total / values.Count);
+        }
+
         // ---- harness ---------------------------------------------------------------------
 
         private IEnumerator StartServer()

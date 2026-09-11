@@ -1,5 +1,6 @@
 using System;
 using ChibiFantasy.Contracts;
+using ChibiFantasy.Core;
 using ChibiFantasy.Network;
 using FishNet.Managing;
 using FishNet.Transporting;
@@ -81,6 +82,48 @@ namespace ChibiFantasy.Client
         /// <summary>Raised when the server says where the character stands.</summary>
         public event Action<WorldSpawnMessage> OnSpawnReceived;
 
+        /// <summary>The last weather this client was told about, as <c>WorldWeather</c>.</summary>
+        public int LastWeather { get; private set; }
+
+        /// <summary>Raised when the server says the sky turned.</summary>
+        public event Action<int> OnWeatherReceived;
+
+        /// <summary>The last time the world reported, or a default before it has said anything.</summary>
+        public WorldTimeMessage LastTime { get; private set; }
+
+        /// <summary>Raised when the world repeats what time it is.</summary>
+        public event Action<WorldTimeMessage> OnTimeReceived;
+
+        /// <summary>Command-line names and environment variables this client accepts.</summary>
+        public const string AddressOption = "world-address";
+        public const string AddressVariable = "CHIBI_WORLD_ADDRESS";
+        public const string PortOption = "world-port";
+        public const string PortVariable = "CHIBI_WORLD_PORT";
+
+        /// <summary>
+        /// Lets the launch say which world server to reach.
+        /// </summary>
+        /// <remarks>
+        /// <b>The same build, pointed anywhere.</b> A test client, a staging world and a live
+        /// one differ by an address, and baking that into the build made each of them a
+        /// separate build of identical code.
+        ///
+        /// <b>An address, never a credential.</b> Where the world is, is not a secret -- a
+        /// player's own client necessarily knows it. Nothing that proves who somebody is
+        /// arrives this way, and nothing here is logged.
+        /// </remarks>
+        private void ApplyLaunchOptions()
+        {
+            string[] arguments = Environment.GetCommandLineArgs();
+            Func<string, string> environment = Environment.GetEnvironmentVariable;
+
+            _address = LaunchOptions.Resolve(AddressOption, AddressVariable,
+                arguments, environment, _address);
+
+            _port = LaunchOptions.ResolvePort(PortOption, PortVariable,
+                arguments, environment, _port);
+        }
+
         private void Awake()
         {
             _networkManager = GetComponent<NetworkManager>();
@@ -91,6 +134,8 @@ namespace ChibiFantasy.Client
 
                 return;
             }
+
+            ApplyLaunchOptions();
 
             Register();
 
@@ -109,6 +154,8 @@ namespace ChibiFantasy.Client
 
             _networkManager.ClientManager.RegisterBroadcast<WorldJoinResponseMessage>(OnJoinResponse);
             _networkManager.ClientManager.RegisterBroadcast<WorldSpawnMessage>(OnSpawn);
+            _networkManager.ClientManager.RegisterBroadcast<WorldWeatherMessage>(OnWeather);
+            _networkManager.ClientManager.RegisterBroadcast<WorldTimeMessage>(OnTime);
             _networkManager.ClientManager.OnClientConnectionState += OnConnectionState;
 
             _registered = true;
@@ -150,11 +197,54 @@ namespace ChibiFantasy.Client
             if (!string.IsNullOrEmpty(content)) _contentVersion = content;
         }
 
+        /// <summary>
+        /// What the socket last did.
+        /// </summary>
+        /// <remarks>Recorded because it used to be discarded. Every state except Started was
+        /// dropped on the floor, so a client that could not reach the world server loaded the
+        /// world scene, drew the sky, and waited forever with nothing in it and nothing said
+        /// -- which is exactly how an empty GameWorld reached a manual test.</remarks>
+        public LocalConnectionState ConnectionState { get; private set; }
+            = LocalConnectionState.Stopped;
+
+        /// <summary>
+        /// Whether the socket stopped without ever reaching the world.
+        /// </summary>
+        /// <remarks>True after a failed connect, false again once one succeeds. This is the
+        /// difference between "the world is empty because nothing spawned yet" and "the world
+        /// is empty because this client is not connected to anything", which a player and a
+        /// test both need to be able to tell apart.</remarks>
+        public bool ConnectionFailed { get; private set; }
+
+        /// <summary>Raised on every change of socket state.</summary>
+        public event System.Action<LocalConnectionState> ConnectionChanged;
+
         private void OnConnectionState(ClientConnectionStateArgs args)
         {
-            if (args.ConnectionState != LocalConnectionState.Started) return;
+            ConnectionState = args.ConnectionState;
 
-            SendJoinRequest();
+            if (args.ConnectionState == LocalConnectionState.Started)
+            {
+                ConnectionFailed = false;
+
+                ConnectionChanged?.Invoke(args.ConnectionState);
+
+                SendJoinRequest();
+
+                return;
+            }
+
+            if (args.ConnectionState == LocalConnectionState.Stopped)
+            {
+                ConnectionFailed = true;
+
+                // Loud, because the alternative is a world that renders correctly and is
+                // simply empty. There is nothing else on screen to say why.
+                Debug.LogError("[client] not connected to the world server at " + _address
+                    + ":" + _port + " -- the world will be empty until it is reachable", this);
+            }
+
+            ConnectionChanged?.Invoke(args.ConnectionState);
         }
 
         /// <summary>
@@ -179,6 +269,34 @@ namespace ChibiFantasy.Client
             });
         }
 
+        /// <summary>
+        /// Asks the server to hold the sky at one weather.
+        /// </summary>
+        /// <remarks>
+        /// <b>Nothing is applied locally.</b> This sends a request and returns; the sky only
+        /// changes when the server says so, through the same broadcast every other client
+        /// gets. A version that also set the local weather would show the sender a sky nobody
+        /// else was standing under whenever the server refused -- which a release server
+        /// always does.
+        /// </remarks>
+        public void RequestWeather(int weather)
+        {
+            Send(new WorldWeatherCommandMessage { Weather = weather, Automatic = false });
+        }
+
+        /// <summary>Asks the server to stop holding the sky and let it roll again.</summary>
+        public void RequestAutomaticWeather()
+        {
+            Send(new WorldWeatherCommandMessage { Automatic = true });
+        }
+
+        private void Send(WorldWeatherCommandMessage message)
+        {
+            if (_networkManager == null || !_networkManager.ClientManager.Started) return;
+
+            _networkManager.ClientManager.Broadcast(message);
+        }
+
         private void OnJoinResponse(WorldJoinResponseMessage message, Channel channel)
         {
             LastResponse = message;
@@ -192,7 +310,35 @@ namespace ChibiFantasy.Client
             // writes it back or argues with it.
             LastSpawn = message;
 
+            LastWeather = message.Weather;
+
             OnSpawnReceived?.Invoke(message);
+        }
+
+        /// <summary>
+        /// The weather turned while this client was connected.
+        /// </summary>
+        /// <remarks>Kept as well as raised, so a presenter that loads after the message
+        /// arrives -- an environment scene streaming in mid-storm -- can still catch up
+        /// rather than staying dry until the next change.</remarks>
+        private void OnWeather(WorldWeatherMessage message, Channel channel)
+        {
+            LastWeather = message.Weather;
+
+            OnWeatherReceived?.Invoke(message.Weather);
+        }
+
+        /// <summary>
+        /// The world said what time it is.
+        /// </summary>
+        /// <remarks>Kept as well as raised, for the same reason the weather is: a presenter
+        /// that loads between two of these can read the last one rather than run on a stale
+        /// clock until the next minute comes round.</remarks>
+        private void OnTime(WorldTimeMessage message, Channel channel)
+        {
+            LastTime = message;
+
+            OnTimeReceived?.Invoke(message);
         }
 
         private void OnDestroy()

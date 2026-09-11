@@ -1,0 +1,11 @@
+Use these separated PC UI assets to restyle the existing pre-world UI only.
+Target 1920x1080 desktop. Inspect existing UI first; do not replace working session/navigation logic.
+Import under Assets/_Game/Art/UI/PreWorld/.
+Use TMP for all labels/data; never bake server/channel/account text into images.
+Use button Normal/Hover/Pressed sprites via Selectable Sprite Swap.
+Use 9-slicing where appropriate for panels/buttons after setting sprite borders in Unity.
+Preserve the existing real Login -> ServerSelect -> ChannelSelect -> CharacterSelect -> GameWorld flow.
+Do not touch authentication, FishNet, PHP/MySQL, gameplay authority, character FBX/rigs, or production networking.
+The Screens folder is layout reference only.
+BackgroundReferences/*_REFERENCE.png are visual references/upscaled thumbnails, not final production backgrounds.
+After wiring, test mouse hover/click at 1920x1080 and 2560x1440 and verify no production flow regression.

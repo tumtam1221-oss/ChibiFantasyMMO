@@ -482,11 +482,26 @@ namespace ChibiFantasy.Server
             LastMovementTimestamp = 0;
         }
 
+        /// <summary>
+        /// Where this character was standing the last time a save succeeded.
+        /// </summary>
+        /// <remarks>The autosave compares against this rather than against a timer alone, so
+        /// somebody standing still costs nothing and somebody walking is written down.</remarks>
+        internal CombatPosition LastSavedPosition { get; private set; }
+
+        internal bool HasBeenSaved { get; private set; }
+
         /// <summary>Records that a save succeeded at a new revision.</summary>
         internal void MarkSaved(int saveRevision)
         {
             SaveRevision = saveRevision;
             IsDirty = false;
+
+            if (Location != null)
+            {
+                LastSavedPosition = Location.Position;
+                HasBeenSaved = true;
+            }
         }
 
         public override string ToString()
@@ -575,6 +590,9 @@ namespace ChibiFantasy.Server
         /// list of who is present is the same list.</remarks>
         private int _version;
 
+        /// <summary>Seconds since the last autosave sweep.</summary>
+        private float _sinceAutosave;
+
         private List<LivingCharacter> _snapshot = new List<LivingCharacter>();
 
         private int _snapshotVersion = -1;
@@ -642,6 +660,24 @@ namespace ChibiFantasy.Server
             {
                 return WorldSpawnResult.Refused(WorldSpawnRejection.NoSpawnPoint,
                     "spawn " + spawn.Id + " refused the arrival");
+            }
+
+            // <b>Back where they left off.</b> Arriving is what puts a character on a map,
+            // and it places them on the authored spawn, which is right for a first entry
+            // and wrong for a returning player: they walked somewhere, logged out, and
+            // expect to still be there. So when the row remembers a position, and it
+            // belongs to the map they are arriving on, that is where they stand.
+            //
+            // The map check matters. A character whose row was written on one map and whose
+            // spawn resolved to another -- content moved, a map retired -- would otherwise
+            // be dropped at coordinates that mean nothing there. Falling back to the spawn
+            // is the safe answer, and it is the behaviour every existing row gets, since
+            // none of them carry a position yet.
+            if (loaded.Character.HasPosition && loaded.Character.Map.IsValid
+                && loaded.Character.Map == location.CurrentMap)
+            {
+                location.Position = new CombatPosition(loaded.Character.PositionX,
+                    loaded.Character.PositionY, loaded.Character.PositionZ);
             }
 
             // The bag is rebuilt from the same row the rest of the character came from, in
@@ -839,9 +875,18 @@ namespace ChibiFantasy.Server
         /// <summary>
         /// Saves and removes a character, for a connection that is leaving.
         /// </summary>
-        /// <remarks>Removed whatever the save reported. A character kept in the registry
-        /// because its save failed would block the player's own reconnection, which turns a
-        /// transient database problem into a lockout.</remarks>
+        /// <remarks>
+        /// Removed whatever the save reported. A character kept in the registry because its
+        /// save failed would block the player's own reconnection, which turns a transient
+        /// database problem into a lockout.
+        ///
+        /// <b>Forced, and that is the point.</b> <see cref="LivingCharacter.IsDirty"/> tracks
+        /// the things that change rarely -- a level, a bag, a pet -- and walking is not one
+        /// of them: nothing marks a character dirty for moving, because a save per step is
+        /// exactly what that flag exists to prevent. But the position is only worth writing
+        /// at one moment, and this is it. Leaving it to the dirty check meant a player who
+        /// only walked was never saved at all, so every login put them back on the spawn.
+        /// </remarks>
         public CharacterPersistenceResult Despawn(int connectionId)
         {
             if (!_byConnection.TryGetValue(connectionId, out LivingCharacter living))
@@ -850,7 +895,7 @@ namespace ChibiFantasy.Server
                     "no character on that connection");
             }
 
-            CharacterPersistenceResult result = Save(living);
+            CharacterPersistenceResult result = Save(living, true);
 
             _byConnection.Remove(connectionId);
 
@@ -898,13 +943,75 @@ namespace ChibiFantasy.Server
         /// </summary>
         /// <remarks>What a controlled shutdown calls. Returns how many saves the authority
         /// accepted, so an operator can tell a clean stop from one that lost writes.</remarks>
+        /// <summary>
+        /// Writes down anybody who has walked since they were last saved.
+        /// </summary>
+        /// <remarks>
+        /// <b>Why this exists.</b> Everything else that saves a character is an event: an
+        /// item picked up, a reward paid, a pet summoned, a departure. Walking is none of
+        /// those, so a player who logged in, walked a long way, stood waiting for a party and
+        /// then lost their connection was never written down at all -- their next login put
+        /// them back where they started. That is not a bug in the position column; it is the
+        /// absence of a heartbeat.
+        ///
+        /// <b>Distance, not just time.</b> A timer alone would write every character every
+        /// interval whether or not anything changed, which is a database write per player per
+        /// interval for a world standing still. Comparing against
+        /// <see cref="LivingCharacter.LastSavedPosition"/> means a stationary player costs one
+        /// subtraction, and a walking one costs a write they actually need.
+        ///
+        /// <b>Forced, deliberately.</b> Walking never sets <c>IsDirty</c> -- see
+        /// <see cref="Despawn"/> -- so the dirty check would refuse every one of these.
+        ///
+        /// <paramref name="everySeconds"/> bounds the loss from a crash or a dropped
+        /// connection; <paramref name="metres"/> is what counts as having moved at all.
+        /// </remarks>
+        /// <returns>How many characters were written.</returns>
+        public int TickAutosave(float deltaSeconds, float everySeconds = 15f,
+            float metres = 1f)
+        {
+            if (deltaSeconds <= 0f) return 0;
+
+            _sinceAutosave += deltaSeconds;
+
+            if (_sinceAutosave < everySeconds) return 0;
+
+            _sinceAutosave = 0f;
+
+            var saved = 0;
+            float threshold = metres * metres;
+
+            foreach (LivingCharacter living in All())
+            {
+                if (living.Location == null || !living.Location.HasArrived) continue;
+
+                CombatPosition now = living.Location.Position;
+
+                if (living.HasBeenSaved)
+                {
+                    CombatPosition then = living.LastSavedPosition;
+                    float dx = now.X - then.X;
+                    float dz = now.Z - then.Z;
+
+                    if ((dx * dx) + (dz * dz) < threshold) continue;
+                }
+
+                if (Save(living, true).IsOk) saved++;
+            }
+
+            return saved;
+        }
+
         public int SaveAllAndClear()
         {
             int saved = 0;
 
             foreach (LivingCharacter living in All())
             {
-                if (Save(living).IsOk) saved++;
+                // Forced for the same reason a departure is: a shutdown is the last chance
+                // to write down where everybody was standing, and walking never sets the
+                // dirty flag.
+                if (Save(living, true).IsOk) saved++;
             }
 
             _byConnection.Clear();

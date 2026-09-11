@@ -322,6 +322,152 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(screen.StatusMessage, Is.Not.Null);
         }
 
+        // ---- the character screen picks in two steps, like the two before it ----------------
+
+        [Test]
+        public void ClickingASlotHighlightsItAndEnterWorldIsWhatEnters()
+        {
+            SignIn(AccountA);
+
+            _controller.SubmitSelectServer(Server1, RequestId.New());
+            _controller.SubmitSelectChannel(Channel1A, RequestId.New());
+
+            CharacterSelectScreen screen = NewScreen<CharacterSelectScreen>();
+
+            EnterWorldResult authorised = default;
+            screen.WorldAuthorised += result => authorised = result;
+
+            screen.Bind(_controller);
+
+            // Clicking a slot chooses nothing on its own. The defect this guards against is a
+            // screen that enters the world the moment a row is touched, which gives a player
+            // no chance to see which character they landed on.
+            screen.Highlight(CharacterA2);
+
+            Assert.That(screen.Highlighted, Is.EqualTo(CharacterA2));
+            Assert.That(authorised.IsAccepted, Is.False,
+                "a highlight is not an entry");
+            Assert.That(_controller.Flow.State, Is.EqualTo(SessionState.ChannelSelected));
+
+            screen.Confirm();
+
+            Assert.That(authorised.IsAccepted, Is.True, screen.StatusMessage);
+            Assert.That(_controller.Flow.State, Is.EqualTo(SessionState.EnteringWorld));
+        }
+
+        [Test]
+        public void TheBackButtonOnTheCharacterListSignsOutAndSaysSo()
+        {
+            SignIn(AccountA);
+
+            _controller.SubmitSelectServer(Server1, RequestId.New());
+            _controller.SubmitSelectChannel(Channel1A, RequestId.New());
+
+            CharacterSelectScreen screen = NewScreen<CharacterSelectScreen>();
+
+            var toldTheClient = false;
+            screen.WentBack += () => toldTheClient = true;
+            screen.Bind(_controller);
+
+            screen.GoBack();
+
+            Assert.That(toldTheClient, Is.True,
+                "the client is told, otherwise it sits on a screen it can no longer act on");
+            Assert.That(Sessions.HasLiveSession(AccountA, 0L), Is.False,
+                "the account is free to sign in again");
+        }
+
+        [Test]
+        public void APaintedListDoesNotAnnounceItselfEmpty()
+        {
+            SignIn(AccountA);
+
+            // Every screen that paints its own table: the plain rows stay empty by design, so
+            // a status line keyed to those rows told a player "no available servers" over a
+            // full one.
+            ServerSelectScreen servers = NewScreen<ServerSelectScreen>();
+            servers.Bind(_controller);
+
+            Assert.That(servers.StatusMessage, Is.Empty,
+                "the server list is not empty; it is painted");
+
+            _controller.SubmitSelectServer(Server1, RequestId.New());
+
+            ChannelSelectScreen channels = NewScreen<ChannelSelectScreen>();
+            channels.Bind(_controller);
+
+            Assert.That(channels.StatusMessage, Is.Empty);
+
+            _controller.SubmitSelectChannel(Channel1A, RequestId.New());
+
+            CharacterSelectScreen characters = NewScreen<CharacterSelectScreen>();
+            characters.Bind(_controller);
+
+            Assert.That(characters.StatusMessage, Is.Empty);
+        }
+
+        // ---- going back is a real sign-out ------------------------------------------------
+
+        [Test]
+        public void SigningOutFreesTheAccountToSignInAgain()
+        {
+            SignIn(AccountA);
+
+            Assert.That(_controller.Flow.State, Is.EqualTo(SessionState.Authenticated));
+
+            Assert.That(_controller.SignOut(), Is.True);
+            Assert.That(_controller.Flow.State, Is.EqualTo(SessionState.Unauthenticated));
+
+            // The point of the test. A sign-out that only drops the controller's reference
+            // leaves the directory still holding a usable session for the account, and this
+            // second attempt comes back SessionAlreadyActive -- the player locked out of
+            // their own account by the button meant to let them back out.
+            LoginScreen again = SignIn(AccountA);
+
+            Assert.That(_controller.LastLoginResult.Reason,
+                Is.EqualTo(LoginRejection.None), again.StatusMessage);
+            Assert.That(_controller.Flow.State, Is.EqualTo(SessionState.Authenticated));
+        }
+
+        [Test]
+        public void TheBackButtonOnAServerListSignsOutAndSaysSo()
+        {
+            SignIn(AccountA);
+
+            ServerSelectScreen screen = NewScreen<ServerSelectScreen>();
+
+            var toldTheClient = false;
+            screen.SignedOut += () => toldTheClient = true;
+            screen.Bind(_controller);
+
+            screen.GoBack();
+
+            Assert.That(toldTheClient, Is.True,
+                "the client is told, otherwise it sits on a screen it can no longer act on");
+            Assert.That(Sessions.HasLiveSession(AccountA, 0L),
+                Is.False, "the account is free to sign in again");
+        }
+
+        [Test]
+        public void TheBackButtonOnAChannelListSignsOutAndSaysSo()
+        {
+            SignIn(AccountA);
+
+            _controller.SubmitSelectServer(Server1, RequestId.New());
+
+            ChannelSelectScreen screen = NewScreen<ChannelSelectScreen>();
+
+            var toldTheClient = false;
+            screen.WentBack += () => toldTheClient = true;
+            screen.Bind(_controller);
+
+            screen.GoBack();
+
+            Assert.That(toldTheClient, Is.True);
+            Assert.That(Sessions.HasLiveSession(AccountA, 0L),
+                Is.False);
+        }
+
         // ---- the driver follows all of it -------------------------------------------------------------
 
         [Test]

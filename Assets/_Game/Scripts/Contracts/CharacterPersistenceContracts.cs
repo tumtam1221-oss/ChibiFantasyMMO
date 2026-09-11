@@ -347,8 +347,20 @@ namespace ChibiFantasy.Contracts
             int inventoryCapacity = 0, DefinitionId devilFruit = default,
             string devilFruitSource = null,
             IReadOnlyList<PersistedPet> pets = null, InstanceId activePet = default,
-            IReadOnlyList<PersistedRewardApplication> rewardApplications = null)
+            IReadOnlyList<PersistedRewardApplication> rewardApplications = null,
+            bool hasPosition = false, float positionX = 0f, float positionY = 0f,
+            float positionZ = 0f)
         {
+            // Trailing and optional so every existing caller still compiles unchanged, and
+            // so a row that has never been saved from the world simply says it has none.
+            HasPosition = hasPosition
+                && !float.IsNaN(positionX) && !float.IsInfinity(positionX)
+                && !float.IsNaN(positionY) && !float.IsInfinity(positionY)
+                && !float.IsNaN(positionZ) && !float.IsInfinity(positionZ);
+            PositionX = HasPosition ? positionX : 0f;
+            PositionY = HasPosition ? positionY : 0f;
+            PositionZ = HasPosition ? positionZ : 0f;
+
             RewardApplications = rewardApplications
                 ?? System.Array.Empty<PersistedRewardApplication>();
             Pets = pets ?? System.Array.Empty<PersistedPet>();
@@ -422,6 +434,25 @@ namespace ChibiFantasy.Contracts
 
         /// <summary>The authored spawn last stood on. Empty for a character that never has.</summary>
         public DefinitionId Spawn { get; }
+
+        /// <summary>
+        /// Whether this row remembers where the character was standing.
+        /// </summary>
+        /// <remarks>
+        /// <b>False is the ordinary case for a new character, not an error.</b> The map and
+        /// the spawn say where a character belongs; the position says where they had walked
+        /// to, and that only exists once they have been in the world and saved. Every row
+        /// written before the position columns existed reports false, and the world puts
+        /// those characters on the authored spawn exactly as it always did.
+        /// </remarks>
+        public bool HasPosition { get; }
+
+        /// <summary>Where they were standing, when <see cref="HasPosition"/> says so.</summary>
+        public float PositionX { get; }
+
+        public float PositionY { get; }
+
+        public float PositionZ { get; }
 
         public IReadOnlyList<PersistedStat> Stats { get; }
 

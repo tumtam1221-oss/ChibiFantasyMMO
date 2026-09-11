@@ -1,3 +1,6 @@
+using ChibiFantasy.Core;
+using ChibiFantasy.Data;
+
 namespace ChibiFantasy.Gameplay
 {
     /// <summary>Why a monster did not move this tick.</summary>
@@ -33,7 +36,13 @@ namespace ChibiFantasy.Gameplay
         OutOfBounds = 7,
 
         /// <summary>The monster is authored with no speed, so it cannot move at all.</summary>
-        NoSpeed = 8
+        NoSpeed = 8,
+
+        /// <summary>The step would enter one of the map's safe zones -- the town wall.</summary>
+        SafeZone = 9,
+
+        /// <summary>The step lands where the map's ground says nothing can stand.</summary>
+        Unwalkable = 10
     }
 
     /// <summary>What one movement step did.</summary>
@@ -136,7 +145,8 @@ namespace ChibiFantasy.Gameplay
         /// somewhere a player could not follow.
         /// </param>
         public static MonsterMoveResult Step(MonsterRuntimeState monster, MonsterAiState state,
-            CombatPosition? target, float deltaSeconds, float maxRadius = 0f)
+            CombatPosition? target, float deltaSeconds, float maxRadius = 0f,
+            MapDefinition map = null, IGroundHeight ground = null)
         {
             if (monster == null || monster.Definition == null)
             {
@@ -212,6 +222,25 @@ namespace ChibiFantasy.Gameplay
                 // comprehensible, and one slid along an invisible wall is not. The leash
                 // will send it home shortly anyway.
                 return MonsterMoveResult.Refused(MonsterMoveRejection.OutOfBounds, current);
+            }
+
+            // The town wall, as the server knows it. A chase ends here: the monster stops
+            // at the edge of the zone and the AI drops the target on its own.
+            if (map != null && !MonsterSpawnPlacement.AllowsMonstersAt(map, next.X, next.Z))
+            {
+                return MonsterMoveResult.Refused(MonsterMoveRejection.SafeZone, current);
+            }
+
+            // On a map with ground, a monster stands on it exactly as a player does, and a
+            // step onto no ground (water, a cliff face) is not taken.
+            if (ground != null)
+            {
+                if (!ground.TrySample(next.X, next.Z, out float groundY))
+                {
+                    return MonsterMoveResult.Refused(MonsterMoveRejection.Unwalkable, current);
+                }
+
+                next = new CombatPosition(next.X, groundY, next.Z);
             }
 
             // The only line that changes anything, and unreachable from every refusal above.

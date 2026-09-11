@@ -119,8 +119,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 67aad0a0edbd58340a339d1c4f3f0026, type: 3}
   m_Name: 
   m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.CharacterMovementInput
-  _smoothing: 12
-  _sendInterval: 0.05
+  _playbackStretch: 1.25
+  _sendInterval: 0.02
   _snapDistance: 4
 --- !u!114 &1801073953638534814
 MonoBehaviour:

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using ChibiFantasy.Backend;
 using ChibiFantasy.Contracts;
@@ -56,6 +57,14 @@ namespace ChibiFantasy.Server
 
         [Header("Listen")]
         [SerializeField] private ushort _port = 7770;
+
+        [Tooltip("Let clients ask for a sky. Has no effect on a release build, whatever it "
+            + "is set to -- see RegisterWeatherCommands.")]
+        [SerializeField] private bool _allowWeatherCommands = true;
+
+        [Tooltip("How often the world repeats what time it is, in seconds. Zero never repeats "
+            + "it, which leaves clients to drift.")]
+        [SerializeField] private float _timeBroadcastSeconds = 60f;
 
         [Tooltip("Start listening as soon as this component wakes.")]
         [SerializeField] private bool _startOnAwake = true;
@@ -175,6 +184,10 @@ namespace ChibiFantasy.Server
                 return;
             }
 
+            ApplyLaunchOptions();
+
+            if (!AuthorityAddressIsAcceptable()) return;
+
             Compose();
 
             if (_startOnAwake) StartServer();
@@ -190,7 +203,9 @@ namespace ChibiFantasy.Server
             ICharacterStateStore characters = null,
             IMonsterSpawnConfigurationSource spawnConfiguration = null,
             IPartyStateStore parties = null,
-            IMonsterRewardOutbox rewardOutbox = null)
+            IMonsterRewardOutbox rewardOutbox = null,
+            IWorldClockStore clockStore = null,
+            IWorldReclaim reclaim = null)
         {
             Registry = new WorldConnectionRegistry();
 
@@ -202,13 +217,19 @@ namespace ChibiFantasy.Server
                 authority = BackendAuthority.WorldServicesOverHttp(_apiBaseAddress,
                     _apiTimeoutSeconds, out ICharacterStateStore store,
                     out IMonsterSpawnConfigurationSource nests, out _authorityLifetime,
-                    out IPartyStateStore partyStore, out IMonsterRewardOutbox outbox);
+                    out IPartyStateStore partyStore, out IMonsterRewardOutbox outbox,
+                    out IWorldClockStore clocks, out IWorldReclaim stranded);
 
                 characters = characters ?? store;
                 spawnConfiguration = spawnConfiguration ?? nests;
                 parties = parties ?? partyStore;
                 rewardOutbox = rewardOutbox ?? outbox;
+                clockStore = clockStore ?? clocks;
+                reclaim = reclaim ?? stranded;
             }
+
+            ClockStore = clockStore;
+            Reclaim = reclaim;
 
             Coordinator = new WorldEntryCoordinator(authority, Registry, required);
 
@@ -374,10 +395,16 @@ namespace ChibiFantasy.Server
             // A command handled between ticks settles the world immediately, so a second
             // command in the same frame is never resolved against state the first one
             // invalidated. The lambda closes over the simulation assembled just below.
-            var requests = new CharacterCombatRequestHandler(combat,
-                () => Simulation?.Settle());
+            // Declared before the handler so the handler can publish through it, and
+            // assigned just below. The replication service takes the handler, so one of the
+            // two has to be named before it exists; a closure is what unties the knot.
+            CharacterReplicationService replication = null;
 
-            var replication = new CharacterReplicationService(_networkManager, players,
+            var requests = new CharacterCombatRequestHandler(combat,
+                () => Simulation?.Settle(),
+                connectionId => replication?.PublishAttack(connectionId));
+
+            replication = new CharacterReplicationService(_networkManager, players,
                 _characterPrefab, requests, movement);
 
             var status = new CharacterStatusAuthority(players, effects, replication);
@@ -393,8 +420,12 @@ namespace ChibiFantasy.Server
 
             replication.UsePets(PetAuthority);
 
-            replication.UseInventory(new CharacterInventoryAuthority(players, _ => true,
-                items, replication, fruits, effects, skills, maps, _spawnPoints, cards));
+            // Kept, because the world loop also has to publish bags that changed for a
+            // reason other than a request -- loot taken off the ground, and arriving at all.
+            InventoryAuthority = new CharacterInventoryAuthority(players, _ => true,
+                items, replication, fruits, effects, skills, maps, _spawnPoints, cards);
+
+            replication.UseInventory(InventoryAuthority);
 
             // How a player asks for what a boss left behind. The registry above already
             // decides every rule; this is the identity a client can name and the distance
@@ -415,7 +446,13 @@ namespace ChibiFantasy.Server
                 : new MonsterReplicationService(_networkManager, monsters, _monsterPrefab);
 
             Simulation = new WorldSimulation(players, replication, status, stat, movement,
-                combat, monsters, loot, MonsterReplication, rewards, LootAuthority);
+                combat, monsters, loot, MonsterReplication, rewards, LootAuthority,
+                InventoryAuthority, clock: RestoreClock());
+
+            // The sky tells everybody at once. Subscribed here rather than polled in the
+            // tick so a change costs one broadcast at the moment it happens and nothing at
+            // all the rest of the time.
+            Simulation.Weather.Changed += BroadcastWeather;
 
             Loot = loot;
             Rewards = rewards;
@@ -434,6 +471,126 @@ namespace ChibiFantasy.Server
             IsWorldReady = true;
         }
 
+        /// <summary>
+        /// Reads a map's monster nests, once.
+        /// </summary>
+        /// <remarks>
+        /// <b>The defect this closes.</b> <see cref="MonsterConfigurationLoader"/> was
+        /// composed by <see cref="ComposeWorld"/> and never asked for anything: nothing in
+        /// production called <c>Load</c>. A dedicated server therefore ran a world with no
+        /// nests at all -- a player arrived, stood in an empty map, and there was nothing to
+        /// fight, no loot to drop and no experience to earn. The in-process tests never saw
+        /// it because they register spawn points directly against the registry.
+        ///
+        /// <b>On arrival, not at boot.</b> A world server does not know which maps it will
+        /// serve until somebody is admitted to one, and reading every map's nests up front
+        /// would be work for maps nobody is standing on.
+        ///
+        /// <b>Once per map.</b> Re-reading on every arrival would re-seed nests under the
+        /// players already fighting there.
+        /// </remarks>
+        private void LoadNests(DefinitionId map)
+        {
+            LoadNestsCore(map);
+        }
+
+        /// <summary>
+        /// Tells every connected client the sky has turned.
+        /// </summary>
+        /// <remarks>
+        /// <b>To everyone, not per map.</b> The weather is a property of the world in this
+        /// build, so a per-map broadcast would draw a distinction the simulation does not yet
+        /// make. When maps get their own skies, this is the one place that has to learn it.
+        ///
+        /// <b>Guarded rather than assumed.</b> The director keeps ticking while a server is
+        /// shutting down, and a broadcast into a stopped ServerManager is an exception in a
+        /// log that tells nobody anything useful.
+        /// </remarks>
+        private void BroadcastWeather(WorldWeather weather)
+        {
+            if (_networkManager == null || !_networkManager.ServerManager.Started) return;
+
+            _networkManager.ServerManager.Broadcast(new WorldWeatherMessage
+            {
+                Weather = (int)weather,
+            });
+        }
+
+        /// <summary>
+        /// Opens the door a client can ask for weather through, on builds that may have one.
+        /// </summary>
+        /// <remarks>
+        /// <b>Two locks, and only one of them can be picked.</b> A serialized switch says
+        /// whether this server wants the door at all, and <see cref="Debug.isDebugBuild"/>
+        /// says whether this build is allowed one. The second is decided when the server is
+        /// compiled, so no scene edit, configuration file or connecting client can turn it on
+        /// in a release build -- which matters, because the message has no sender check beyond
+        /// this: anyone who can reach the port could otherwise make it snow on everybody.
+        ///
+        /// <b>Not registered at all when refused.</b> Registering it and then ignoring the
+        /// message would leave a handler on a production server whose only protection is an
+        /// if-statement inside it.
+        /// </remarks>
+        private void RegisterWeatherCommands()
+        {
+            if (!WeatherCommandsAllowed || _networkManager == null) return;
+
+            _networkManager.ServerManager.RegisterBroadcast<WorldWeatherCommandMessage>(
+                OnWeatherCommand);
+
+            Debug.Log("[world] weather commands are ENABLED on this server (development build)");
+        }
+
+        /// <summary>Whether this server will take weather requests from clients.</summary>
+        private bool WeatherCommandsAllowed => _allowWeatherCommands && Debug.isDebugBuild;
+
+        /// <summary>
+        /// A client asked for a sky.
+        /// </summary>
+        /// <remarks>The change is not answered to the sender: it is handed to the director,
+        /// which announces it to everyone through the same event an ordinary turn of the
+        /// weather uses. That is what keeps one player's festival from being a private one.
+        /// </remarks>
+        private void OnWeatherCommand(NetworkConnection connection,
+            WorldWeatherCommandMessage message, Channel channel)
+        {
+            if (Simulation == null) return;
+
+            if (message.Automatic)
+            {
+                Simulation.Weather.Release();
+
+                Debug.Log("[world] weather released; the sky rolls on its own again");
+
+                return;
+            }
+
+            var weather = (WorldWeather)message.Weather;
+
+            if (!System.Enum.IsDefined(typeof(WorldWeather), weather)) return;
+
+            Simulation.Weather.Hold(weather);
+
+            Debug.Log("[world] weather held at " + weather);
+        }
+
+        private void LoadNestsCore(DefinitionId map)
+        {
+            if (MonsterConfiguration == null || !map.IsValid) return;
+
+            if (!_loadedNests.Add(map.Value)) return;
+
+            int nests = MonsterConfiguration.Load(map);
+
+            Debug.Log("[world] monster nests for " + map.Value + ": " + nests
+                + (MonsterConfiguration.LastReadSucceeded
+                    ? string.Empty
+                    : " (the configuration source could not be read)"));
+        }
+
+        /// <summary>Maps whose nests have already been read.</summary>
+        private readonly HashSet<string> _loadedNests = new HashSet<string>();
+
         /// <summary>Records why the world will not start, and says so once.</summary>
         private void Refuse(string fault)
         {
@@ -449,6 +606,9 @@ namespace ChibiFantasy.Server
 
         /// <summary>The live characters this world holds, or null when unready.</summary>
         public WorldCharacterRegistry Characters { get; private set; }
+
+        /// <summary>Who answers for what characters are carrying. Null when unready.</summary>
+        public CharacterInventoryAuthority InventoryAuthority { get; private set; }
 
         /// <summary>What is lying on the ground in this world. Null when unready.</summary>
         public MonsterLootRegistry Loot { get; private set; }
@@ -559,7 +719,336 @@ namespace ChibiFantasy.Server
         {
             if (!IsListening || Simulation == null) return;
 
-            Simulation.Tick(Time.deltaTime);
+            float calendar = MeasureRealSeconds();
+
+            Simulation.Tick(Time.deltaTime, calendar);
+
+            BroadcastTimeOnSchedule(calendar);
+
+            SaveClockOnSchedule(calendar);
+        }
+
+        /// <summary>
+        /// Writes the calendar down every so often, as well as on the way out.
+        /// </summary>
+        /// <remarks>Saving only at shutdown would lose the whole session to a crash, a power
+        /// cut or a kill -- which is how most servers actually stop.</remarks>
+        private void SaveClockOnSchedule(float deltaSeconds)
+        {
+            if (_clockSaveSeconds <= 0f) return;
+
+            _sinceClockSaved += deltaSeconds;
+
+            if (_sinceClockSaved < _clockSaveSeconds) return;
+
+            _sinceClockSaved = 0f;
+
+            SaveClock();
+        }
+
+        /// <summary>
+        /// How much real time has passed since the last tick, whatever the engine reported.
+        /// </summary>
+        /// <remarks>
+        /// <b>A stopwatch, not the frame delta.</b> Unity clamps the delta it reports to the
+        /// project's Maximum Allowed Timestep -- a third of a second here -- so a stall longer
+        /// than that is simply not counted. For movement that clamp is protective. For the
+        /// calendar it is a leak: every hitch loses world time permanently, and a server left
+        /// up for days would drift a long way from the hour it claims a day takes.
+        ///
+        /// <b>Monotonic on purpose.</b> A stopwatch cannot be moved by an operator setting the
+        /// machine's clock or by daylight saving, both of which would otherwise jump or
+        /// reverse the world's calendar.
+        ///
+        /// <b>The first tick reports nothing.</b> There is no previous reading to subtract, so
+        /// it starts the measurement rather than guessing at one.
+        /// </remarks>
+        private float MeasureRealSeconds()
+        {
+            if (!_realTime.IsRunning)
+            {
+                _realTime.Start();
+                _lastRealSeconds = 0.0;
+
+                return 0f;
+            }
+
+            double now = _realTime.Elapsed.TotalSeconds;
+            double elapsed = now - _lastRealSeconds;
+
+            _lastRealSeconds = now;
+
+            // A stall long enough to matter is real time that genuinely passed, so it is not
+            // clamped -- but a wildly large step is more likely a suspended process than a
+            // world that should leap forward, so it is capped at a minute.
+            if (elapsed < 0.0) return 0f;
+
+            return (float)System.Math.Min(elapsed, 60.0);
+        }
+
+        private readonly System.Diagnostics.Stopwatch _realTime = new System.Diagnostics.Stopwatch();
+        private double _lastRealSeconds;
+
+        private float _sinceTimeBroadcast;
+
+        /// <summary>Command-line names and environment variables this server accepts.</summary>
+        /// <remarks>Named here rather than spelled out at each call so a deployment file and
+        /// this code cannot drift apart in a way nobody notices until a server starts as the
+        /// wrong channel.</remarks>
+        public const string ServerOption = "server";
+        public const string ServerVariable = "CHIBI_SERVER_ID";
+        public const string ChannelOption = "channel";
+        public const string ChannelVariable = "CHIBI_CHANNEL_ID";
+        public const string PortOption = "port";
+        public const string PortVariable = "CHIBI_PORT";
+        public const string ApiOption = "api";
+        public const string ApiVariable = "CHIBI_API_BASE_ADDRESS";
+
+        /// <summary>
+        /// Lets the launch decide which world this process is, and where the authority lives.
+        /// </summary>
+        /// <remarks>
+        /// <b>This is what makes one build serve ten channels.</b> Identity, port and the
+        /// account authority's address used to exist only in the scene, so every channel was
+        /// its own build and moving the API meant rebuilding the world.
+        ///
+        /// <b>Announced, because a server that started as the wrong channel looks fine.</b>
+        /// It listens, it admits players, it saves its calendar -- under somebody else's
+        /// name. The one cheap defence is saying out loud which world this process became.
+        /// None of these four values is a secret; the key that is one is never printed.
+        /// </remarks>
+        private void ApplyLaunchOptions()
+        {
+            string[] arguments = System.Environment.GetCommandLineArgs();
+            Func<string, string> environment = System.Environment.GetEnvironmentVariable;
+
+            _serverId = LaunchOptions.Resolve(ServerOption, ServerVariable,
+                arguments, environment, _serverId);
+
+            _channelId = LaunchOptions.Resolve(ChannelOption, ChannelVariable,
+                arguments, environment, _channelId);
+
+            _apiBaseAddress = LaunchOptions.Resolve(ApiOption, ApiVariable,
+                arguments, environment, _apiBaseAddress);
+
+            _port = LaunchOptions.ResolvePort(PortOption, PortVariable,
+                arguments, environment, _port);
+
+            Debug.Log("[world] this process is server='" + _serverId
+                + "' channel='" + _channelId + "' port=" + _port
+                + " authority=" + (string.IsNullOrEmpty(_apiBaseAddress)
+                    ? "<unconfigured>"
+                    : _apiBaseAddress));
+        }
+
+        public const string InsecureOption = "allow-insecure-api";
+        public const string InsecureVariable = "CHIBI_ALLOW_INSECURE_API";
+
+        /// <summary>
+        /// Refuses to start when the account authority would be reached in the clear.
+        /// </summary>
+        /// <remarks>
+        /// <b>What is actually at stake.</b> Every request from this server to the authority
+        /// carries the thing that proves which player it is acting for. On one machine that
+        /// traffic never reaches a network card. Between two machines it is on a wire, and
+        /// anyone who can watch that wire can act as any player on this server. That is not a
+        /// hardening opportunity; it is the whole of a player's identity in plaintext.
+        ///
+        /// <b>Refused rather than warned.</b> A warning at startup is a line in a log nobody
+        /// reads until afterwards, and "afterwards" here means after somebody's account was
+        /// taken. A server that will not start gets fixed in the same minute.
+        ///
+        /// <b>With a door, because private networks are real.</b> A deployment whose two
+        /// machines share a link nobody else can reach may legitimately want plaintext, and a
+        /// rule with no way out gets worked around in worse ways -- usually by putting the
+        /// whole thing back on one machine. Saying so explicitly is the price.
+        ///
+        /// <b>Loopback is exempt by address, not by build type.</b> Tying this to
+        /// <c>Debug.isDebugBuild</c> would let a development build be deployed to two machines
+        /// and quietly do the unsafe thing.
+        /// </remarks>
+        private bool AuthorityAddressIsAcceptable()
+        {
+            var endpoint = new HttpEndpoint(_apiBaseAddress, _apiTimeoutSeconds);
+
+            if (!endpoint.IsUnencryptedOverNetwork) return true;
+
+            bool allowed = !string.IsNullOrEmpty(LaunchOptions.Resolve(
+                InsecureOption, InsecureVariable,
+                System.Environment.GetCommandLineArgs(),
+                System.Environment.GetEnvironmentVariable, null));
+
+            if (allowed)
+            {
+                Debug.LogWarning("[world] talking to the account authority at "
+                    + endpoint + " WITHOUT encryption, because " + InsecureVariable
+                    + " was set. Everything this server sends it, including what proves who "
+                    + "a player is, is readable by anything on that network.");
+
+                return true;
+            }
+
+            Debug.LogError("[world] refusing to start: the account authority is at "
+                + endpoint + ", which is not encrypted and is not this machine. What this "
+                + "server sends it would identify players to anyone watching the network. "
+                + "Use https, or set " + InsecureVariable + "=1 if that link really is "
+                + "private.");
+
+            return false;
+        }
+
+        /// <summary>Where this world's calendar is written down. Null when nowhere.</summary>
+        public IWorldClockStore ClockStore { get; private set; }
+
+        /// <summary>Who hands back what the last process left holding. Null when nobody.</summary>
+        public IWorldReclaim Reclaim { get; private set; }
+
+        /// <summary>What the last shutdown left stranded, as this process found it.</summary>
+        /// <remarks>Kept so a test can read the outcome without a log, and so an operator
+        /// can be told once at startup rather than discovering it from a player who cannot
+        /// get in.</remarks>
+        public WorldReclaimResult Reclaimed { get; private set; }
+
+        /// <summary>Whether this world will be remembered across a restart.</summary>
+        public bool CanSaveCalendar
+        {
+            get
+            {
+                if (ClockStore == null || !Server.IsValid || !Channel.IsValid) return false;
+
+                var http = ClockStore as HttpWorldClockStore;
+
+                return http == null || http.CanSave;
+            }
+        }
+
+        /// <summary>
+        /// The clock this world should open with.
+        /// </summary>
+        /// <remarks>
+        /// <b>A saved calendar is resumed; anything else starts the authored day.</b> No
+        /// store, an unreachable one, a world that has never been saved and a stored row that
+        /// is not a usable measurement all mean the same thing here, and none of them stops a
+        /// server from opening. A world that refused to start because the database was
+        /// briefly away would be a far worse failure than one that opened at breakfast.
+        ///
+        /// <b>A changed day length is not resumed.</b> The elapsed total was counted against
+        /// the rate it was saved with; reading it back under a different one would move the
+        /// world by weeks. When they disagree the authored day is started instead, and the
+        /// operator is told, because silently relocating the world in time is the kind of
+        /// thing that gets blamed on anything but the setting that caused it.
+        /// </remarks>
+        private WorldClock RestoreClock()
+        {
+            double perDay = WorldClock.DefaultSecondsPerDay;
+
+            if (ClockStore == null) return new WorldClock(perDay);
+
+            WorldClockState? saved = ClockStore.Load(Server, Channel);
+
+            if (saved == null) return new WorldClock(perDay);
+
+            WorldClockState state = saved.Value;
+
+            if (System.Math.Abs(state.SecondsPerDay - perDay) > 0.001)
+            {
+                Debug.LogWarning("[world] saved calendar was measured against a "
+                    + state.SecondsPerDay + "s day but this server runs a " + perDay
+                    + "s day; starting the authored day rather than relocating the world");
+
+                return new WorldClock(perDay);
+            }
+
+            Debug.Log("[world] calendar resumed at day "
+                + (long)(state.ElapsedSeconds / perDay));
+
+            return WorldClock.Restore(perDay, state.ElapsedSeconds);
+        }
+
+        /// <summary>
+        /// Writes the calendar down, if this deployment gave the server a way to.
+        /// </summary>
+        /// <remarks>Failure is reported once and then ignored: a world that could not save
+        /// loses the last few minutes on the next restart, which is not worth interrupting a
+        /// running server over.</remarks>
+        private void SaveClock()
+        {
+            if (ClockStore == null || Simulation == null) return;
+
+            bool saved = ClockStore.Save(Server, Channel, new WorldClockState(
+                Simulation.Clock.ElapsedSeconds, Simulation.Clock.SecondsPerDay));
+
+            if (saved || _warnedClockUnsaved) return;
+
+            _warnedClockUnsaved = true;
+
+            Debug.LogWarning("[world] the calendar could not be saved; this world will "
+                + "restart at the authored hour. " + WhyTheCalendarCannotBeSaved());
+        }
+
+        /// <summary>
+        /// The most likely reason a save failed, named rather than guessed at.
+        /// </summary>
+        /// <remarks>
+        /// <b>Written after chasing the wrong one.</b> The first version of this warning only
+        /// ever asked whether the key was set, so an unconfigured world id -- which is what it
+        /// actually was -- sent the reader hunting through environment variables. A diagnostic
+        /// that names one cause when there are three is worse than one that names none.
+        /// </remarks>
+        private string WhyTheCalendarCannotBeSaved()
+        {
+            if (!Server.IsValid || !Channel.IsValid)
+            {
+                return "This server has no server id or channel id configured, so its world "
+                    + "has no name to be saved under. Set them on WorldServerBootstrap.";
+            }
+
+            var http = ClockStore as HttpWorldClockStore;
+
+            if (http != null && !http.CanSave)
+            {
+                return "No deployment key: set " + HttpWorldClockStore.KeyVariable
+                    + " in this server's environment.";
+            }
+
+            return "The account authority refused or could not be reached.";
+        }
+
+        private bool _warnedClockUnsaved;
+        private float _sinceClockSaved;
+
+        [Tooltip("How often the world's calendar is written down, in seconds. Zero never "
+            + "writes it, and the world restarts at the authored hour.")]
+        [SerializeField] private float _clockSaveSeconds = 120f;
+
+        /// <summary>
+        /// Repeats the world's time to everyone, every so often.
+        /// </summary>
+        /// <remarks>
+        /// <b>Not every tick.</b> The clock is arithmetic a client can run itself, so this is
+        /// a correction rather than a feed -- sending it sixty times a second would spend
+        /// bandwidth to replace a calculation that was already right.
+        ///
+        /// <b>Not once, either.</b> That was the previous behaviour, and independent clocks
+        /// drift: whatever a client's frame rate does to its own counting is permanent until
+        /// it logs in again.
+        /// </remarks>
+        private void BroadcastTimeOnSchedule(float deltaSeconds)
+        {
+            if (_timeBroadcastSeconds <= 0f) return;
+            if (_networkManager == null || !_networkManager.ServerManager.Started) return;
+
+            _sinceTimeBroadcast += deltaSeconds;
+
+            if (_sinceTimeBroadcast < _timeBroadcastSeconds) return;
+
+            _sinceTimeBroadcast = 0f;
+
+            _networkManager.ServerManager.Broadcast(new WorldTimeMessage
+            {
+                TimeOfDay = Simulation.Clock.TimeOfDay,
+                SecondsPerDay = (float)Simulation.Clock.SecondsPerDay,
+            });
         }
 
         /// <summary>Supplies the authored content this server places arrivals against.</summary>
@@ -575,11 +1064,75 @@ namespace ChibiFantasy.Server
         {
             if (IsListening) return true;
 
+            // Before the socket, deliberately. This process has nobody in it yet, so
+            // anything the authority still believes is inside this world belongs to the
+            // process that died -- and that is only true for as long as nobody can connect.
+            ReclaimWhatTheLastProcessLeft();
+
             IsListening = _networkManager.ServerManager.StartConnection(_port);
+
+            RegisterWeatherCommands();
 
             Announce();
 
+            // Where this server will go to find out who a connecting player is. An address
+            // is not a secret and carries no credential, and a server pointed at the wrong
+            // one refuses every player with no clue as to why -- which is what happened.
+            Debug.Log("[world] account authority at "
+                + (string.IsNullOrEmpty(_apiBaseAddress) ? "<unconfigured>" : _apiBaseAddress));
+
             return IsListening;
+        }
+
+        /// <summary>
+        /// Hands back the players the last process died holding.
+        /// </summary>
+        /// <remarks>
+        /// <b>The bug this closes.</b> <see cref="StopServer"/> releases everyone, and
+        /// nothing released anyone when a server was killed, crashed or lost power. The
+        /// character stayed marked as being in a world that no longer existed, and because
+        /// nothing in the system ever revisited that mark, the player was refused at the
+        /// door forever -- not until a timeout, not until the session expired, but until
+        /// somebody edited the database by hand. Which, for weeks, was me.
+        ///
+        /// <b>Why it is safe to do this and unsafe to do it anywhere else.</b> A server
+        /// that has not opened its socket has no players. That makes "everyone this world
+        /// still holds is a ghost" a fact rather than an inference, and it is a fact for
+        /// exactly one instant -- the one before <see cref="StartServer"/> starts
+        /// listening. A sweeper running on a timer would have to guess instead, and a wrong
+        /// guess throws live players out of the world.
+        ///
+        /// <b>It never stops a server starting.</b> An authority that cannot be reached, a
+        /// key that was never configured, a refusal: all of them leave the world as
+        /// stranded as it already was, and all of them are better than a world that will
+        /// not open. The one thing this must not do is fail quietly, so the reason is said
+        /// out loud when nothing can be handed back.
+        /// </remarks>
+        private void ReclaimWhatTheLastProcessLeft()
+        {
+            Reclaimed = WorldReclaimResult.Nothing;
+
+            if (Reclaim == null || !Server.IsValid || !Channel.IsValid) return;
+
+            if (!Reclaim.CanReclaim)
+            {
+                // Said once, rather than discovered later from a player who cannot log in.
+                Debug.LogWarning("[world] stranded players CANNOT be handed back: "
+                    + HttpWorldClockStore.KeyVariable + " is not set for this process."
+                    + " A crash will lock every player in this world out of their character.");
+
+                return;
+            }
+
+            Reclaimed = Reclaim.ReleaseStranded(Server, Channel);
+
+            if (!Reclaimed.FoundAnything) return;
+
+            // Only worth a line when it found something: a non-zero count is also the only
+            // evidence an operator gets that the last shutdown was not clean.
+            Debug.Log("[world] handed back " + Reclaimed.Sessions + " session(s) and "
+                + Reclaimed.Characters + " character(s) stranded by the last process in "
+                + _serverId + "/" + _channelId + ". The previous shutdown was not clean.");
         }
 
         /// <summary>
@@ -611,6 +1164,13 @@ namespace ChibiFantasy.Server
                 + " port=" + _port
                 + " " + state
                 + " characters=" + (Characters == null ? 0 : Characters.Count));
+
+            // Said at startup rather than discovered after the first save interval: an
+            // operator who learns at minute two that the world will not be remembered has
+            // already lost the two minutes.
+            Debug.Log("[world] calendar: " + (CanSaveCalendar
+                ? "will be saved for " + _serverId + "/" + _channelId
+                : "WILL NOT BE SAVED. " + WhyTheCalendarCannotBeSaved()));
         }
 
         /// <summary>
@@ -652,6 +1212,9 @@ namespace ChibiFantasy.Server
 
         private void OnApplicationQuit()
         {
+            // Last chance to write the calendar down while the world still exists.
+            SaveClock();
+
             StopServer();
         }
 
@@ -693,6 +1256,11 @@ namespace ChibiFantasy.Server
                 return;
             }
 
+            // The map this player is arriving on now has somebody to fight. Nests are
+            // runtime configuration and are read once per map, the first time anybody
+            // stands on it.
+            LoadNests(spawn.Map);
+
             _networkManager.ServerManager.Broadcast(connection, new WorldSpawnMessage
             {
                 CharacterId = outcome.Admission.Character.Value,
@@ -702,10 +1270,51 @@ namespace ChibiFantasy.Server
                 Y = spawn.Y,
                 Z = spawn.Z,
                 CharacterRevision = outcome.Admission.CharacterRevision.Value,
-            });
+
+                // The sky this player is arriving under. Read from the simulation's clock so
+                // there is one time of day in the world and the client is told it rather
+                // than starting its own day from zero.
+                TimeOfDay = Simulation != null ? Simulation.Clock.TimeOfDay : 0f,
+                SecondsPerDay = Simulation != null
+                    ? (float)Simulation.Clock.SecondsPerDay
+                    : (float)WorldClock.DefaultSecondsPerDay,
+
+                // And the weather, so somebody arriving mid-downpour arrives wet rather
+                // than waiting for the next turn to find out it is raining.
+                Weather = Simulation != null ? (int)Simulation.Weather.Weather : 0,
+            }, requireAuthenticated: false);
 
             // Connecting becomes Ready, and the authority's session becomes Active.
+            // The hour, immediately, to this connection alone.
+            //
+            // The arrival message above already carries it, and relying on that turned out
+            // to be relying on one message arriving somewhere specific. The repeat that
+            // follows is every sixty seconds, which is a long time to stand in a world
+            // showing the wrong sky and then have it change while you watch. This costs two
+            // floats once per player and removes the window entirely.
+            _networkManager.ServerManager.Broadcast(connection, new WorldTimeMessage
+            {
+                TimeOfDay = Simulation != null ? Simulation.Clock.TimeOfDay : 0f,
+                SecondsPerDay = Simulation != null
+                    ? (float)Simulation.Clock.SecondsPerDay
+                    : (float)WorldClock.DefaultSecondsPerDay,
+            }, requireAuthenticated: false);
+
+            // And what the sky is doing, to this connection alone.
+            //
+            // WorldWeatherMessage is otherwise only sent when the weather turns, which is
+            // exactly right for everyone already here and useless to somebody who has just
+            // walked in during a downpour: they would stand in the sun until it next
+            // changed. Arriving in weather means arriving in it, not a minute later.
+            _networkManager.ServerManager.Broadcast(connection, new WorldWeatherMessage
+            {
+                Weather = Simulation != null ? (int)Simulation.Weather.Weather : 0,
+            }, requireAuthenticated: false);
+
             Coordinator.ConfirmArrival(connection.ClientId);
+
+            // Nothing else to send about the sky: the arrival message above already carried
+            // both the time of day and the weather.
 
             // And into the simulation, which computes their stats before anything is
             // published -- so the first state a client receives is already correct.

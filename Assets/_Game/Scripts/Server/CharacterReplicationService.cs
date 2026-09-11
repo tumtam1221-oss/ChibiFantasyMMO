@@ -159,6 +159,39 @@ namespace ChibiFantasy.Server
             return changed;
         }
 
+        /// <summary>
+        /// Tells everybody watching that a character swung.
+        /// </summary>
+        /// <remarks>
+        /// <b>Called after the pipeline accepted, never before.</b> This is the whole of the
+        /// combat presentation seam on the server side: it sends nothing a client could not
+        /// already see and decides nothing. A refused attack never reaches it.
+        /// </remarks>
+        /// <returns>Whether an object was found to publish through.</returns>
+        public bool PublishAttack(int connectionId)
+        {
+            if (!CanReplicate()) return false;
+
+            if (!_characters.TryGet(connectionId, out LivingCharacter character)) return false;
+
+            string id = character.Character.Value;
+
+            if (string.IsNullOrEmpty(id)) return false;
+
+            if (!_spawned.TryGetValue(id, out NetworkObject spawned) || spawned == null)
+            {
+                return false;
+            }
+
+            var entity = spawned.GetComponent<CharacterNetworkEntity>();
+
+            if (entity == null) return false;
+
+            entity.ServerPublishAttack();
+
+            return true;
+        }
+
         private bool CanReplicate()
         {
             return _networkManager != null

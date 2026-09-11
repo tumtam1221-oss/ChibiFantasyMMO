@@ -50,7 +50,8 @@ final class CharacterStateRepository
         $statement = $this->pdo->prepare(
             'SELECT character_id, account_id, server_id, name, gender, level, experience,
                     current_health, current_mana, class_definition_id, job_definition_id,
-                    map_definition_id, spawn_definition_id, appearance_definition_id,
+                    map_definition_id, spawn_definition_id,
+                    position_x, position_y, position_z, appearance_definition_id,
                     active_pet_instance_id, availability, revision
              FROM `character`
              WHERE character_id = :cid AND account_id = :aid'
@@ -78,6 +79,14 @@ final class CharacterStateRepository
             'job_id'        => (string) $row['job_definition_id'],
             'map_id'        => (string) $row['map_definition_id'],
             'spawn_id'      => (string) $row['spawn_definition_id'],
+
+            // Null until the character has been saved from the world at least once. The
+            // world reads that as "no remembered position" and falls back to the spawn,
+            // which is what every row created before this column existed needs.
+            'position_x'    => $row['position_x'] === null ? null : (float) $row['position_x'],
+            'position_y'    => $row['position_y'] === null ? null : (float) $row['position_y'],
+            'position_z'    => $row['position_z'] === null ? null : (float) $row['position_z'],
+
             'appearance_id' => (string) $row['appearance_definition_id'],
             'availability'  => (int) $row['availability'],
             'revision'      => (int) $row['revision'],
@@ -868,6 +877,30 @@ final class CharacterStateRepository
         return $pets;
     }
 
+    /**
+     * One coordinate out of a save, or null when the save did not report one.
+     */
+    private static function coordinate(array $state, string $key): ?float
+    {
+        if (!array_key_exists($key, $state)) {
+            return null;
+        }
+
+        $value = $state[$key];
+
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (!is_numeric($value)) {
+            return null;
+        }
+
+        $number = (float) $value;
+
+        return is_finite($number) ? $number : null;
+    }
+
     private function writeCharacterRow(string $characterId, array $state): void
     {
         $statement = $this->pdo->prepare(
@@ -880,6 +913,9 @@ final class CharacterStateRepository
                 job_definition_id = :job,
                 map_definition_id = :map,
                 spawn_definition_id = :spawn,
+                position_x = COALESCE(:px, position_x),
+                position_y = COALESCE(:py, position_y),
+                position_z = COALESCE(:pz, position_z),
                 revision = revision + 1,
                 updated_at = NOW(3)
              WHERE character_id = :cid'
@@ -894,6 +930,13 @@ final class CharacterStateRepository
             ':job'        => (string) ($state['job_id'] ?? ''),
             ':map'        => (string) ($state['map_id'] ?? ''),
             ':spawn'      => (string) ($state['spawn_id'] ?? ''),
+
+            // A save that carries no position leaves the stored one alone rather than
+            // wiping it: an absent field means "not reported", not "at the origin".
+            ':px'         => self::coordinate($state, 'position_x'),
+            ':py'         => self::coordinate($state, 'position_y'),
+            ':pz'         => self::coordinate($state, 'position_z'),
+
             ':cid'        => $characterId,
         ]);
     }

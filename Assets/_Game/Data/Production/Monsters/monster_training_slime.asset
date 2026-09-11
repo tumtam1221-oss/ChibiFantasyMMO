@@ -39,7 +39,7 @@ MonoBehaviour:
   _animatorController:
     _address: 
   _lootTable:
-    _value: 
+    _value: drop.training_slime
   _experienceReward: 12
   _currencyReward: 3
   _respawn:
