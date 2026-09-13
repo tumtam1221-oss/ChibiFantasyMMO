@@ -1,7 +1,8 @@
 # ChibiFantasyMMO Project Status
 
-> Living status document. Update it at the end of every phase.
-> Last updated: 2026-09-02 — Phase 01 (Foundation), version-control baseline.
+> Living status document. Update it at the end of every phase or gate.
+> Last updated: 2026-09-13 — Phase 19 in progress; gate 19E (basic punch, attack
+> speed, avatar posture) closed and on `main`. Next gate: 19F.
 
 ---
 
@@ -9,30 +10,23 @@
 
 | Area | State |
 |---|---|
-| **Current Phase** | Phase 01 — Foundation |
-| **Unity** | 2023.2.3f1 |
-| **Render Pipeline** | URP 16.0.5 |
-| **Blender** | 5.1.2 |
-| **MCP — Unity** | Connected |
-| **MCP — Blender** | Connected |
-| **Gameplay** | Not implemented |
-| **Networking** | Not selected |
-| **Backend** | Not implemented |
-| **Database** | Not implemented |
-| **Character** | Not implemented |
-| **World** | Not implemented |
-| **Version Control** | Git (git version 2.50.1.windows.1) |
-| **Git LFS** | Installed and enabled — git-lfs/3.7.0, initialized repo-local via `git lfs install --local`. Tracks 13 binary formats (see §2). |
+| **Current major phase** | **Phase 19 — first playable world** (open; see §5) |
+| **Last closed gate** | Phase 19E — Basic Punch / ASPD / male-female avatar T-pose fix (`b608938`, merged to `main` in PR #3) |
+| **Next intended gate** | **Phase 19F — First Playable Loop Integration / Closure** (not started) |
+| **Unity** | 6000.3.23f1, URP 17.3.0, Force Text serialization, Input System 1.20.0 + legacy manager |
+| **Networking** | FishNet 4.7.2 (`com.firstgeargames.fishnet`, pinned tag), server-authoritative; dedicated Windows/Linux server builds |
+| **Backend** | PHP 8 API (`backend/`, 22 migrations) over MySQL 8.4; own auth (`password_hash`, random session tokens); dev API on 127.0.0.1:8099, dev DB `chibifantasy_integration` on port 3307 |
+| **Blender** | 5.1.2 via MCP; source `.blend`/scratch files live in `Blender/` and are **not** version-controlled |
+| **Tests** | EditMode suite 3797/3797 green at `b608938` (last full run 2026-09-13); PlayMode suite exists (`Assets/_Game/Tests/PlayMode`) |
+| **Builds** | `Builds/WindowsClient` (client), `Builds/WindowsServerDev` (the dev world server actually run), `Builds/WindowsServer` / `Builds/LinuxServer*` (release/perf-baseline servers). Build outputs are ignored by git. |
+| **Version control** | Git + Git LFS (13 binary formats, see §3). Remote: `origin` = github.com/tumtam1221-oss/ChibiFantasyMMO. Mainline: `main`. |
 
 ### Environment detail
 
 - **Unity project root:** `E:\GameDev\ChibiFantasyMMO`
-- **Color space:** Linear
-- **Active input handler:** Legacy Input Manager (Input System package not installed)
-- **Asset serialization:** Force Text (`m_SerializationMode: 2`)
-- **Scenes in build settings:** `Assets/Scenes/SampleScene.unity` (URP template scene) only
-- **Console:** 0 errors, 2 warnings + 1 assert (engine-internal TLS/stack allocator noise only)
-- **Blender file:** unsaved default startup scene (Cube / Light / Camera), no `.blend` on disk
+- **Scenes in build settings:** `Login`, `ServerSelect`, `ChannelSelect`, `CharacterSelect`, `GameWorld` (`Assets/_Game/Scenes/Client/`), `World_Server` (`Assets/_Game/Scenes/World/`), plus the URP template `SampleScene`.
+- **Per-machine packages (git-ignored, install locally):** ToonScapes (environment), Kevin Iglesias Human Animations (death placeholder only).
+- **Dev stack after a reboot:** MySQL 8.4.9 portable (3307) → PHP API (8099) → `Builds/WindowsServerDev/ChibiFantasyServer.exe` (UDP 7770).
 
 ---
 
@@ -40,76 +34,38 @@
 
 ```
 E:\GameDev\ChibiFantasyMMO\
-├── .git/                             # version control (Phase 01)
-├── .gitignore                        # Unity ignore rules
-├── .gitattributes                    # Git LFS binary tracking
 ├── PROJECT_STATUS.md                 # this document
+├── docs/                             # NETWORKING.md, PERFORMANCE_BASELINE.md,
+│                                     # CLIENT_NETWORK_PERFORMANCE_BASELINE.md
+├── backend/                          # PHP API: public/, src/, database/migrations (22),
+│                                     # tests/ (PHPUnit); .env and storage/ fixtures ignored
 ├── Assets/
-│   ├── Readme.asset                  # Unity URP template (kept)
-│   ├── Scenes/SampleScene.unity      # Unity URP template (kept, untouched)
-│   ├── Settings/                     # URP pipeline assets (8 files)
-│   │   ├── URP-Performant / Balanced / HighFidelity (+ Renderers)
-│   │   ├── DefaultVolumeProfile.asset
-│   │   ├── SampleSceneProfile.asset
-│   │   └── UniversalRenderPipelineGlobalSettings.asset
-│   ├── TutorialInfo/                 # Unity URP template (kept)
-│   ├── ThirdParty/                   # 3rd-party imports, isolated  [empty]
+│   ├── Settings/                     # URP pipeline assets (template)
+│   ├── Scenes/SampleScene.unity      # URP template scene (kept)
 │   └── _Game/                        # ALL first-party content
-│       ├── README.md                 # Phase-01 conventions (source of truth)
-│       ├── Art/
-│       │   ├── Characters/  Monsters/  NPC/  Environment/       [empty]
-│       │   └── Items/  Weapons/  VFX/  UI/                      [empty]
-│       ├── Audio/  BGM/  SFX/  Voice/                           [empty]
-│       ├── Prefabs/                                             [empty]
-│       ├── Scenes/
-│       │   └── Login/ ServerSelect/ ChannelSelect/
-│       │       CharacterSelect/ GameWorld/                      [empty]
-│       ├── Scripts/
-│       │   └── Core/ UI/ Network/ Character/ Gameplay/ Data/    [empty]
-│       ├── Materials/  Textures/  Animations/                   [empty]
-│       └── Resources/  Settings/                                [empty]
+│       ├── README.md                 # conventions (source of truth)
+│       ├── Art/Characters/Production # Meshy male/female rigs + clips (Idle, Run, Run02,
+│       │                             # GuardIdle, CrossPunch), Shared/ Mixamo source clip
+│       ├── Art/Monsters, NPC, Environment, Items, UI, VFX, Weapons
+│       ├── Data/Production/          # 65 ScriptableObject definitions + WorldContentCatalogue
+│       │                             # (cards, classes, devil fruits, drop tables, formulas,
+│       │                             # items, maps, monsters, NPCs, pets, portals, progression,
+│       │                             # quests, shops, skills, spawns, stats, status effects)
+│       ├── Prefabs/                  # Network/, Presentation/, Prototype/ (animator controllers)
+│       ├── Scenes/                   # Client/ (5 client scenes), World/ (server scene),
+│       │                             # Prototype/, Validation/
+│       ├── Scripts/                  # Backend, Character, Client, Contracts, Core, Data,
+│       │                             # Editor, Gameplay, Network, Server, UI (one asmdef each)
+│       └── Tests/                    # EditMode/ (217 files), PlayMode/ (36 files)
+├── Blender/                          # (ignored) .blend sources, retarget/export scripts
+├── Builds/                           # (ignored) client + server builds
 ├── Packages/                         # manifest.json + packages-lock.json
-├── ProjectSettings/                  # 27 configuration assets
-│
-└── (ignored, not in version control)
-    Library/  Temp/  Logs/  UserSettings/  obj/  .vscode/  *.csproj  *.sln
+└── ProjectSettings/
 ```
-
-All 29 empty scaffold folders carry a `.gitkeep` file so the architecture
-survives a fresh clone. `.gitkeep` is a dot-file, so Unity's asset pipeline
-ignores it and generates no `.meta` for it.
-
-### Installed Unity packages
-
-`com.coplaydev.unity-mcp` (git `#main`) · `com.unity.render-pipelines.universal` 16.0.5 ·
-`com.unity.ai.navigation` 2.0.0 · `com.unity.timeline` 1.8.6 · `com.unity.ugui` 2.0.0 ·
-`com.unity.visualscripting` 1.8.0 · `com.unity.test-framework` 1.3.9 ·
-`com.unity.collab-proxy` 2.12.4 · `com.unity.ide.rider` 3.0.27 ·
-`com.unity.ide.visualstudio` 2.0.22 · standard built-in modules
-
-**Not installed:** Input System · Addressables · Cinemachine · any networking
-transport (Netcode / Mirror / Fish-Net) · Localization · Burst / Collections
 
 ---
 
-## 3. Current Known Risks
-
-| # | Risk | Impact | Status |
-|---|---|---|---|
-| 1 | ~~`*.asset`, `*.unity`, `*.prefab`, `*.mat`, `*.anim` tracked by Git LFS despite Force Text serialization~~ — would have turned all 26 `ProjectSettings/*.asset` files, the 8 URP settings assets and `SampleScene.unity` into opaque LFS pointers (no readable diffs, no three-way merge, broken clone without LFS). | High | **RESOLVED 2026-09-02** — the 5 YAML patterns were untracked before the initial commit. LFS now covers only the 13 genuinely binary formats. |
-| 2 | **No networking stack selected.** Constrains character controller, state ownership, tick model and scene flow. | High — architectural | Open |
-| 3 | **Legacy Input Manager is active.** No rebindable keys, weak gamepad/multi-device support. Switching later means rewriting every input call site and requires an editor restart. | High | Open |
-| 4 | **Zero custom tags and layers.** Layer collision matrix is fully open (everything collides with everything). Targeting, ground checks and camera culling all depend on these. | Medium–High | Open |
-| 5 | **Blender work is unsaved and has no home.** No `.blend` exists on disk; the asset pipeline in `_Game/README.md` never states where `.blend` source files live. | Medium | Open |
-| 6 | **Unity MCP package tracks a git `#main` branch with no version pin.** An upstream push can change or break the bridge on any package resolve. | Medium | Open |
-| 7 | **Unity 2023.2 / URP 16 is a Tech Stream release, not LTS.** No long-term patch support for a multi-year project. | Medium | Open |
-| 8 | **No Addressables.** With `Resources/` present and Addressables absent, the path of least resistance does not scale to a 5-scene MMO client. | Medium | Open |
-| 9 | **Blender scene is 24 fps**, mismatched with typical Unity animation expectations (30/60). Needs explicit handling on FBX export. | Low–Medium | Open |
-| 10 | **`companyName` is still `DefaultCompany`.** Affects persistent data path, PlayerPrefs registry key and bundle identifier. Cheap now, painful to migrate later. | Low | Open |
-| 11 | **`Assets/_Game/Settings` vs `Assets/Settings` name collision.** Easy for humans and agents to write URP assets into the wrong folder. | Low | Documented in `_Game/README.md` |
-| 12 | **No Git remote configured.** The baseline exists only on this machine; a disk failure still loses everything. | High | Open |
-
-### Git LFS scope (as committed)
+## 3. Version-control facts
 
 **Tracked by LFS — 13 binary formats:**
 
@@ -119,31 +75,39 @@ transport (Netcode / Mirror / Fish-Net) · Localization · Burst / Collections
 *.wav  *.mp3  *.ogg  *.mp4             # audio / video
 ```
 
-**Deliberately NOT in LFS:** `*.asset`, `*.unity`, `*.prefab`, `*.mat`,
-`*.anim`. The project uses Force Text serialization, so these are YAML and
-stay plain text — readable diffs, three-way merge, and `UnityYAMLMerge`
-conflict resolution all keep working, and the repo still clones into a
-working Unity project on a machine without LFS.
+**Deliberately NOT in LFS:** `*.asset`, `*.unity`, `*.prefab`, `*.mat`, `*.anim`
+(Force Text YAML: readable diffs, three-way merge, `UnityYAMLMerge`).
 
-If scene/prefab serialization is ever switched to Force Binary, revisit this
-decision and add those patterns back at that time.
+**Working-tree noise that is never committed:** editor-churned settings
+(`Assets/Settings/URP-*.asset`, `DefaultVolumeProfile.asset`,
+`UniversalRenderPipelineGlobalSettings.asset`, `ProjectSettings/EditorSettings.asset`,
+`SceneTemplateSettings.json`, `BurstAotSettings*`), the template `SampleScene.unity`,
+`Assets/_Game/Scenes/Prototype/Proto_Inventory.unity`, and local scratch
+(`Assets/Screenshots/`, `Assets/_Game/Art/Characters/Validation/`, `Assets/_Recovery/`,
+`Assets/_Temp_HitchProbe/`, `Assets/InitTestScene*`, `Blender/`).
+
+**Untracked animation files left on disk on purpose (2026-09-13):**
+`MaleMeshy/CHR_Male_Meshy@BasicPunch.fbx`, `FemaleMeshy/CHR_Female_Meshy@BasicPunch.fbx`
+(the retired hand-authored v12 punch) and `Shared/HookPunch.fbx` (a rejected trial).
+Nothing in the project references them; `AttackSpeedAndMeleeRangeTests` asserts they
+are not wired in. Delete or keep locally — they do not belong in the repository.
 
 ---
 
-## 4. Architectural Decisions Still Pending
+## 4. Architectural Decisions
 
-| # | Decision | Why it blocks work | Should be decided before |
-|---|---|---|---|
-| 1 | ~~Networking model~~ | — | **DECIDED, Phase 16.** Server-authoritative, FishNet 4.7.2 (`com.firstgeargames.fishnet`, pinned tag). The client is authoritative for nothing: identity comes from the account API, placement from authored spawn definitions. Proven by a real loopback connection in `FishNetWorldEntryTests`. See `docs/NETWORKING.md`. |
-| 2 | **Input System vs. legacy Input Manager.** | Every input call site depends on it; migration is a rewrite. | Any character controller or UI input |
-| 3 | ~~Backend & database~~ | — | **DECIDED, Phases 15–16.** PHP 8.2+ API over MySQL 8.0+, own auth (`password_hash`, `random_bytes` session tokens). Twelve endpoints; the full login → server → channel → character → world flow resolves against the database. Verified end to end over real HTTP in `LiveBackendIntegrationTests`. Hosting is still undecided. |
-| 4 | **Asset loading strategy** — Addressables vs. `Resources/` vs. direct references. | Affects folder layout, build size and patching. | First real art/prefab import |
-| 5 | **Tag & layer taxonomy** plus the layer collision matrix. | Physics, targeting and culling depend on it. | First character or world collision work |
-| 6 | **Blender → Unity art pipeline** — `.blend` storage location, FBX vs. glTF, scale/axis/fps convention, rig standard (Humanoid vs. Generic). | Changing the rig standard later means re-rigging every character. | First character mesh |
-| 7 | ~~Git LFS scope for Unity YAML assets~~ | — | **DECIDED 2026-09-02: binary formats only.** See §3. |
-| 8 | **Git remote / backup host**, and whether the host offers enough LFS quota for a project of this size. | Baseline is currently single-machine. | Any further content work |
-| 9 | ~~Unity version policy~~ | — | **SETTLED IN PRACTICE: Unity 6000.3.23f1** (`ProjectSettings/ProjectVersion.txt`), URP 17.3.0. Whether to move to an LTS release remains open, but the project has been on 6000.3 since Phase 02 and all content was authored against it. |
-| 10 | **UI toolkit choice** — uGUI vs. UI Toolkit for the MMO HUD and menus. | uGUI is installed; UI Toolkit would change all UI authoring. | First UI screen |
+| # | Decision | Status |
+|---|---|---|
+| 1 | Networking model | **DECIDED, Phase 16.** Server-authoritative FishNet 4.7.2. The client is authoritative for nothing. `docs/NETWORKING.md`. |
+| 2 | Backend & database | **DECIDED, Phases 15–16.** PHP API over MySQL, own auth. Hosting still undecided. |
+| 3 | Git LFS scope | **DECIDED 2026-09-02:** binary formats only (§3). |
+| 4 | Unity version | **SETTLED IN PRACTICE:** 6000.3.23f1 / URP 17.3.0. LTS move still open. |
+| 5 | Git remote | **DONE:** GitHub `origin`, mainline `main`, feature work merged by PR. |
+| 6 | Character rig standard | **SETTLED IN PRACTICE:** Meshy male/female, Unity Humanoid, clips authored/retargeted in Blender (`Blender/Characters/`), one FBX per clip with the avatar copied from the model. The avatar T-pose is enforced in the model importer **and** mirrored into every `@clip` importer (Phase 19E). |
+| 7 | Input System vs. legacy Input Manager | Both present (`com.unity.inputsystem` 1.20.0 installed; legacy manager still active). Not formally decided. |
+| 8 | Asset loading strategy (Addressables vs. `Resources/` vs. direct references) | Open — direct references and the `WorldContentCatalogue` so far. |
+| 9 | Tag & layer taxonomy / collision matrix | Open. |
+| 10 | UI toolkit | uGUI in practice for every shipped screen; not formally decided. |
 
 ---
 
@@ -152,28 +116,64 @@ decision and add those patterns back at that time.
 Each phase is one or more commits; the commit messages carry the reasoning and the
 failures found along the way.
 
-- [x] **Phase 00 — Environment audit.** Unity MCP PASS, Blender MCP PASS, 0 console
-      errors, folder scaffold verified.
-- [x] **Phase 01 — Foundation / version control.** Git, Unity `.gitignore`, Git LFS
-      for binary assets, baseline commit.
+- [x] **Phase 00 — Environment audit.**
+- [x] **Phase 01 — Foundation / version control.** Git, Unity `.gitignore`, Git LFS, baseline commit.
 - [x] **Phases 02–06 — Characters and content foundation.** Male and female production
-      characters (Humanoid, 21 bones, 4-bone influence limit, FBX round-trip
-      validated), definitions, registries, progression, skills.
-- [x] **Phase 07 — Character controller and combat.** Third-person controller, combat
-      foundation, skill integration, production combat runtime, presentation.
-- [x] **Phase 08 — Inventory, equipment, storage.** Runtime, UI, interaction.
+      characters (Humanoid), definitions, registries, progression, skills.
+- [x] **Phase 07 — Character controller and combat.**
+- [x] **Phase 08 — Inventory, equipment, storage.**
 - [x] **Phase 09 — Equipment enhancement.** Rarity, status stones, enchanting, fusion.
 - [x] **Phase 10 — Monsters, drops, loot, quests.**
 - [x] **Phase 11 — Maps, cities, NPCs, portals, travel.**
 - [x] **Phase 12 — Devil Fruit, cards, pets.**
 - [x] **Phase 13 — Party, guild, trade, player shop, economy.**
-- [x] **Phase 14 — Login, session, server/channel/character select.** Transport-neutral
-      `IAccountApi`; ends deliberately at `WorldEntryState.Authorised`.
-- [x] **Phase 15 — PHP API + MySQL backend.** 10 migrations, 36 tables, 9 endpoints.
-      Schema exists for economy, trade, shop, party and guild; the services for those
-      do not — see the Phase 15 report.
-- [x] **Phase 16 — Real networking.** Production `UnityWebRequest` transport, live PHP
-      integration, session release, FishNet 4.7.2 world entry, authoritative character
-      spawn from authored definitions. `docs/NETWORKING.md`.
-- [ ] **Phase 17+ — Not authorized.** Nothing is replicated yet: no movement, combat,
-      inventory, trade or party crosses the wire.
+- [x] **Phase 14 — Login, session, server/channel/character select.**
+- [x] **Phase 15 — PHP API + MySQL backend.**
+- [x] **Phase 16 — Real networking.** `UnityWebRequest` transport, live PHP integration,
+      FishNet world entry, authoritative character spawn. `docs/NETWORKING.md`.
+- [x] **Phase 17 (17.1–17.24) — Server authority.** Production FishNet world bootstrap,
+      authoritative spawn from persistence, travel, monster runtime/movement/AI/spawn,
+      combat command resolution, PK gate, monster EXP and item-drop/loot authority.
+- [x] **Phase 18 (18.1–18.18B1) — Production pipeline.** Server combat pipeline;
+      authoritative character/movement/inventory/equipment/status/derived-stat replication;
+      client UI flow and world presentation; Meshy production characters and locomotion;
+      magic combat + MDEF; Devil Fruit live state/persistence and world boss drop chain;
+      party persistence, round-robin loot and boss rewards; crash-safe durable rewards and
+      loot pickup; card socketing and boss card drop; pet ownership/experience/evolution
+      aura; dedicated server entry and build bootstrap; server and client performance
+      baselines (`docs/*BASELINE.md`); manual playable client flow.
+- [ ] **Phase 19 — First playable world.** OPEN. Gates landed on `main` so far
+      (PRs #1–#3, 2026-09-08 → 2026-09-13):
+  - [x] **19 — World data backbone** (`e718ab2`): `map.harbor_outskirts`, spawns, portals,
+        `npc.harbor_guide`, `quest.harbor_first_hunt`, `item.slime_gel`; shipping ground
+        collider; skill scaling fix.
+  - [x] **Running stutter fix** (`9029805`): position replicated every tick, not every 100 ms.
+  - [x] **Harbor Town production world** (`a20b7e9` … `f18b033`): walkable town, saved
+        character position (migration 0019), wind and water, day/night + weather, world
+        clock owned by the server (migration 0020), world hand-back when a server dies.
+  - [x] **19B — Five Harbor Town NPCs placed** (`6afcf54`): Blacksmith, Harbor Guide, Job
+        Guide, Storage Keeper, Shopkeeper — presentation and placement.
+  - [x] **Training Slime production gameplay** (`4780529`): spawns into a camp, wanders,
+        chases, attacks with server-decided damage, dies, drops, pays EXP, respawns
+        (spawn radius honoured); rebuilt slime model. Riding along in the same commit:
+        NPC dialogue, the quest chain and its persistence (migrations 0021–0022), Thai/English
+        localisation, revive.
+  - [x] **19E — Basic Punch / ASPD / avatar posture** (`b608938`): Mixamo Cross Punch
+        retargeted per rig in Blender (26 frames, contact 21/30), guard loop, replicated
+        attack-speed stat pacing requests and scaling only the attack state (≤ 1.75×),
+        one accepted swing = one drawn cycle, hits held to the contact frame, stand-off
+        measured from the fist's reach, character faces its target, Fist shape key.
+        Root cause of the male/female back-arch fixed at the avatar layer (T-pose was the
+        bind pose; corrected in the model and every clip importer). Training slime `atk`
+        set to 0 as a testing aid (the server's damage floor of 1 still applies).
+  - [ ] **19F — First Playable Loop Integration / Closure.** Next. Not started.
+
+### Not done / known gaps (as of 2026-09-13)
+
+- Phase 19 is not closed: the first playable loop (login → town → talk → quest → hunt →
+  turn in) has not been verified end to end as one gate.
+- Services for economy, trade, player shop and guild exist as schema/runtime pieces from
+  Phases 13/15 but are not wired into the live world.
+- Hosting for the PHP/MySQL backend is undecided; the dev stack is local only.
+- Player movement, camera, locomotion clips and the player rig are **locked** — changes
+  need an explicit gate.
