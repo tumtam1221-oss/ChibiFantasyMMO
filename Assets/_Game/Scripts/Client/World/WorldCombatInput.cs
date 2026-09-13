@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using ChibiFantasy.Gameplay;
 using ChibiFantasy.Network;
 using FishNet.Managing;
 using FishNet.Object;
@@ -30,9 +31,6 @@ namespace ChibiFantasy.Client.World
         [Tooltip("How far a click may reach to select a target, in metres.")]
         [SerializeField] private float _selectRange = 200f;
 
-        [Tooltip("Seconds between attack requests while the key is held.")]
-        [SerializeField] private float _attackInterval = 0.6f;
-
         [Tooltip("Development only: also attack on Space. Off in normal play, where the "
             + "mouse is the only control.")]
         [SerializeField] private bool _developmentKeyboard;
@@ -40,7 +38,15 @@ namespace ChibiFantasy.Client.World
         private NetworkManager _networkManager;
         private Camera _camera;
         private long _sequence;
-        private float _nextAttack;
+
+        /// <summary>
+        /// Spaces requests to the character's own attack interval.
+        /// </summary>
+        /// <remarks>What replaced the fixed 0.6 s that used to live here and in the pointer.
+        /// The interval is read from the replicated attack speed on every request, through
+        /// the same conversion the server paces with; see <see cref="AttackRequestPacer"/>
+        /// for why it is a prediction and not a permission.</remarks>
+        private readonly AttackRequestPacer _pacer = new AttackRequestPacer();
 
         /// <summary>The monster this player has selected, or null.</summary>
         public MonsterNetworkEntity Target { get; private set; }
@@ -72,12 +78,7 @@ namespace ChibiFantasy.Client.World
 
                 bool wants = keyboard != null && keyboard.spaceKey.isPressed;
 
-                if (wants && Time.time >= _nextAttack)
-                {
-                    _nextAttack = Time.time + _attackInterval;
-
-                    RequestAttack();
-                }
+                if (wants) RequestAttackWhenReady();
             }
 #endif
 
@@ -119,8 +120,50 @@ namespace ChibiFantasy.Client.World
             TargetsSelected++;
         }
 
+        /// <summary>The pacing, for a test that wants to see the schedule.</summary>
+        public AttackRequestPacer Pacer => _pacer;
+
         /// <summary>
-        /// Asks the server to attack the selected monster.
+        /// Seconds between this character's attack requests, from its replicated attack
+        /// speed.
+        /// </summary>
+        /// <remarks>The same <see cref="AttackSpeed.IntervalSeconds"/> the server enforces,
+        /// on the same figure the server published. Before the figure arrives it reads as
+        /// the default rate, which is also what the server paces a character with no
+        /// attack-speed stat at.</remarks>
+        public float RequestIntervalSeconds
+        {
+            get
+            {
+                CharacterNetworkEntity owned = Owned();
+
+                return AttackSpeed.IntervalSeconds(owned == null ? 0 : owned.AttackSpeed);
+            }
+        }
+
+        /// <summary>
+        /// Asks for an attack if the character's own interval has passed since the last ask.
+        /// </summary>
+        /// <remarks>What the pointer and the development key both call while a target is
+        /// in reach. A request inside the interval is not sent: the server would refuse it
+        /// as not ready, and the refusal would cost the next legitimate swing its place.
+        /// </remarks>
+        /// <returns>True when a request actually went out.</returns>
+        public bool RequestAttackWhenReady()
+        {
+            if (Target == null || !Target.IsAlive) return false;
+
+            if (!_pacer.IsReady(Time.time)) return false;
+
+            if (!RequestAttack()) return false;
+
+            _pacer.TryBegin(Time.time, RequestIntervalSeconds);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Asks the server to attack the selected monster, now, regardless of pacing.
         /// </summary>
         /// <returns>False when there is nothing to ask with, or nothing to ask about.</returns>
         public bool RequestAttack()

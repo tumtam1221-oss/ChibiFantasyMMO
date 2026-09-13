@@ -107,7 +107,7 @@ MonoBehaviour:
   _port: 7770
   _startOnAwake: 0
   _content: {fileID: 0}
-  _meleeReachMetres: 2.5
+  _meleeReachMetres: 1
   _monsterTeam: 2
   _characterPrefab: {fileID: 0}
   _monsterPrefab: {fileID: 0}

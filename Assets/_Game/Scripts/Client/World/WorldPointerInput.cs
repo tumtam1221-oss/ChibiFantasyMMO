@@ -64,16 +64,16 @@ namespace ChibiFantasy.Client.World
             + "so the character cannot overshoot and turn around.")]
         [SerializeField] private float _arriveMetres = 0.4f;
 
-        [Tooltip("How close to stand before attacking. Inside the server's 2.5m melee reach, "
-            + "so arriving is never immediately out of range again.")]
-        [SerializeField] private float _attackMetres = 2.0f;
+        [Tooltip("How close to stand before attacking, centre to centre, in metres. Measured "
+            + "from the punch: the Mixamo cross punch puts the fist 0.22 m past the character's "
+            + "origin at impact and the training slime is drawn 0.135 m in radius, so at 0.45 m "
+            + "the fist stops a few centimetres short of its surface and the slime, which closes "
+            + "in on its own, meets it. Inside the server's 1 m melee reach, so arriving is "
+            + "never immediately out of range again.")]
+        [SerializeField] private float _attackMetres = 0.45f;
 
         [Tooltip("How close to stand before picking up. Inside the server's 4m loot reach.")]
         [SerializeField] private float _pickupMetres = 2.5f;
-
-        [Tooltip("Seconds between attack requests while in range. The server has its own "
-            + "cooldown; this only stops the client hammering it.")]
-        [SerializeField] private float _attackInterval = 0.6f;
 
         [Tooltip("Seconds between pickup requests while in range.")]
         [SerializeField] private float _pickupInterval = 0.5f;
@@ -122,7 +122,6 @@ namespace ChibiFantasy.Client.World
         private string _lootId;
         private int _lootIndex;
 
-        private float _nextAttack;
         private float _nextPickup;
 
         /// <summary>What the current click is trying to do.</summary>
@@ -556,13 +555,12 @@ namespace ChibiFantasy.Client.World
                     break;
 
                 case Intent.Monster:
-                    if (Time.time < _nextAttack) return;
-
-                    _nextAttack = Time.time + _attackInterval;
-
                     // Through the existing combat input, which is the only thing that names
-                    // an instance id and a sequence. A refusal is the server's business.
-                    _combat?.RequestAttack();
+                    // an instance id and a sequence -- and, now, the only thing that knows
+                    // how often this character may ask: the cadence follows the replicated
+                    // attack speed rather than a number typed here. A refusal is the
+                    // server's business.
+                    _combat?.RequestAttackWhenReady();
 
                     break;
 

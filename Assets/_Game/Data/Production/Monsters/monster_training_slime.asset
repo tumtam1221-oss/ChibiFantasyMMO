@@ -24,7 +24,7 @@ MonoBehaviour:
     _value: 40
   - _stat:
       _value: stat.atk
-    _value: 6
+    _value: 0
   - _stat:
       _value: stat.def
     _value: 2
@@ -46,7 +46,8 @@ MonoBehaviour:
     _respawnDelaySeconds: 15
     _maxAliveInArea: 4
   _detectionRange: 6
-  _attackRange: 0.75
+  _attackRange: 0.85
+  _attackStartRange: 0.5
   _attackCooldownSeconds: 2.5
   _leashRange: 14
   _moveSpeed: 0.95

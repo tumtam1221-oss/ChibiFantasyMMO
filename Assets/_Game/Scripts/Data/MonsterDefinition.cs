@@ -82,8 +82,15 @@ namespace ChibiFantasy.Data
         [Tooltip("How far it notices a target. Zero or less means it never notices one.")]
         [SerializeField] private float _detectionRange;
 
-        [Tooltip("How close it must be to strike. Zero or less means it cannot attack.")]
+        [Tooltip("How close the target must still be when the blow lands, in metres. The "
+            + "server validates the hit at that moment against this. Zero or less means it "
+            + "cannot attack.")]
         [SerializeField] private float _attackRange = 1.5f;
+
+        [Tooltip("How close it gets before it commits to a swing, in metres. Zero uses the "
+            + "attack range. Smaller than the attack range for a monster whose attack "
+            + "carries it forward: it closes in, commits, and the lunge covers the rest.")]
+        [SerializeField] private float _attackStartRange;
 
         [Tooltip("Seconds between attacks. Zero or less means as fast as combat allows.")]
         [SerializeField] private float _attackCooldownSeconds = 2f;
@@ -141,8 +148,23 @@ namespace ChibiFantasy.Data
         /// Whether it <em>acts</em> on noticing is <see cref="AggressionType"/>.</remarks>
         public float DetectionRange => _detectionRange;
 
-        /// <summary>How close it must be to strike.</summary>
+        /// <summary>
+        /// How close the target must be when the blow lands, in metres.
+        /// </summary>
+        /// <remarks>The impact validation range. <see cref="AttackStartRange"/> is where it
+        /// commits; this is where it can still connect once the wind-up has run. The
+        /// difference between the two is what a forward lunge is allowed to cover.</remarks>
         public float AttackRange => _attackRange;
+
+        /// <summary>
+        /// How close it must get before committing to a swing, in metres.
+        /// </summary>
+        /// <remarks>Authored separately from <see cref="AttackRange"/> because the two answer
+        /// different questions. A training slime that begins its wind-up three body widths
+        /// from the player, then jumps, reads as attacking thin air; one that closes to
+        /// almost touching, jumps, and lands on the player reads as a bite. Unset, it is the
+        /// attack range, which is what every monster authored before this field did.</remarks>
+        public float AttackStartRange => _attackStartRange > 0f ? _attackStartRange : _attackRange;
 
         /// <summary>Seconds between attacks. Zero or less defers to combat's own pacing.</summary>
         public float AttackCooldownSeconds => _attackCooldownSeconds;

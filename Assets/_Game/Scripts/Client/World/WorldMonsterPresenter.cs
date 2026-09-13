@@ -123,6 +123,15 @@ namespace ChibiFantasy.Client.World
             public int LastHealth;
             public int LastSwings;
             public bool WasAlive;
+
+            /// <summary>
+            /// The health the picture is showing, which trails the server's by the swing's
+            /// moment of contact. See <see cref="MonsterHitQueue"/>.
+            /// </summary>
+            public MonsterHitQueue Hits;
+
+            /// <summary>Every renderer on the model, for the flash. Found once.</summary>
+            public Renderer[] Renderers;
         }
 
         private readonly Dictionary<int, Shown> _shown = new Dictionary<int, Shown>();
@@ -290,7 +299,33 @@ namespace ChibiFantasy.Client.World
                 Quaternion.Euler(0f, monster.Facing, 0f),
                 1f - Mathf.Exp(-12f * Time.deltaTime));
 
-            bool alive = monster.IsAlive;
+            // Health drops are queued rather than drawn, and drawn when the blade arrives.
+            //
+            // The server applies a basic attack's damage the instant it accepts the swing,
+            // and tells every client about the swing and the new health in the same tick.
+            // Drawn at once, the slime flinched, its number appeared and its bar fell while
+            // the sword was still being drawn back -- a third of a second before anything
+            // touched it. So each drop waits for the clip's measured moment of contact, and
+            // everything that reads the health for drawing reads the held-back copy. Rises
+            // are shown at once: a respawn or a heal has no swing to wait for.
+            // Held for as long as the swing that caused it takes to make contact -- which
+            // depends on how fast that swing is playing, so the feedback is asked rather
+            // than a constant read. With no swing to explain the blow it falls back to
+            // the clip's own contact at normal speed.
+            CombatFeedback feedback = CombatFeedback.Current;
+
+            float hold = feedback != null
+                ? feedback.ImpactDelayAt(Time.time)
+                : CombatFeedback.BasicAttackImpactSeconds;
+
+            shown.Hits.Observe(monster.Health, Time.time, hold);
+
+            while (shown.Hits.TryDraw(Time.time, out DrawnHit hit))
+            {
+                DrawHit(shown, monster, hit);
+            }
+
+            bool alive = !shown.Hits.ShownDead;
 
             if (shown.Animator != null)
             {
@@ -314,27 +349,23 @@ namespace ChibiFantasy.Client.World
                         Mathf.Clamp(cycles, SlowestHop, FastestHop));
                 }
 
-                // A drop in health is the only thing the server says that means "struck".
-                if (alive && monster.Health < shown.LastHealth)
-                {
-                    shown.Animator.SetTrigger("Hit");
-                }
-
-                // And a rise in the swing count is the only thing that means "struck at".
-                // The server decided it, landed it and applied the damage before this was
-                // told; the animation is a report of that, never a cause of it.
+                // A rise in the swing count is the only thing that means "struck at". The
+                // server decided it, landed it and applied the damage before this was told;
+                // the animation is a report of that, never a cause of it.
                 if (alive && monster.Swings > shown.LastSwings)
                 {
                     shown.Animator.SetTrigger("Attack");
+
+                    if (feedback != null) feedback.Play(CombatSound.MonsterAttack);
                 }
             }
 
-            if (shown.BarFill != null && monster.Health != shown.BarHealth)
+            if (shown.BarFill != null && shown.Hits.ShownHealth != shown.BarHealth)
             {
-                shown.BarHealth = monster.Health;
+                shown.BarHealth = shown.Hits.ShownHealth;
 
                 int max = monster.MaxHealth > 0 ? monster.MaxHealth : 1;
-                float fraction = Mathf.Clamp01(monster.Health / (float)max);
+                float fraction = Mathf.Clamp01(shown.Hits.ShownHealth / (float)max);
 
                 shown.BarFill.localScale = new Vector3(fraction, 1f, 1f);
             }
@@ -355,6 +386,75 @@ namespace ChibiFantasy.Client.World
             // Despawn belongs to the world: when the server takes the monster away, Forget
             // removes this.
             shown.WasAlive = alive;
+        }
+
+        /// <summary>
+        /// The whole of one blow being seen: the number, the spark, the flash, the flinch,
+        /// and -- if it was the last one -- the fall.
+        /// </summary>
+        /// <remarks>
+        /// <b>Death beats Hit, and nothing beats Death.</b> A blow that kills sets the dead
+        /// flag and clears the Hit trigger rather than pulling it, so a corpse never
+        /// flinches. The queue reports a blow taken after death with a zero amount, and a
+        /// zero amount draws nothing. The animator's own graph has no way out of Death, so
+        /// this is belt and braces -- the belt is the graph, and this is the braces.
+        /// </remarks>
+        private static void DrawHit(Shown shown, MonsterNetworkEntity monster, DrawnHit hit)
+        {
+            if (hit.Amount <= 0 && !hit.Kills) return;
+
+            CombatFeedback feedback = CombatFeedback.Current;
+            Vector3 where = shown.Visual != null
+                ? shown.Visual.transform.position
+                : new Vector3(monster.X, monster.Y, monster.Z);
+            float top = HeightOf(shown);
+
+            if (feedback != null && hit.Amount > 0)
+            {
+                // The number starts just over the body and to one side, so it climbs past
+                // the health bar rather than through it. The spark is in the body, where the
+                // blade went.
+                feedback.ShowDamage(where + new Vector3(0f, top + 0.05f, 0f), hit.Amount,
+                    DamageNumberKind.Dealt);
+                feedback.ShowImpact(where + new Vector3(0f, top * 0.55f, 0f), ImpactKind.Physical);
+
+                if (shown.Renderers == null && shown.Visual != null)
+                {
+                    shown.Renderers = shown.Visual.GetComponentsInChildren<Renderer>(true);
+                }
+
+                feedback.Flash(shown.Renderers, new Color(1.9f, 1.9f, 2.1f),
+                    CombatFeedback.FlashSeconds);
+                feedback.Play(hit.Kills ? CombatSound.MonsterDeath : CombatSound.PlayerHitMonster);
+            }
+
+            if (shown.Animator == null) return;
+
+            if (hit.Kills)
+            {
+                shown.Animator.ResetTrigger("Hit");
+                shown.Animator.SetBool("Move", false);
+                shown.Animator.SetBool("Dead", true);
+            }
+            else
+            {
+                shown.Animator.SetTrigger("Hit");
+            }
+        }
+
+        /// <summary>How tall this monster is drawn, from the model's own bounds.</summary>
+        private static float HeightOf(Shown shown)
+        {
+            if (shown.Visual == null) return 0.3f;
+
+            var renderer = shown.Visual.GetComponentInChildren<Renderer>(true);
+
+            if (renderer == null) return 0.3f;
+
+            float top = renderer.bounds.max.y - shown.Visual.transform.position.y;
+
+            // the skinned bounds are padded for the bubbles; the body is the lower part
+            return Mathf.Clamp(top * 0.55f, 0.12f, 0.6f);
         }
 
         private Shown Build(MonsterNetworkEntity monster, DefinitionId definition)
@@ -399,6 +499,7 @@ namespace ChibiFantasy.Client.World
                 LastHealth = monster.Health,
                 LastSwings = monster.Swings,
                 WasAlive = monster.IsAlive,
+                Hits = new MonsterHitQueue(monster.Health),
             };
 
             BuildPlate(shown, definition);
