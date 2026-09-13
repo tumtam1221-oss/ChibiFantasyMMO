@@ -174,6 +174,18 @@ namespace ChibiFantasy.Tests.EditMode
                 Assert.That(child.state.speed, Is.EqualTo(1f),
                     child.state.name + " plays at " + child.state.speed
                     + "x -- a state speed is the same fast-forward by another name");
+
+                // The attack state is the one exception, and it is the attack speed stat:
+                // its rate comes from the character's replicated ASPD through the
+                // AttackSpeed parameter (19E.1), and AttackSpeedAndMeleeRangeTests holds
+                // that nothing else reads it. Locomotion runs at its natural rate.
+                if (child.state.name == "BasicPunch")
+                {
+                    Assert.That(child.state.speedParameter, Is.EqualTo("AttackSpeed"));
+
+                    continue;
+                }
+
                 Assert.That(child.state.speedParameterActive, Is.False,
                     child.state.name + " drives its playback rate from a parameter, which is "
                     + "a multiplier that does not show up in the inspector as one");
@@ -859,8 +871,11 @@ namespace ChibiFantasy.Tests.EditMode
         /// </summary>
         /// <remarks>The minimum set, not the folder: the two approved models, their body
         /// textures, and every clip the shipped animator reaches -- male and female, because
-        /// each gender has its own authored variant. The controller and its female override
-        /// already live in tracked content.</remarks>
+        /// each gender has its own authored variant. The basic punch is the Mixamo cross
+        /// retargeted onto each Meshy rig in Blender and the guard it is thrown from is the
+        /// project's own clip, authored on the Meshy rigs (19E); the
+        /// sword pack's swing is no longer reached. The controller and its female override already live in tracked
+        /// content.</remarks>
         private static string[] RequiredCharacterAssets()
         {
             const string production = "Assets/_Game/Art/Characters/Production/";
@@ -872,17 +887,19 @@ namespace ChibiFantasy.Tests.EditMode
                 production + "MaleMeshy/CHR_Male_Meshy.fbx",
                 production + "MaleMeshy/CHR_Male_Meshy@Idle.fbx",
                 production + "MaleMeshy/CHR_Male_Meshy@Run.fbx",
+                production + "MaleMeshy/CHR_Male_Meshy@CrossPunch.fbx",
+                production + "MaleMeshy/CHR_Male_Meshy@GuardIdle.fbx",
                 production + "MaleMeshy/CHR_Male_Meshy.mat",
                 production + "MaleMeshy/Textures/CHR_Male_Meshy_BaseColor.png",
                 production + "MaleMeshy/Textures/CHR_Male_Meshy_Normal.png",
                 production + "FemaleMeshy/CHR_Female_Meshy.fbx",
                 production + "FemaleMeshy/CHR_Female_Meshy@Idle.fbx",
                 production + "FemaleMeshy/CHR_Female_Meshy@Run.fbx",
+                production + "FemaleMeshy/CHR_Female_Meshy@CrossPunch.fbx",
+                production + "FemaleMeshy/CHR_Female_Meshy@GuardIdle.fbx",
                 production + "FemaleMeshy/CHR_Female_Meshy.mat",
                 production + "FemaleMeshy/Textures/CHR_Female_Meshy_BaseColor.png",
                 production + "FemaleMeshy/Textures/CHR_Female_Meshy_Normal.png",
-                melee + "Male/Combat/1H/HumanM@Attack1H01_R.fbx",
-                melee + "Female/Combat/1H/HumanF@Attack1H01_R.fbx",
                 melee + "Male/Combat/HumanM@Death01.fbx",
                 melee + "Female/Combat/HumanF@Death01.fbx",
             };

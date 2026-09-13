@@ -73,8 +73,11 @@ namespace ChibiFantasy.Server
         [Tooltip("The world's authored content. Absent means session-only, no simulation.")]
         [SerializeField] private WorldContentCatalogue _content;
 
-        [Tooltip("How far a basic attack reaches, in metres.")]
-        [SerializeField] private float _meleeReachMetres = 2.5f;
+        [Tooltip("How far a basic attack reaches, centre to centre, in metres. An unarmed "
+            + "fist reaches about a quarter of a metre; a metre allows for the target's own "
+            + "body, a lunging slime and a client that stopped a step short. It used to be "
+            + "2.5, which let a character punch from well outside arm's length.")]
+        [SerializeField] private float _meleeReachMetres = 1.0f;
 
         [Tooltip("The team monsters fight on. Players are team one.")]
         [SerializeField] private int _monsterTeam = 2;
@@ -411,9 +414,13 @@ namespace ChibiFantasy.Server
             // is still being finished knows which of its items are already carried.
             loot?.Observe(rewards);
 
+            // Paced from the content's attack-speed stat, so AGI, a weapon's own speed and
+            // a haste all reach the interval through the one calculator -- and a client
+            // asking faster than its own figure allows is refused as NotReady, never served.
             var combat = new ServerCombatPipeline(commands, monsters, rewards,
                 BasicAttackRules.Melee(_content.AttackStat, _content.DefenceStat,
-                    MinimumDamage, _meleeReachMetres),
+                        MinimumDamage, _meleeReachMetres)
+                    .WithAttackSpeed(_content.AttackSpeedStat),
                 default, skills, skillRules, effects, fruits);
 
             // A command handled between ticks settles the world immediately, so a second
@@ -426,10 +433,14 @@ namespace ChibiFantasy.Server
 
             var requests = new CharacterCombatRequestHandler(combat,
                 () => Simulation?.Settle(),
-                connectionId => replication?.PublishAttack(connectionId));
+                (connectionId, facing) => replication?.PublishAttack(connectionId, facing));
 
             replication = new CharacterReplicationService(_networkManager, players,
                 _characterPrefab, requests, movement);
+
+            // The figure every client paces and animates from is the one the pipeline
+            // above refuses swings against: same stat, same calculator.
+            replication.UseAttackSpeedStat(_content.AttackSpeedStat);
 
             var status = new CharacterStatusAuthority(players, effects, replication);
 

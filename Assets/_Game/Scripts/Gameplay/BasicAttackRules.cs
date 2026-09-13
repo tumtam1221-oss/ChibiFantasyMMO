@@ -27,13 +27,47 @@ namespace ChibiFantasy.Gameplay
     public readonly struct BasicAttackRules
     {
         private BasicAttackRules(DefinitionId attackPowerStat, DefinitionId defenseStat,
-            int minimumDamage, float range, CombatRelationshipMask permittedTargets)
+            int minimumDamage, float range, CombatRelationshipMask permittedTargets,
+            DefinitionId attackSpeedStat = default)
         {
             AttackPowerStat = attackPowerStat;
             DefenseStat = defenseStat;
             MinimumDamage = minimumDamage < 0 ? 0 : minimumDamage;
             Range = range < 0f ? 0f : range;
             PermittedTargets = permittedTargets;
+            AttackSpeedStat = attackSpeedStat;
+        }
+
+        /// <summary>
+        /// Id of the stat that paces the attacker, in <see cref="AttackSpeed"/> units.
+        /// </summary>
+        /// <remarks>Optional. Rules with none leave the pacing to whatever
+        /// <see cref="AttackTiming"/> the caller supplied, which is what every caller did
+        /// before the stat existed; rules with one make the server read the attacker's own
+        /// figure before every swing, so equipment and buffs pace the fight and a client
+        /// cannot. A stat the attacker lacks reads as <see cref="AttackSpeed.Default"/>.</remarks>
+        public DefinitionId AttackSpeedStat { get; }
+
+        /// <summary>Whether these rules pace the attacker from a stat.</summary>
+        public bool PacesFromStat => AttackSpeedStat.IsValid;
+
+        /// <summary>The same rules, paced from the named stat.</summary>
+        public BasicAttackRules WithAttackSpeed(DefinitionId attackSpeedStat)
+        {
+            return new BasicAttackRules(AttackPowerStat, DefenseStat, MinimumDamage, Range,
+                PermittedTargets, attackSpeedStat);
+        }
+
+        /// <summary>
+        /// The attacker's attack speed under these rules: their stat, or the default.
+        /// </summary>
+        public int AttackSpeedOf(ICombatant attacker)
+        {
+            if (!PacesFromStat || attacker == null) return AttackSpeed.Default;
+
+            return attacker.TryGetCombatStat(AttackSpeedStat, out int value)
+                ? AttackSpeed.Clamp(value)
+                : AttackSpeed.Default;
         }
 
         /// <summary>Id of the stat read from the attacker.</summary>

@@ -232,7 +232,11 @@ namespace ChibiFantasy.Gameplay
             _monster.SetTarget(target.CombatantId);
 
             float sqrDistance = _monster.Position.SqrDistanceTo(target.Position);
-            float attackRange = definition.AttackRange;
+
+            // The start range, not the impact range: this is the decision to commit, and
+            // the blow itself is validated at its own moment against the reach the
+            // definition gives it. See MonsterDefinition.AttackStartRange.
+            float attackRange = definition.AttackStartRange;
 
             bool inReach = attackRange > 0f && sqrDistance <= attackRange * attackRange;
 

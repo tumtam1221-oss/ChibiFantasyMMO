@@ -1,4 +1,5 @@
 using ChibiFantasy.Data;
+using ChibiFantasy.Gameplay;
 using ChibiFantasy.Network;
 using TMPro;
 using UnityEngine;
@@ -63,6 +64,34 @@ namespace ChibiFantasy.Client.World
         /// </remarks>
         private static readonly int AttackHash = Animator.StringToHash("Attack");
 
+        /// <summary>
+        /// The parameter the swing state is actually wired to.
+        /// </summary>
+        /// <remarks>
+        /// <b>The trigger above is declared and never read.</b> Measured against the
+        /// controller: the only transitions into and out of the attack state are on
+        /// <c>AttackPhase</c> -- in while it is non-zero, back to locomotion when it returns
+        /// to zero -- and nothing in the graph consumes <c>Attack</c>. So for as long as the
+        /// presenter only pulled the trigger, the server accepted swings, monsters lost
+        /// health, and the character on screen stood perfectly still. The same shape of gap
+        /// as the one this remark's neighbour describes, one layer further down.
+        ///
+        /// The trigger is still pulled, because the prototype presenter reads it and a
+        /// controller may yet wire it; the phase is what makes the swing visible today.
+        /// </remarks>
+        private static readonly int AttackPhaseHash = Animator.StringToHash("AttackPhase");
+
+        // AttackPhase: 0 = locomotion, 1 = the punch, 2 = the guard held between punches.
+
+        /// <summary>
+        /// The attack state's own playback rate. Only that state reads it.
+        /// </summary>
+        /// <remarks>The controller multiplies the attack state's speed by this parameter and
+        /// nothing else's: locomotion, idle and death keep their own speed of one however
+        /// fast a character swings. Set from the replicated attack speed through the one
+        /// conversion the server also uses, see <see cref="AttackSpeed"/>.</remarks>
+        private static readonly int AttackSpeedHash = Animator.StringToHash("AttackSpeed");
+
         [Tooltip("Which approved model to use, and how to animate it.")]
         [SerializeField] private CharacterVisualCatalogue _catalogue;
 
@@ -89,6 +118,18 @@ namespace ChibiFantasy.Client.World
         private Animator _animator;
         private CharacterNameplate _nameplate;
 
+        /// <summary>
+        /// The model's skinned meshes and, for each, the index of its fist blend shape
+        /// (-1 when the mesh has none).
+        /// </summary>
+        /// <remarks>The production rigs have no finger bones, so a clenched fist is a
+        /// blend shape on the mesh rather than a pose in the clip. The presenter closes
+        /// the hands for as long as a swing or the guard is being shown and opens them
+        /// again when the fight is over, so the walk and idle clips never have to know.</remarks>
+        private SkinnedMeshRenderer[] _skins = System.Array.Empty<SkinnedMeshRenderer>();
+        private int[] _fistShape = System.Array.Empty<int>();
+        private float _fistWeight;
+
         private Vector3 _lastPosition;
 
         /// <summary>The number the animator was last shown, which is the eased one.</summary>
@@ -97,6 +138,63 @@ namespace ChibiFantasy.Client.World
         private int _builtGenderCode = int.MinValue;
         private bool _presentedDead;
         private float _facing;
+
+        /// <summary>When the swing being shown should give way to the guard.</summary>
+        private float _swingUntil = float.NegativeInfinity;
+
+        /// <summary>When the swing being shown reaches its contact frame.</summary>
+        private float _swingImpactAt = float.NegativeInfinity;
+        private bool _swinging;
+
+        /// <summary>
+        /// When the guard held after a punch should drop back to locomotion.
+        /// </summary>
+        /// <remarks>
+        /// A fighter does not drop their hands between punches. Every punch ends in the
+        /// guard (phase 2, a held loop) and stays there for a beat, so the next accepted
+        /// swing starts from the guard rather than from arms hanging at the sides -- which
+        /// is what makes a run of auto-attacks read as one fight and not as a series of
+        /// arm movements from idle. The guard drops when nothing has been accepted for a
+        /// while, the moment the character starts walking (the guard state cannot walk),
+        /// or on death.
+        /// </remarks>
+        private float _guardUntil = float.NegativeInfinity;
+        private bool _guarding;
+
+        /// <summary>
+        /// How long the guard is held after the last punch, in seconds.
+        /// </summary>
+        /// <remarks>A fighter who has just dropped a monster stays in the stance for a
+        /// couple of seconds -- the reference sheet's post-combat idle -- and then eases
+        /// back to the ordinary idle. The guard still gives way the moment the character
+        /// walks, the moment another swing is accepted (into the punch), and on death.</remarks>
+        public const float GuardHoldSeconds = 2.0f;
+
+        /// <summary>Above this blend of walking the guard gives way to locomotion.</summary>
+        private const float GuardDropsAtSpeed01 = 0.1f;
+
+        /// <summary>Name of the blend shape on the production meshes that curls the fingers into a fist.</summary>
+        public const string FistBlendShape = "Fist";
+
+        /// <summary>Seconds the hands take to close into fists, and to open again.</summary>
+        /// <remarks>Shorter than the punch's wind-up, so the fists are closed before the
+        /// first swing reaches its chamber; long enough that they do not pop.</remarks>
+        public const float FistSeconds = 0.12f;
+
+        /// <summary>How far the picture is pushed back by the last blow it took, in metres.</summary>
+        private float _recoil;
+        private int _lastHealth = int.MinValue;
+        private Renderer[] _renderers;
+        private GameObject _renderersOf;
+
+        /// <summary>
+        /// How far a blow shoves the picture, and how fast that settles.
+        /// </summary>
+        /// <remarks>Three centimetres, on the visual root only -- the network object that the
+        /// server positions is never touched -- decaying over about a tenth of a second. Enough
+        /// to read as being hit; nowhere near enough to read as being moved.</remarks>
+        private const float RecoilMetres = 0.03f;
+        private const float RecoilSettle = 22f;
 
         /// <summary>The gender the model was built for.</summary>
         public CharacterGender Gender => CharacterVisualCatalogue.GenderOf(
@@ -176,9 +274,284 @@ namespace ChibiFantasy.Client.World
         {
             AttacksShown++;
 
+            // A body on the ground does not swing. The server refuses the attack anyway; this
+            // is only what stops a stale report from twitching a corpse.
+            if (_presentedDead) return;
+
+            // Turned to face what the server says was struck. The heading is replicated
+            // state written just before this message, and is read again every frame of the
+            // swing (see SettleSwing) in case it arrives a tick behind. The turn itself goes
+            // through the same eased Face() every frame uses, so it reads as a turn and not
+            // a snap.
+            _facing = _entity.SwingFacing;
+
+            // One accepted swing is one complete cycle: wind-up, contact, follow-through,
+            // recovery. How fast the cycle plays comes from the character's replicated
+            // attack speed through the same conversion the server paced the swing with, so
+            // the cycle always fits inside the interval the server enforces and the next
+            // accepted swing can only ever arrive after this one has finished. Locomotion
+            // is untouched: the rate goes to the attack state's own parameter, never to
+            // the animator as a whole.
+            float interval = AttackSpeed.IntervalSeconds(_entity.AttackSpeed);
+
+            PlaybackRate = AttackSpeed.PlaybackRate(interval,
+                CombatFeedback.BasicAttackClipSeconds, CombatFeedback.MaxPlaybackRate);
+
+            float cycle = CombatFeedback.BasicAttackClipSeconds / PlaybackRate;
+
+            // A swing that somehow arrives while the last is still being drawn -- which the
+            // server's pacing makes impossible for a basic attack, and a later skill might
+            // not -- is never allowed to cut a punch off before its fist lands: until the
+            // contact frame the picture keeps the punch it is throwing (the blow is still
+            // counted, and its number still lands); after contact, in the recovery, the
+            // next punch starts from the top. Either way it is counted so a test can see it.
+            bool beforeImpact = _swinging && Time.time < _swingImpactAt;
+
+            if (_swinging) SwingsRestarted++;
+            if (beforeImpact) SwingsAbsorbed++;
+
+            _swinging = true;
+            _guarding = false;
+            _swingUntil = Time.time + cycle;
+            _swingImpactAt = Time.time + CombatFeedback.BasicAttackImpactSeconds / PlaybackRate;
+
+            CombatFeedback feedback = CombatFeedback.Current;
+
+            if (feedback != null)
+            {
+                // What a monster this swing is about to hit will hold its number for: the
+                // clip's contact frame at the rate it is actually playing.
+                feedback.NoteSwing(CombatFeedback.BasicAttackImpactSeconds / PlaybackRate,
+                    Time.time);
+                feedback.Play(CombatSound.PlayerSwing);
+            }
+
             if (_animator == null || _animator.runtimeAnimatorController == null) return;
 
+            _animator.SetFloat(AttackSpeedHash, PlaybackRate);
+
+            // Mid-punch and not yet at contact: the animator is left alone -- the punch it is
+            // drawing lands first. The trigger and phase are already what they need to be.
+            if (beforeImpact) return;
+
             _animator.SetTrigger(AttackHash);
+
+            // From the guard (phase 2) or from a punch's recovery (phase 1, past contact),
+            // the next punch starts from its first frame rather than blending in halfway.
+            if (_animator.GetInteger(AttackPhaseHash) != 0)
+            {
+                AnimatorStateInfo current = _animator.GetCurrentAnimatorStateInfo(0);
+
+                _animator.Play(current.fullPathHash, 0, 0f);
+            }
+
+            _animator.SetInteger(AttackPhaseHash, 1);
+        }
+
+        /// <summary>The rate the current or last swing was played at. For tests.</summary>
+        public float PlaybackRate { get; private set; } = 1f;
+
+        /// <summary>How many swings arrived while one was still being drawn. For tests.</summary>
+        public int SwingsRestarted { get; private set; }
+
+        /// <summary>
+        /// How many of those arrived before the drawn punch had landed, and so were absorbed
+        /// into it instead of restarting the animator. For tests.
+        /// </summary>
+        public int SwingsAbsorbed { get; private set; }
+
+        /// <summary>Whether a swing is being shown right now. For tests.</summary>
+        public bool IsSwinging => _swinging;
+
+        /// <summary>How many blows this character has been seen to take. For tests.</summary>
+        public int HitsShown { get; private set; }
+
+        /// <summary>
+        /// Ends the swing when its time is up, handing the animator back to locomotion.
+        /// </summary>
+        private void SettleSwing()
+        {
+            if (!_swinging) return;
+
+            // the heading may land a tick after the swing did; keep pointing at the latest
+            if (!_presentedDead) _facing = _entity.SwingFacing;
+
+            if (Time.time < _swingUntil) return;
+
+            _swinging = false;
+
+            // Into the guard, and hold it: the clip ends on the guard pose, and phase 2 is
+            // the looped guard state the controller blends to from there.
+            _guarding = true;
+            _guardUntil = Time.time + GuardHoldSeconds;
+
+            if (_animator != null && _animator.runtimeAnimatorController != null)
+            {
+                _animator.SetInteger(AttackPhaseHash, 2);
+            }
+        }
+
+        /// <summary>Whether the fighting guard is being held right now. For tests.</summary>
+        public bool IsGuarding => _guarding;
+
+        /// <summary>How closed the hands are, 0 (open) to 100 (fists). For tests.</summary>
+        public float FistWeight => _fistWeight;
+
+        /// <summary>
+        /// The next fist blend-shape weight: eased toward closed while fighting, toward
+        /// open otherwise, at a fixed rate so a fight that ends mid-close still reads.
+        /// </summary>
+        public static float NextFistWeight(float current, bool fighting, float deltaSeconds)
+        {
+            float target = fighting ? 100f : 0f;
+
+            return Mathf.MoveTowards(current, target, 100f * Mathf.Max(0f, deltaSeconds) / FistSeconds);
+        }
+
+        /// <summary>
+        /// Closes the hands into fists while a swing or the guard is shown, opens them after.
+        /// </summary>
+        private void SettleFists(float deltaSeconds)
+        {
+            bool fighting = (_swinging || _guarding) && !_presentedDead;
+            float next = NextFistWeight(_fistWeight, fighting, deltaSeconds);
+
+            if (Mathf.Approximately(next, _fistWeight)) return;
+
+            _fistWeight = next;
+            ApplyFists();
+        }
+
+        private void ApplyFists()
+        {
+            for (var i = 0; i < _skins.Length; i++)
+            {
+                if (_fistShape[i] < 0 || _skins[i] == null) continue;
+
+                _skins[i].SetBlendShapeWeight(_fistShape[i], _fistWeight);
+            }
+        }
+
+        /// <summary>
+        /// Drops the guard when the fight has gone quiet, the character walks off, or dies.
+        /// </summary>
+        private void SettleGuard(float speed01)
+        {
+            if (!_guarding) return;
+
+            if (Time.time < _guardUntil && speed01 <= GuardDropsAtSpeed01 && !_presentedDead) return;
+
+            _guarding = false;
+
+            if (_animator != null && _animator.runtimeAnimatorController != null)
+            {
+                _animator.SetInteger(AttackPhaseHash, 0);
+            }
+        }
+
+        /// <summary>
+        /// Draws a blow this character took, the moment the server's health says it did.
+        /// </summary>
+        /// <remarks>
+        /// <b>No delay on this side.</b> The slime's swing is authored so the server applies
+        /// its damage at the clip's own moment of contact -- the wind-up is the same 0.8 s the
+        /// picture shows -- so by the time the health drops here the jump has already landed.
+        /// The number, the flash and the shove are drawn at once.
+        ///
+        /// <b>Presentation only, and only presentation.</b> The health is read, never
+        /// written; the shove moves the visual root and never the object the server owns.
+        /// </remarks>
+        private void PresentHitsTaken()
+        {
+            int health = _entity.Health;
+
+            if (_lastHealth == int.MinValue)
+            {
+                _lastHealth = health;
+
+                return;
+            }
+
+            if (health >= _lastHealth)
+            {
+                _lastHealth = health;
+
+                return;
+            }
+
+            int amount = _lastHealth - health;
+
+            _lastHealth = health;
+
+            HitsShown++;
+            _recoil = RecoilMetres;
+
+            CombatFeedback feedback = CombatFeedback.Current;
+
+            if (feedback == null || _model == null) return;
+
+            float head = HeadHeight();
+            Vector3 where = transform.position;
+
+            feedback.ShowDamage(where + new Vector3(0f, head + 0.08f, 0f), amount,
+                DamageNumberKind.Taken);
+            feedback.ShowImpact(where + new Vector3(0f, head * 0.6f, 0f), ImpactKind.Soft);
+
+            if (_renderersOf != _model)
+            {
+                _renderersOf = _model;
+                _renderers = _model.GetComponentsInChildren<Renderer>(true);
+            }
+
+            feedback.Flash(_renderers, new Color(1.6f, 1.25f, 1.2f), CombatFeedback.FlashSeconds);
+            feedback.Play(CombatSound.PlayerHurt);
+        }
+
+        /// <summary>How tall the model stands, from its renderers.</summary>
+        private float HeadHeight()
+        {
+            if (_renderersOf != _model)
+            {
+                _renderersOf = _model;
+                _renderers = _model.GetComponentsInChildren<Renderer>(true);
+            }
+
+            var top = 0f;
+
+            for (var i = 0; i < _renderers.Length; i++)
+            {
+                if (_renderers[i] == null) continue;
+
+                float y = _renderers[i].bounds.max.y - transform.position.y;
+
+                if (y > top) top = y;
+            }
+
+            return top > 0.2f ? top : 1.2f;
+        }
+
+        /// <summary>Lets the shove from a blow settle back to nothing.</summary>
+        private void SettleRecoil(float deltaSeconds)
+        {
+            if (_visualRoot == null) return;
+
+            if (_recoil <= 0.0005f)
+            {
+                if (_recoil != 0f)
+                {
+                    _recoil = 0f;
+                    _visualRoot.localPosition = Vector3.zero;
+                }
+
+                return;
+            }
+
+            _recoil *= Mathf.Exp(-RecoilSettle * Mathf.Max(deltaSeconds, 0f));
+
+            // straight back, along the way the picture is facing
+            Vector3 back = Quaternion.Euler(0f, _facing, 0f) * Vector3.back;
+
+            _visualRoot.localPosition = back * _recoil;
         }
 
         /// <summary>
@@ -194,7 +567,12 @@ namespace ChibiFantasy.Client.World
 
             float speed = MeasureSpeed(deltaSeconds);
 
+            PresentHitsTaken();
             PresentDeath();
+            SettleSwing();
+            SettleGuard(speed);
+            SettleFists(deltaSeconds);
+            SettleRecoil(deltaSeconds);
 
             if (_presentedDead)
             {
@@ -259,6 +637,8 @@ namespace ChibiFantasy.Client.World
                 DestroyVisual(_model);
                 _model = null;
                 _animator = null;
+                _skins = System.Array.Empty<SkinnedMeshRenderer>();
+                _fistShape = System.Array.Empty<int>();
             }
 
             if (prefab == null)
@@ -286,6 +666,18 @@ namespace ChibiFantasy.Client.World
             {
                 skinned.updateWhenOffscreen = true;
             }
+
+            // Find the fist blend shape on each mesh once; a mesh without one is left alone.
+            _skins = _model.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            _fistShape = new int[_skins.Length];
+
+            for (var i = 0; i < _skins.Length; i++)
+            {
+                Mesh mesh = _skins[i].sharedMesh;
+                _fistShape[i] = mesh == null ? -1 : mesh.GetBlendShapeIndex(FistBlendShape);
+            }
+
+            ApplyFists();
 
             BuildCount++;
 
@@ -436,14 +828,24 @@ namespace ChibiFantasy.Client.World
                 _visualRoot.localRotation = dead
                     ? Quaternion.Euler(_deathTilt, _facing, 0f)
                     : Quaternion.Euler(0f, _facing, 0f);
+                _visualRoot.localPosition = Vector3.zero;
             }
 
             _shownSpeed = 0f;
+            _recoil = 0f;
+
+            // A swing in progress ends with the character, and a revived one starts clean:
+            // the phase is cleared either way so the animator's graph has nothing pending
+            // to fall back into.
+            _swinging = false;
+            _guarding = false;
 
             if (_animator != null && _animator.runtimeAnimatorController != null)
             {
                 _animator.SetBool(DeadHash, dead);
                 _animator.SetFloat(SpeedHash, 0f);
+                _animator.SetInteger(AttackPhaseHash, 0);
+                _animator.ResetTrigger(AttackHash);
             }
         }
 

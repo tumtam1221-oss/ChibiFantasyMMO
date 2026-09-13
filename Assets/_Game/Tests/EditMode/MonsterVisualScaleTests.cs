@@ -303,9 +303,12 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(content.BuildMonsters().TryGet(new DefinitionId(Slime),
                 out MonsterDefinition slime), Is.True);
 
-            Assert.That(slime.AttackRange, Is.EqualTo(0.75f).Within(1e-4f),
+            // 19E.1 re-authored the reach on purpose -- it commits from 0.5 m and can land
+            // from 0.85 -- so these are the figures the drawing must not have moved.
+            Assert.That(slime.AttackRange, Is.EqualTo(0.85f).Within(1e-4f),
                 "the slime now reaches " + slime.AttackRange + " m; drawing it smaller must "
                 + "not change how close it has to be to hit");
+            Assert.That(slime.AttackStartRange, Is.EqualTo(0.5f).Within(1e-4f));
             Assert.That(slime.AttackCooldownSeconds, Is.EqualTo(2.5f).Within(1e-4f));
             Assert.That(slime.AttackWindupSeconds, Is.EqualTo(0.8f).Within(1e-4f));
             Assert.That(slime.AttackRecoverySeconds, Is.EqualTo(0.5f).Within(1e-4f));

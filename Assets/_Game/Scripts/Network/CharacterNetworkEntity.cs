@@ -141,6 +141,22 @@ namespace ChibiFantasy.Network
         private readonly SyncVar<long> _experience = new SyncVar<long>();
 
         /// <summary>
+        /// How fast this character swings, in hundredths of a swing per second.
+        /// </summary>
+        /// <remarks>
+        /// <b>Public in the same sense health is.</b> How fast somebody swings is visible to
+        /// anybody watching them fight, and every observer needs it to play the swing at
+        /// the right speed. The owner needs it for one more thing: to pace its own requests
+        /// so it is not asking the server for a swing it will be refused.
+        ///
+        /// <b>An answer, never a request.</b> The server writes it from the stat the
+        /// calculator produced; nothing a client sends can move it, and the server paces the
+        /// fight from its own copy of the figure rather than from this one. Zero means the
+        /// server has not said yet, which the reader treats as the default rate.
+        /// </remarks>
+        private readonly SyncVar<int> _attackSpeed = new SyncVar<int>();
+
+        /// <summary>
         /// Which pet this character has out, as an authored id. Empty when none is.
         /// </summary>
         /// <remarks>
@@ -267,6 +283,9 @@ namespace ChibiFantasy.Network
         public int MaxMana => _maxMana.Value;
 
         public int Level => _level.Value;
+
+        /// <summary>Attack speed as the server computed it; zero until it has been published.</summary>
+        public int AttackSpeed => _attackSpeed.Value;
 
         /// <summary>Progress within the current level, in Phase 05 terms.</summary>
         public long Experience => _experience.Value;
@@ -713,7 +732,7 @@ namespace ChibiFantasy.Network
         /// </remarks>
         [Server]
         public void ServerPublishState(float x, float y, float z, int health, int maxHealth,
-            int mana, int maxMana, int level, long experience)
+            int mana, int maxMana, int level, long experience, int attackSpeed = 0)
         {
             _x.Value = x;
             _y.Value = y;
@@ -724,6 +743,7 @@ namespace ChibiFantasy.Network
             _maxMana.Value = maxMana < 0 ? 0 : maxMana;
             _level.Value = level < 0 ? 0 : level;
             _experience.Value = experience < 0 ? 0 : experience;
+            _attackSpeed.Value = attackSpeed < 0 ? 0 : attackSpeed;
         }
 
         /// <summary>Publishes which pet is out, or empty for none.</summary>
@@ -889,8 +909,24 @@ namespace ChibiFantasy.Network
         /// them is already replicated as state a client cannot forge. What it means is
         /// exactly "the server accepted an attack from this character" -- so an animation
         /// downstream of it cannot appear for an attack that was refused.
+        ///
+        /// <b>The heading travels as state, not in the message.</b> A swing has to point at
+        /// something, and a client watching somebody else fight has no way to know at what.
+        /// The server does, and writes it to <see cref="SwingFacing"/> before it sends this.
+        /// It is not a parameter here because this project's observers messages carry none
+        /// -- a payload on a broadcast is how private state leaks, and the rule is held by
+        /// a test rather than by remembering it. A heading is not private, and a SyncVar is
+        /// the shape the monster's own facing already has.
         /// </remarks>
         public event System.Action AttackPerformed;
+
+        /// <summary>
+        /// The way this character was pointing when its last swing was accepted, in degrees
+        /// about the vertical. Written by the server; see <c>CombatFacing</c>.
+        /// </summary>
+        public float SwingFacing => _swingFacing.Value;
+
+        private readonly SyncVar<float> _swingFacing = new SyncVar<float>();
 
         /// <summary>
         /// Tells every observer that this character's attack was accepted.
@@ -905,9 +941,14 @@ namespace ChibiFantasy.Network
         /// the swing, which is what makes a second client's view of a fight correct.
         /// </remarks>
         [Server]
-        public void ServerPublishAttack()
+        public void ServerPublishAttack(float facingDegrees)
         {
             if (!IsServerStarted) return;
+
+            // State first, message second. The presenter re-reads the heading for as long
+            // as it is drawing the swing, so it does not matter which of the two a client
+            // happens to receive first.
+            _swingFacing.Value = facingDegrees;
 
             ObserversAttackPerformed();
         }

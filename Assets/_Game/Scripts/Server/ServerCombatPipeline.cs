@@ -20,9 +20,10 @@ namespace ChibiFantasy.Server
             AttackRejection attackRejection, SkillUseRejection skillRejection,
             InstanceId attacker, InstanceId target, int damage, int healthBefore,
             int healthAfter, bool defeated, long experience, int lootCount,
-            InstanceId lootPile)
+            InstanceId lootPile, float facingDegrees)
         {
             IsAccepted = accepted;
+            FacingDegrees = facingDegrees;
             Rejection = rejection;
             AttackRejection = attackRejection;
             SkillRejection = skillRejection;
@@ -69,34 +70,43 @@ namespace ChibiFantasy.Server
 
         public InstanceId LootPile { get; }
 
+        /// <summary>
+        /// The way the attacker was pointing when the blow was accepted, in degrees about
+        /// the vertical.
+        /// </summary>
+        /// <remarks>For the presentation, which turns the character towards what it hit and
+        /// has no other trustworthy way to learn where that was. See
+        /// <see cref="CombatFacing"/>. Zero on a refusal, and meaningless there.</remarks>
+        public float FacingDegrees { get; }
+
         public static ServerCombatResult Refused(CombatCommandRejection rejection)
         {
             return new ServerCombatResult(false, rejection, Gameplay.AttackRejection.None,
-                SkillUseRejection.None, default, default, 0, 0, 0, false, 0, 0, default);
+                SkillUseRejection.None, default, default, 0, 0, 0, false, 0, 0, default, 0f);
         }
 
         public static ServerCombatResult AttackRefused(AttackResult attack)
         {
             return new ServerCombatResult(false, CombatCommandRejection.None, attack.Reason,
                 SkillUseRejection.None, attack.AttackerId, attack.TargetId, 0, 0, 0, false,
-                0, 0, default);
+                0, 0, default, 0f);
         }
 
         public static ServerCombatResult SkillRefused(in SkillExecutionResult skill)
         {
             return new ServerCombatResult(false, CombatCommandRejection.None,
                 Gameplay.AttackRejection.None, skill.Reason, skill.CasterId, skill.TargetId,
-                0, 0, 0, false, 0, 0, default);
+                0, 0, 0, false, 0, 0, default, 0f);
         }
 
         public static ServerCombatResult Landed(InstanceId attacker, InstanceId target,
             int damage, int before, int after, bool defeated,
-            in MonsterRewardResult reward)
+            in MonsterRewardResult reward, float facingDegrees)
         {
             return new ServerCombatResult(true, CombatCommandRejection.None,
                 Gameplay.AttackRejection.None, SkillUseRejection.None, attacker, target,
                 damage, before, after, defeated, reward.ExperienceGranted, reward.LootCount,
-                reward.LootPile);
+                reward.LootPile, facingDegrees);
         }
 
         public override string ToString()
@@ -205,6 +215,26 @@ namespace ChibiFantasy.Server
         /// <summary>How many characters this pipeline is tracking timing for.</summary>
         public int TrackedCombatants => _attacks.Count;
 
+        /// <summary>The attack speed the last basic attack was paced at. For tests.</summary>
+        public int LastAttackSpeed { get; private set; } = AttackSpeed.Default;
+
+        /// <summary>Seconds this character must wait between swings, as the server has it.</summary>
+        /// <remarks>What the server actually enforces, read back for a test or an operator;
+        /// a character it has never seen swing has no timing yet and reads as unknown.</remarks>
+        public bool TryGetAttackInterval(CharacterId character, out float seconds)
+        {
+            seconds = 0f;
+
+            if (!character.IsValid || !_attacks.TryGetValue(character.Value, out AttackStateMachine machine))
+            {
+                return false;
+            }
+
+            seconds = machine.Timing.TotalDuration;
+
+            return true;
+        }
+
         /// <summary>
         /// Runs one combat command to completion.
         /// </summary>
@@ -274,6 +304,17 @@ namespace ChibiFantasy.Server
             in CombatCommand command)
         {
             AttackStateMachine timing = TimingFor(resolution.Attacker);
+
+            // The attacker's own attack speed, read fresh every swing so a ring put on or a
+            // haste that wore off paces the very next one. The stat is whatever the world's
+            // content named and the one calculator computed; nothing the client sent is in
+            // it. Rules that name no stat keep the timing the pipeline was composed with.
+            if (_basicAttack.PacesFromStat)
+            {
+                LastAttackSpeed = _basicAttack.AttackSpeedOf(resolution.AttackerCombatant);
+
+                timing.SetTiming(AttackSpeed.TimingFor(LastAttackSpeed));
+            }
 
             // Asked before the swing so a refusal costs nothing, and begun only once the
             // swing is actually going to happen.
@@ -364,12 +405,20 @@ namespace ChibiFantasy.Server
         {
             InstanceId attacker = resolution.Attacker.CombatantId;
 
+            // Worked out here, once, while both positions are still to hand. The presentation
+            // turns the attacker towards this; it is the only thing about the target's
+            // whereabouts that ever leaves the server on the back of a swing.
+            float facing = resolution.AttackerCombatant == null || resolution.Target == null
+                ? 0f
+                : CombatFacing.YawDegrees(resolution.AttackerCombatant.Position,
+                    resolution.Target.Position, 0f);
+
             if (!died)
             {
                 if (damage > 0) _monsters?.NotifyAttacked(target, attacker);
 
                 return ServerCombatResult.Landed(attacker, target, damage, before, after,
-                    false, default);
+                    false, default, facing);
             }
 
             MonsterRewardResult reward = _rewards == null
@@ -377,7 +426,7 @@ namespace ChibiFantasy.Server
                 : _rewards.Grant(target, attacker);
 
             return ServerCombatResult.Landed(attacker, target, damage, before, after, true,
-                reward);
+                reward, facing);
         }
 
         private AttackStateMachine TimingFor(LivingCharacter character)

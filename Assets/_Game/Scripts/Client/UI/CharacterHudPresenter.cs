@@ -14,7 +14,7 @@ namespace ChibiFantasy.Client.UI
     public readonly struct HudViewData
     {
         private HudViewData(bool bound, CharacterId character, int health, int maxHealth,
-            int mana, int maxMana, int level, long experience, bool alive)
+            int mana, int maxMana, int level, long experience, bool alive, int attackSpeed)
         {
             IsBound = bound;
             Character = character;
@@ -25,6 +25,7 @@ namespace ChibiFantasy.Client.UI
             Level = level;
             Experience = experience;
             IsAlive = alive;
+            AttackSpeed = attackSpeed;
         }
 
         /// <summary>Whether a character is being shown at all.</summary>
@@ -48,6 +49,11 @@ namespace ChibiFantasy.Client.UI
         public long Experience { get; }
 
         public bool IsAlive { get; }
+
+        /// <summary>Attack speed as the server computed it, in hundredths of a swing a second.</summary>
+        /// <remarks>Replicated, never derived here: the client does not know the formula and
+        /// must not learn it. Zero until the server has published one.</remarks>
+        public int AttackSpeed { get; }
 
         /// <summary>Health as a fraction, for a bar. Zero when there is nothing to show.</summary>
         public float HealthFraction => MaxHealth <= 0
@@ -84,6 +90,18 @@ namespace ChibiFantasy.Client.UI
         /// </remarks>
         public string ExperienceLabel => IsBound ? "EXP " + Experience : string.Empty;
 
+        /// <summary>
+        /// Attack speed as a player reads it: the figure, and what it means in swings.
+        /// </summary>
+        /// <remarks>The conversion is the one the server paces with and the presenter
+        /// animates with, so the three never disagree. Empty until the server has said.
+        /// This is the inspectable foundation the status window will build on, not that
+        /// window.</remarks>
+        public string AttackSpeedLabel => IsBound && AttackSpeed > 0
+            ? "ASPD " + AttackSpeed + " (" + Gameplay.AttackSpeed.SwingsPerSecond(AttackSpeed)
+                .ToString("0.00") + "/s)"
+            : string.Empty;
+
         public static HudViewData Unbound => default;
 
         public static HudViewData From(CharacterNetworkEntity entity)
@@ -91,7 +109,8 @@ namespace ChibiFantasy.Client.UI
             if (entity == null) return Unbound;
 
             return new HudViewData(true, entity.Character, entity.Health, entity.MaxHealth,
-                entity.Mana, entity.MaxMana, entity.Level, entity.Experience, entity.IsAlive);
+                entity.Mana, entity.MaxMana, entity.Level, entity.Experience, entity.IsAlive,
+                entity.AttackSpeed);
         }
     }
 
@@ -177,6 +196,7 @@ namespace ChibiFantasy.Client.UI
                 || previous.MaxMana != current.MaxMana
                 || previous.Level != current.Level
                 || previous.Experience != current.Experience
+                || previous.AttackSpeed != current.AttackSpeed
                 || previous.Character != current.Character;
         }
     }

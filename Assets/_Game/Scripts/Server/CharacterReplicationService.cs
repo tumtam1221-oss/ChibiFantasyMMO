@@ -197,8 +197,11 @@ namespace ChibiFantasy.Server
         /// combat presentation seam on the server side: it sends nothing a client could not
         /// already see and decides nothing. A refused attack never reaches it.
         /// </remarks>
+        /// <param name="connectionId">Whose swing it was.</param>
+        /// <param name="facingDegrees">The heading the server accepted it along, so every
+        /// client turns the character the same way. See <see cref="CombatFacing"/>.</param>
         /// <returns>Whether an object was found to publish through.</returns>
-        public bool PublishAttack(int connectionId)
+        public bool PublishAttack(int connectionId, float facingDegrees)
         {
             if (!CanReplicate()) return false;
 
@@ -217,7 +220,7 @@ namespace ChibiFantasy.Server
 
             if (entity == null) return false;
 
-            entity.ServerPublishAttack();
+            entity.ServerPublishAttack(facingDegrees);
 
             return true;
         }
@@ -303,8 +306,32 @@ namespace ChibiFantasy.Server
             return true;
         }
 
+        /// <summary>Which derived stat is attack speed, or none to publish the default.</summary>
+        private DefinitionId _attackSpeedStat;
+
+        /// <summary>
+        /// Names the stat whose value is published as the character's attack speed.
+        /// </summary>
+        /// <remarks>The same id the combat pipeline paces from, supplied by the composer so
+        /// the figure a client animates at is the figure the server refuses swings against.
+        /// A world that names none publishes the default rate for everybody.</remarks>
+        public void UseAttackSpeedStat(DefinitionId stat)
+        {
+            _attackSpeedStat = stat;
+        }
+
+        /// <summary>The attack speed to publish: the combatant's stat, clamped, or the default.</summary>
+        private int AttackSpeedOf(LivingCharacter character)
+        {
+            if (!_attackSpeedStat.IsValid || character.Combatant == null) return AttackSpeed.Default;
+
+            return character.Combatant.TryGetCombatStat(_attackSpeedStat, out int value)
+                ? AttackSpeed.Clamp(value)
+                : AttackSpeed.Default;
+        }
+
         /// <summary>Copies the authoritative state onto the shadow.</summary>
-        private static void Publish(NetworkObject networkObject, LivingCharacter character)
+        private void Publish(NetworkObject networkObject, LivingCharacter character)
         {
             var entity = networkObject == null
                 ? null
@@ -329,7 +356,8 @@ namespace ChibiFantasy.Server
                 character.Domain?.Resources == null ? 0 : character.Domain.Resources.CurrentMana,
                 limits.MaxMana,
                 character.Domain.Progression.Level,
-                character.Domain.Progression.Experience);
+                character.Domain.Progression.Experience,
+                AttackSpeedOf(character));
 
             // Which pet is out, by authored id. Read off the character's own companion
             // state rather than tracked here: this service publishes what the world says

@@ -81,6 +81,15 @@ namespace ChibiFantasy.Data
                     "Aggressive but has no detection range, so it will never engage.");
             }
 
+            // Committing from farther away than the blow can reach is a swing that can only
+            // ever miss a target standing still, which is not a monster anybody meant.
+            if (monster.AttackRange > 0f && monster.AttackStartRange > monster.AttackRange)
+            {
+                report.AddError(ValidationCode.InvalidConfiguration, monster.Id,
+                    "The attack start range is beyond the attack range, so a committed swing "
+                    + "cannot land.");
+            }
+
             // A leash inside the detection range means it gives up before it arrives.
             if (monster.LeashRange > 0f && monster.LeashRange < monster.AttackRange)
             {

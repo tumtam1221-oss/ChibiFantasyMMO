@@ -63,6 +63,7 @@ namespace ChibiFantasy.Client.UI
         private TextMeshProUGUI _mana;
         private TextMeshProUGUI _level;
         private TextMeshProUGUI _experience;
+        private TextMeshProUGUI _attackSpeed;
         private Image _healthFill;
 
         /// <summary>What the player is currently pointing at, drawn only while there is one.</summary>
@@ -160,6 +161,7 @@ namespace ChibiFantasy.Client.UI
             if (_mana != null) _mana.text = data.ManaLabel;
             if (_level != null) _level.text = data.LevelLabel;
             if (_experience != null) _experience.text = data.ExperienceLabel;
+            if (_attackSpeed != null) _attackSpeed.text = data.AttackSpeedLabel;
             if (_healthFill != null) _healthFill.fillAmount = data.HealthFraction;
         }
 
@@ -227,6 +229,13 @@ namespace ChibiFantasy.Client.UI
                 TextAlignmentOptions.Right);
             _experience.color = UiFactory.Muted;
             Row(_experience.rectTransform, -70f, 24f);
+
+            // Between the level and the experience: the derived figure a player tuning AGI
+            // or trying a weapon wants to see move. Inspectable now; designed later.
+            _attackSpeed = UiFactory.CreateLabel("AttackSpeed", _panel, string.Empty, 14f,
+                TextAlignmentOptions.Center);
+            _attackSpeed.color = UiFactory.Muted;
+            Row(_attackSpeed.rectTransform, -70f, 24f);
 
             // Under the vitals, which is where a player already looks.
             _statusAnchor = UiFactory.CreateAnchored("StatusEffects", _panel,

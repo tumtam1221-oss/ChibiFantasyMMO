@@ -41,7 +41,15 @@ namespace ChibiFantasy.Client.Combat
         public GameObject deathVfx;
 
         [Header("SFX (optional - missing is safe)")]
+        [Tooltip("The attacker's own swing.")]
         public AudioClip attackSfx;
+        [Tooltip("A physical blow connecting with something. First combat: the player's weapon "
+            + "landing on a monster.")]
+        public AudioClip hitSfx;
+        [Tooltip("A monster's attack going out. First combat: the slime launching.")]
+        public AudioClip monsterAttackSfx;
+        [Tooltip("The player's own character taking a blow.")]
+        public AudioClip hurtSfx;
         public AudioClip magicCastSfx;
         public AudioClip magicHitSfx;
         public AudioClip healSfx;

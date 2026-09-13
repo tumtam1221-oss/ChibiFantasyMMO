@@ -74,6 +74,10 @@ namespace ChibiFantasy.Client
             + "falls back to the development placeholder.")]
         [SerializeField] private MonsterVisualCatalogue _monsterVisuals;
 
+        [Tooltip("Which effect and sound answer which blow. Every hook is optional; with "
+            + "nothing assigned combat still shows numbers, flashes and a built-in spark.")]
+        [SerializeField] private ChibiFantasy.Client.Combat.CombatPresentationConfig _combatPresentation;
+
         /// <summary>The one instance, or null before the first scene has loaded.</summary>
         public static ClientApplicationBootstrap Current { get; private set; }
 
@@ -998,6 +1002,9 @@ namespace ChibiFantasy.Client
         /// </remarks>
         public MonsterVisualCatalogue MonsterVisuals => _monsterVisuals;
 
+        /// <summary>What blows are drawn with in the world. Null until the world is up.</summary>
+        public CombatFeedback CombatFeedbackService { get; private set; }
+
         /// <summary>This player's quest log and what they could take.</summary>
         public QuestJournal Journal { get; private set; }
 
@@ -1364,6 +1371,18 @@ namespace ChibiFantasy.Client
             // tell it anything.
             MonsterPresenter.Compose(NetworkManager, MonsterVisuals, _monsterDefinitions,
                 Language, () => Combat == null ? null : Combat.Target);
+
+            // The numbers, sparks, flashes and sounds every blow is drawn with. One per
+            // world, composed here so that both the monster presenter above and the
+            // character presenters the network instantiates draw through the same pools.
+            CombatFeedbackService = host.GetComponent<CombatFeedback>();
+
+            if (CombatFeedbackService == null)
+            {
+                CombatFeedbackService = host.AddComponent<CombatFeedback>();
+            }
+
+            CombatFeedbackService.Compose(_combatPresentation);
 
 #if DEVELOPMENT_BUILD || UNITY_EDITOR
             var monsters = host.GetComponent<DevelopmentMonsterVisualizer>();
