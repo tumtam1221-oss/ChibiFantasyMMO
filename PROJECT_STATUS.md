@@ -1,8 +1,8 @@
 # ChibiFantasyMMO Project Status
 
 > Living status document. Update it at the end of every phase or gate.
-> Last updated: 2026-09-13 — Phase 19 in progress; gate 19E (basic punch, attack
-> speed, avatar posture) closed and on `main`. Next gate: 19F.
+> Last updated: 2026-09-14 — Phase 19 CLOSED. The first playable world loop was
+> manually approved by the user (Phase 19F). Next major phase: Phase 20.
 
 ---
 
@@ -10,9 +10,9 @@
 
 | Area | State |
 |---|---|
-| **Current major phase** | **Phase 19 — first playable world** (open; see §5) |
-| **Last closed gate** | Phase 19E — Basic Punch / ASPD / male-female avatar T-pose fix (`b608938`, merged to `main` in PR #3) |
-| **Next intended gate** | **Phase 19F — First Playable Loop Integration / Closure** (not started) |
+| **Current major phase** | **Phase 19 — first playable world: CLOSED** (see §5) |
+| **Last closed gate** | Phase 19F — First Playable Loop Integration / Closure (manually approved by the user) |
+| **Next major phase** | **Phase 20 — 4 Classes & Combat Production** (not started) |
 | **Unity** | 6000.3.23f1, URP 17.3.0, Force Text serialization, Input System 1.20.0 + legacy manager |
 | **Networking** | FishNet 4.7.2 (`com.firstgeargames.fishnet`, pinned tag), server-authoritative; dedicated Windows/Linux server builds |
 | **Backend** | PHP 8 API (`backend/`, 22 migrations) over MySQL 8.4; own auth (`password_hash`, random session tokens); dev API on 127.0.0.1:8099, dev DB `chibifantasy_integration` on port 3307 |
@@ -142,8 +142,13 @@ failures found along the way.
       loot pickup; card socketing and boss card drop; pet ownership/experience/evolution
       aura; dedicated server entry and build bootstrap; server and client performance
       baselines (`docs/*BASELINE.md`); manual playable client flow.
-- [ ] **Phase 19 — First playable world.** OPEN. Gates landed on `main` so far
-      (PRs #1–#3, 2026-09-08 → 2026-09-13):
+- [x] **Phase 19 — First playable world. CLOSED 2026-09-14** (manual approval of the
+      19F loop). The verified production loop, run end to end in the shipped client
+      against the dedicated server: **Harbor Town → Harbor Guide → accept the first
+      quest → Training Slime → combat → EXP → loot → quest progress → turn-in →
+      reward → relog persistence.** Server-authoritative throughout (quest accept/
+      turn-in, kill credit, EXP, loot ownership and pickup); no development-only
+      dependency for gameplay; production Windows client manually tested. Gates:
   - [x] **19 — World data backbone** (`e718ab2`): `map.harbor_outskirts`, spawns, portals,
         `npc.harbor_guide`, `quest.harbor_first_hunt`, `item.slime_gel`; shipping ground
         collider; skill scaling fix.
@@ -166,12 +171,29 @@ failures found along the way.
         Root cause of the male/female back-arch fixed at the avatar layer (T-pose was the
         bind pose; corrected in the model and every clip importer). Training slime `atk`
         set to 0 as a testing aid (the server's damage floor of 1 still applies).
-  - [ ] **19F — First Playable Loop Integration / Closure.** Next. Not started.
+  - [x] **19F — First Playable Loop Integration / Closure** (2026-09-14): the production
+        `WorldLootPresenter` (dropped loot is now drawn in every build, not only the
+        development one), wiring the whole loop together and verifying it end to end in
+        the shipped client. Manually approved by the user.
 
-### Not done / known gaps (as of 2026-09-13)
+- [ ] **Phase 20 — 4 Classes & Combat Production.** Next. Not started.
 
-- Phase 19 is not closed: the first playable loop (login → town → talk → quest → hunt →
-  turn in) has not been verified end to end as one gate.
+### Known limitations carried into Phase 20 (honest, NOT fixed)
+
+- **Kevin Iglesias death clips missing on this machine.** `HumanM@Death01.fbx` /
+  `HumanF@Death01.fbx` are absent from this machine's per-machine (git-ignored) package
+  install, so the death *animation* asset is unavailable locally and one asset-presence
+  EditMode test fails here. Server-authoritative death and revive work regardless.
+- **Durable unclaimed loot re-offers after a server restart with a fresh lifetime.**
+  Uncollected loot despawns in the running world (~60 s), but its rows persist in
+  `monster_reward_loot` and `RecoverPending()` re-offers every unclaimed pile on start.
+  A known future persistence/polish gap; not a loop blocker.
+- **No genuine two-client authority run was performed in 19F.** Ownership boundaries are
+  covered by existing per-connection authority tests; a live 2-client manual run was not
+  done.
+
+### Other open items (unchanged)
+
 - Services for economy, trade, player shop and guild exist as schema/runtime pieces from
   Phases 13/15 but are not wired into the live world.
 - Hosting for the PHP/MySQL backend is undecided; the dev stack is local only.

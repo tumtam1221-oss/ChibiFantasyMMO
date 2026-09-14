@@ -984,6 +984,9 @@ namespace ChibiFantasy.Client
         /// <summary>The townspeople presenter, once the world is composed.</summary>
         public WorldNpcPresenter Npcs { get; private set; }
 
+        /// <summary>What draws the loot the server offers this player. Every build.</summary>
+        public WorldLootPresenter LootPresenter { get; private set; }
+
         /// <summary>Draws monsters that have approved art. Null outside the world.</summary>
         public WorldMonsterPresenter MonsterPresenter { get; private set; }
 
@@ -1384,6 +1387,15 @@ namespace ChibiFantasy.Client
 
             CombatFeedbackService.Compose(_combatPresentation);
 
+            // What a dropped item looks like on the ground. Production, not development:
+            // until this existed only the development visualiser below drew a pile, so a
+            // shipped client saw the slime die and nothing to pick up.
+            LootPresenter = host.GetComponent<WorldLootPresenter>();
+
+            if (LootPresenter == null) LootPresenter = host.AddComponent<WorldLootPresenter>();
+
+            LootPresenter.Compose(Loot, _items, Language);
+
 #if DEVELOPMENT_BUILD || UNITY_EDITOR
             var monsters = host.GetComponent<DevelopmentMonsterVisualizer>();
 
@@ -1402,6 +1414,9 @@ namespace ChibiFantasy.Client
             if (piles == null) piles = host.AddComponent<DevelopmentLootVisualizer>();
 
             piles.Compose(Loot);
+
+            // So the placeholder cube stands aside for the pile the presenter draws.
+            piles.Presenter = LootPresenter;
 
             // Nothing in this project draws a floor yet, and a click needs something to
             // land on. Composed only when the world really has no ground of its own.

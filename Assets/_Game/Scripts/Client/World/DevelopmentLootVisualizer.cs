@@ -37,6 +37,9 @@ namespace ChibiFantasy.Client.World
         /// <summary>How many placeholders are standing. For tests.</summary>
         public int Count => _shown.Count;
 
+        /// <summary>The production presenter, when one draws piles; this then draws none.</summary>
+        public WorldLootPresenter Presenter { get; set; }
+
         /// <summary>Points this at the loot this client has been offered.</summary>
         public void Compose(WorldLootInput loot)
         {
@@ -46,6 +49,15 @@ namespace ChibiFantasy.Client.World
         private void Update()
         {
             if (_loot == null) return;
+
+            if (Presenter != null && Presenter.IsComposed)
+            {
+                // Production draws every pile now; a cube on top of it would only steal
+                // the click. Anything this drew before the presenter arrived is dropped.
+                Forget(default);
+
+                return;
+            }
 
             Sweep();
         }
