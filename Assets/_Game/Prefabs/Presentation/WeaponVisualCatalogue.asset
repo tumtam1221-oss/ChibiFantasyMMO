@@ -1,0 +1,22 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 48a05b824bd760e44bfff1e4a2ab28dd, type: 3}
+  m_Name: WeaponVisualCatalogue
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.World.WeaponVisualCatalogue
+  _entries:
+  - Item:
+      _value: item.sapphire_guardian
+    Prefab: {fileID: 8613380553824035639, guid: b088d8eca528b7449a135688c1b258f8,
+      type: 3}
+    GripPosition: {x: -0.0201, y: 0.0368, z: 0.0162}
+    GripEuler: {x: 348.67, y: 126.09, z: 308.25}
+    Scale: 1

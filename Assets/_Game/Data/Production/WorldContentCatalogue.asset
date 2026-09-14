@@ -63,6 +63,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 354b0e9efb8c22c41936eb54e301d86a, type: 2}
   - {fileID: 11400000, guid: 35a64e804dacd4849831eaea65823019, type: 2}
   - {fileID: 11400000, guid: 4a02c07a651506234bb159502dcf9e75, type: 2}
+  - {fileID: 11400000, guid: 86eec78b921481641b8b8e9eb05b7ebf, type: 2}
   _devilFruits:
   - {fileID: 11400000, guid: 75728ea0d9df78547b3f5847722619e5, type: 2}
   _pets:
@@ -105,3 +106,4 @@ MonoBehaviour:
   _attackSpeedStat:
     _value: stat.aspd
   _walkMetresPerSecond: 1.38
+  _reviveHealthFraction: 0.5

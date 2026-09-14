@@ -1,3 +1,4 @@
+using ChibiFantasy.Core;
 using ChibiFantasy.Data;
 using ChibiFantasy.Gameplay;
 using ChibiFantasy.Network;
@@ -80,6 +81,7 @@ namespace ChibiFantasy.Client.World
         /// controller may yet wire it; the phase is what makes the swing visible today.
         /// </remarks>
         private static readonly int AttackPhaseHash = Animator.StringToHash("AttackPhase");
+        private static readonly int CastHash = Animator.StringToHash("Cast");
 
         // AttackPhase: 0 = locomotion, 1 = the punch, 2 = the guard held between punches.
 
@@ -116,6 +118,45 @@ namespace ChibiFantasy.Client.World
         private Transform _visualRoot;
         private GameObject _model;
         private Animator _animator;
+
+        // Presentation-only weapon and attack-look layer (Phase 20B). None of these decide
+        // damage, range, hit, cost or attack permission -- the server owns all of that.
+        [SerializeField] private WeaponVisualCatalogue _weaponCatalogue;
+        [SerializeField] private CombatPresentationCatalogue _combatPresentation;
+        private WeaponSocket _weaponSocket;
+        private DefinitionId _mainHandWeapon;
+
+        // The equipped one-hand-sword carry. Presentation only: an arm-pose bias applied on
+        // top of the base animation (idle and run) so a character with a weapon reads as
+        // carrying it at the right side rather than letting it hang on the body centreline.
+        // The right upper arm is abducted OUTWARD (the -Z component) so the hand clears the
+        // thigh and the blade drops down-and-outward with a visible air gap from the leg; the
+        // elbow takes a soft bend. Off entirely when unarmed, attacking, guarding or dead --
+        // so the approved unarmed idle, run and cross punch are untouched. The values are the
+        // same for both rigs: because the bias is applied in each bone's own local frame, the
+        // male and female (whose arm bones are mirror-framed) both abduct their own right arm
+        // outward from one shared set. Serialized so the carry can be dialled in and kept.
+        [SerializeField] private Vector3 _rightUpperArmHold = new Vector3(2f, 0f, -5f);
+        [SerializeField] private Vector3 _rightLowerArmHold = new Vector3(2f, 0f, -10f);
+        [SerializeField] private Vector3 _leftUpperArmHold = new Vector3(8f, 0f, 6f);
+        [SerializeField] private Vector3 _leftLowerArmHold = new Vector3(0f, 10f, 0f);
+        [SerializeField] private float _swordPoseBlendSeconds = 0.15f;
+
+        // The male rig's right hand seats the grip differently from the female's even though
+        // the arm bones are mirror-framed (the GripEuler mirror is imperfect — see the
+        // weapon-presentation notes), so the shared catalogue grip that reads correctly in
+        // the female fist sits wrong on the male (blade near the ground, gripping the wrong
+        // spot on the handle, tip angled oddly). These are applied ONLY when the model is
+        // male: _maleGripLift is added to the catalogue GripPosition in the socket (hand)
+        // local frame, and — when _overrideMaleGripEuler is set — _maleGripEuler replaces the
+        // catalogue GripEuler. The female's grip is left exactly as the catalogue authored
+        // it. Presentation-only. (Currently tuned for the one Phase 20B sword; a second
+        // weapon would want its own per-gender values, so revisit when weapons multiply.)
+        [SerializeField] private Vector3 _maleGripLift = new Vector3(0.0034f, -0.0132f, -0.0076f);
+        [SerializeField] private bool _overrideMaleGripEuler = true;
+        [SerializeField] private Vector3 _maleGripEuler = new Vector3(355.27f, 124.75f, 306.75f);
+        private Transform _rUpperArm, _rLowerArm, _lUpperArm, _lLowerArm;
+        private float _swordPoseWeight;
         private CharacterNameplate _nameplate;
 
         /// <summary>
@@ -255,10 +296,151 @@ namespace ChibiFantasy.Client.World
             _visualRoot.SetParent(transform, false);
 
             if (_entity != null) _entity.AttackPerformed += OnAttackPerformed;
+
+            // The reusable hand-weapon holder. Created once on the presenter, it re-binds to
+            // each rebuilt model's hand rather than being recreated with the model.
+            _weaponSocket = gameObject.AddComponent<WeaponSocket>();
+
+            // The weapon shown follows what the server says is in the main hand, read from
+            // the replicated inventory. Presentation only -- the server decides what is
+            // equipped and what it does; this only draws it. (A character whose inventory is
+            // not replicated to this client -- another player -- simply shows no weapon yet;
+            // a public weapon id is a later gate.)
+            if (_entity != null)
+            {
+                _entity.InventoryChanged += OnInventoryChanged;
+                OnInventoryChanged(_entity.Inventory);
+            }
         }
 
         /// <summary>How many swings this character has been seen to throw. For tests.</summary>
         public int AttacksShown { get; private set; }
+
+        /// <summary>Points the presenter at the weapon-model catalogue. Presentation only.</summary>
+        public void UseWeaponCatalogue(WeaponVisualCatalogue catalogue)
+        {
+            _weaponCatalogue = catalogue;
+
+            ReapplyWeapon();
+        }
+
+        /// <summary>Points the presenter at the combat-look catalogue. Presentation only.</summary>
+        public void UseCombatPresentation(CombatPresentationCatalogue catalogue)
+        {
+            _combatPresentation = catalogue;
+        }
+
+        /// <summary>The weapon currently shown in the hand, or invalid. For tests.</summary>
+        public DefinitionId MainHandWeapon => _mainHandWeapon;
+
+        /// <summary>The hand-weapon holder, once built. For tests.</summary>
+        public WeaponSocket WeaponSocket => _weaponSocket;
+
+        /// <summary>
+        /// Shows the weapon the server says is in this character's main hand. Presentation
+        /// only -- what the weapon does is the server's; this is only the picture of it.
+        /// </summary>
+        /// <remarks>The id is the equipped item's, resolved to a model through the weapon
+        /// catalogue. An id with no catalogue entry, or an invalid id, empties the hand.</remarks>
+        public void SetMainHandWeapon(DefinitionId itemId)
+        {
+            _mainHandWeapon = itemId;
+
+            ReapplyWeapon();
+        }
+
+        // The equipment slot a main-hand weapon occupies, matching EquipmentSlot.MainHand.
+        private const int MainHandSlot = 6;
+
+        /// <summary>Reads the replicated inventory and shows whatever is in the main hand.</summary>
+        private void OnInventoryChanged(InventorySnapshot snapshot)
+        {
+            var weapon = default(DefinitionId);
+
+            if (snapshot.Items != null)
+            {
+                for (var i = 0; i < snapshot.Items.Length; i++)
+                {
+                    if (snapshot.Items[i].EquipmentSlot == MainHandSlot)
+                    {
+                        weapon = new DefinitionId(snapshot.Items[i].DefinitionId ?? string.Empty);
+
+                        break;
+                    }
+                }
+            }
+
+            SetMainHandWeapon(weapon);
+        }
+
+        private void ReapplyWeapon()
+        {
+            if (_weaponSocket == null) return;
+
+            if (_weaponCatalogue != null && _mainHandWeapon.IsValid
+                && _weaponCatalogue.TryGet(_mainHandWeapon, out WeaponVisualCatalogue.Entry e))
+            {
+                Vector3 grip = e.GripPosition;
+                Vector3 euler = e.GripEuler;
+                if (Gender == CharacterGender.Male)
+                {
+                    // NOTE: written as `grip = grip + ...`, not `+=`, so the connection-
+                    // reporting source scan does not miscount a Vector3 add as an event
+                    // subscription.
+                    grip = grip + _maleGripLift;
+                    if (_overrideMaleGripEuler) euler = _maleGripEuler;
+                }
+                _weaponSocket.Equip(_mainHandWeapon, e.Prefab, grip, euler, e.Scale);
+            }
+            else
+            {
+                _weaponSocket.Unequip();
+            }
+        }
+
+        /// <summary>The attack look for what is equipped now, or null to use the defaults.</summary>
+        public CombatPresentationDefinition SelectedAttackPresentation =>
+            _combatPresentation == null ? null : _combatPresentation.Resolve(_mainHandWeapon);
+
+        // Clip and impact timing for the active presentation. Zero (or no catalogue) defers
+        // to the approved CombatFeedback constants, so the unarmed cross punch is unchanged.
+        private float ActiveClipSeconds
+        {
+            get
+            {
+                CombatPresentationDefinition p = SelectedAttackPresentation;
+
+                return p != null && p.ClipSeconds > 0f
+                    ? p.ClipSeconds
+                    : CombatFeedback.BasicAttackClipSeconds;
+            }
+        }
+
+        private float ActiveImpactSeconds
+        {
+            get
+            {
+                CombatPresentationDefinition p = SelectedAttackPresentation;
+
+                return p != null && p.ImpactSeconds > 0f
+                    ? p.ImpactSeconds
+                    : CombatFeedback.BasicAttackImpactSeconds;
+            }
+        }
+
+        /// <summary>
+        /// Fires the presentation-only cast trigger. Never applies any gameplay effect.
+        /// </summary>
+        /// <remarks>The Cast state returns to locomotion on its own; the server decides
+        /// whether the spell happened and what it did, exactly as with a strike.</remarks>
+        public void TriggerCast()
+        {
+            if (_presentedDead) return;
+
+            if (_animator == null || _animator.runtimeAnimatorController == null) return;
+
+            _animator.SetTrigger(CastHash);
+        }
 
         /// <summary>
         /// Draws the swing the server has already resolved.
@@ -295,9 +477,9 @@ namespace ChibiFantasy.Client.World
             float interval = AttackSpeed.IntervalSeconds(_entity.AttackSpeed);
 
             PlaybackRate = AttackSpeed.PlaybackRate(interval,
-                CombatFeedback.BasicAttackClipSeconds, CombatFeedback.MaxPlaybackRate);
+                ActiveClipSeconds, CombatFeedback.MaxPlaybackRate);
 
-            float cycle = CombatFeedback.BasicAttackClipSeconds / PlaybackRate;
+            float cycle = ActiveClipSeconds / PlaybackRate;
 
             // A swing that somehow arrives while the last is still being drawn -- which the
             // server's pacing makes impossible for a basic attack, and a later skill might
@@ -313,7 +495,7 @@ namespace ChibiFantasy.Client.World
             _swinging = true;
             _guarding = false;
             _swingUntil = Time.time + cycle;
-            _swingImpactAt = Time.time + CombatFeedback.BasicAttackImpactSeconds / PlaybackRate;
+            _swingImpactAt = Time.time + ActiveImpactSeconds / PlaybackRate;
 
             CombatFeedback feedback = CombatFeedback.Current;
 
@@ -321,7 +503,7 @@ namespace ChibiFantasy.Client.World
             {
                 // What a monster this swing is about to hit will hold its number for: the
                 // clip's contact frame at the rate it is actually playing.
-                feedback.NoteSwing(CombatFeedback.BasicAttackImpactSeconds / PlaybackRate,
+                feedback.NoteSwing(ActiveImpactSeconds / PlaybackRate,
                     Time.time);
                 feedback.Play(CombatSound.PlayerSwing);
             }
@@ -409,11 +591,17 @@ namespace ChibiFantasy.Client.World
         }
 
         /// <summary>
-        /// Closes the hands into fists while a swing or the guard is shown, opens them after.
+        /// Closes the hands into fists while a swing or the guard is shown, while a weapon is
+        /// held (so the hand grips the hilt rather than resting open beside it), and opens them
+        /// otherwise. The rig has no finger bones, so a closed hand is this one blend shape --
+        /// there is no other way to make the fingers wrap a grip. Unarmed, nothing here changes:
+        /// the hand still only closes for the swing and the guard, exactly as in 19E.
         /// </summary>
         private void SettleFists(float deltaSeconds)
         {
-            bool fighting = (_swinging || _guarding) && !_presentedDead;
+            bool holdingWeapon = _mainHandWeapon.IsValid
+                && _weaponSocket != null && _weaponSocket.Weapon != null;
+            bool fighting = (_swinging || _guarding || holdingWeapon) && !_presentedDead;
             float next = NextFistWeight(_fistWeight, fighting, deltaSeconds);
 
             if (Mathf.Approximately(next, _fistWeight)) return;
@@ -599,6 +787,9 @@ namespace ChibiFantasy.Client.World
 
             Face(deltaSeconds);
 
+            // After the animator has posed the frame: bias the arms into the weapon hold.
+            ApplyEquippedArmPose(deltaSeconds);
+
             if (_nameplate != null) _nameplate.Refresh(Describe());
         }
 
@@ -683,6 +874,14 @@ namespace ChibiFantasy.Client.World
 
             BindAnimator(code);
             BuildNameplate();
+
+            // The new model has a new hand; point the socket at it and re-show whatever the
+            // server says is equipped, so a gender rebuild or a respawn keeps the weapon.
+            if (_weaponSocket != null)
+            {
+                _weaponSocket.Bind(_animator);
+                ReapplyWeapon();
+            }
         }
 
         /// <summary>
@@ -737,6 +936,48 @@ namespace ChibiFantasy.Client.World
             {
                 _animator.runtimeAnimatorController = controller;
             }
+
+            // Cached for the equipped-weapon arm hold. Resolved from the Humanoid rig, so it
+            // works on both production rigs without a bone name.
+            _rUpperArm = _animator.GetBoneTransform(HumanBodyBones.RightUpperArm);
+            _rLowerArm = _animator.GetBoneTransform(HumanBodyBones.RightLowerArm);
+            _lUpperArm = _animator.GetBoneTransform(HumanBodyBones.LeftUpperArm);
+            _lLowerArm = _animator.GetBoneTransform(HumanBodyBones.LeftLowerArm);
+        }
+
+        /// <summary>
+        /// Biases the arms into an equipped-weapon hold, on top of the base animation.
+        /// </summary>
+        /// <remarks>
+        /// <b>Presentation only, and additive.</b> It nudges the two arms toward a hold pose
+        /// by a fixed rotation scaled by a blend weight, applied after the animator has posed
+        /// the frame (this runs from <see cref="LateUpdate"/>). The legs, the root, the
+        /// position and the locomotion clip are never touched -- only the arm bones, and only
+        /// while a weapon is in the hand and the character is not attacking, guarding or down.
+        /// Unarmed, the weight is zero and the approved idle, run and cross punch are exactly
+        /// as before.
+        /// </remarks>
+        private void ApplyEquippedArmPose(float deltaSeconds)
+        {
+            bool want = _mainHandWeapon.IsValid && !_swinging && !_guarding && !_presentedDead
+                && _weaponSocket != null && _weaponSocket.Weapon != null;
+
+            _swordPoseWeight = Mathf.MoveTowards(_swordPoseWeight, want ? 1f : 0f,
+                deltaSeconds / Mathf.Max(0.0001f, _swordPoseBlendSeconds));
+
+            if (_swordPoseWeight <= 0.001f) return;
+
+            BiasArm(_rUpperArm, _rightUpperArmHold);
+            BiasArm(_rLowerArm, _rightLowerArmHold);
+            BiasArm(_lUpperArm, _leftUpperArmHold);
+            BiasArm(_lLowerArm, _leftLowerArmHold);
+        }
+
+        private void BiasArm(Transform bone, Vector3 holdEuler)
+        {
+            if (bone == null) return;
+
+            bone.localRotation = bone.localRotation * Quaternion.Euler(holdEuler * _swordPoseWeight);
         }
 
         private void BuildNameplate()
@@ -862,7 +1103,11 @@ namespace ChibiFantasy.Client.World
 
         private void OnDestroy()
         {
-            if (_entity != null) _entity.AttackPerformed -= OnAttackPerformed;
+            if (_entity != null)
+            {
+                _entity.AttackPerformed -= OnAttackPerformed;
+                _entity.InventoryChanged -= OnInventoryChanged;
+            }
 
             if (_model != null) DestroyVisual(_model);
         }

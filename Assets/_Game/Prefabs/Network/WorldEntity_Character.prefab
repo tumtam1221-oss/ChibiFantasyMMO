@@ -122,6 +122,7 @@ MonoBehaviour:
   _playbackStretch: 1.25
   _sendInterval: 0.02
   _snapDistance: 4
+  _developmentKeyboard: 0
 --- !u!114 &1801073953638534814
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -137,3 +138,16 @@ MonoBehaviour:
   _catalogue: {fileID: 11400000, guid: bf00725517071764a82aaee0630fa5dc, type: 2}
   _turnSpeed: 720
   _deathTilt: 80
+  _speedRiseSeconds: 0.08
+  _speedFallSeconds: 0.15
+  _weaponCatalogue: {fileID: 11400000, guid: fe8a73e919b244e46a319ec429124758, type: 2}
+  _combatPresentation: {fileID: 11400000, guid: 4a6b7b7c492d41b4b97f4bec7393a328,
+    type: 2}
+  _rightUpperArmHold: {x: 2, y: 0, z: -5}
+  _rightLowerArmHold: {x: 2, y: 0, z: -10}
+  _leftUpperArmHold: {x: 8, y: 0, z: 6}
+  _leftLowerArmHold: {x: 0, y: 10, z: 0}
+  _swordPoseBlendSeconds: 0.15
+  _maleGripLift: {x: 0.0034, y: -0.0132, z: -0.0076}
+  _overrideMaleGripEuler: 1
+  _maleGripEuler: {x: 355.27, y: 124.75, z: 306.75}

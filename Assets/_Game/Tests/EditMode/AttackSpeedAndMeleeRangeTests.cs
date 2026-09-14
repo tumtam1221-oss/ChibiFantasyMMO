@@ -1176,8 +1176,14 @@ namespace ChibiFantasy.Tests.EditMode
             Assert.That(presenter.IndexOf("if (beforeImpact) return;"), Is.LessThan(presenter.IndexOf("_animator.SetTrigger(AttackHash);")),
                 "the trigger is set before the guard, so the punch would retrigger");
             Assert.That(presenter.IndexOf("if (beforeImpact) SwingsAbsorbed++;"), Is.GreaterThan(0), "absorbed swings are not counted");
-            Assert.That(presenter, Does.Contain("_swingImpactAt = Time.time + CombatFeedback.BasicAttackImpactSeconds / PlaybackRate;"),
+            // Contact is timed at the rate the clip plays. The impact time is now selected
+            // per presentation (ActiveImpactSeconds), which falls back to the approved
+            // CombatFeedback constant for the unarmed cross punch -- so the timing is
+            // unchanged, only its source is data-driven (Phase 20B).
+            Assert.That(presenter, Does.Contain("_swingImpactAt = Time.time + ActiveImpactSeconds / PlaybackRate;"),
                 "contact is not timed at the rate the clip plays");
+            Assert.That(presenter, Does.Contain("? p.ImpactSeconds").And.Contain(": CombatFeedback.BasicAttackImpactSeconds;"),
+                "the active impact time no longer defaults to the approved cross-punch constant");
             Assert.That(presenter, Does.Contain("_animator.Play(current.fullPathHash, 0, 0f);"),
                 "a swing after contact does not start the next punch from its first frame");
             Assert.That(presenter, Does.Not.Contain("Animator.speed"), "the whole animator is scaled");
@@ -1265,7 +1271,11 @@ namespace ChibiFantasy.Tests.EditMode
             string presenter = AttackSpeedFixture.Source(Presenter);
 
             Assert.That(presenter, Does.Contain("SettleFists(deltaSeconds)"), "the presenter never drives the fists");
-            Assert.That(presenter, Does.Contain("(_swinging || _guarding) && !_presentedDead"), "the fists are not tied to the swing and the guard");
+            // Fists close for the fight (swing/guard) AND while a weapon is held (so the hand
+            // grips the hilt -- the rig has no finger bones), and never while dead.
+            Assert.That(presenter, Does.Contain("_swinging || _guarding || holdingWeapon"), "the fists are not tied to the swing and the guard");
+            Assert.That(presenter, Does.Contain("&& !_presentedDead"), "the fists close while the character is dead");
+            Assert.That(presenter, Does.Contain("_mainHandWeapon.IsValid"), "the fist grip is not tied to a held weapon");
             Assert.That(presenter, Does.Contain("GetBlendShapeIndex(FistBlendShape)"), "the fist blend shape is not looked up on the model");
             Assert.That(presenter, Does.Contain("SetBlendShapeWeight(_fistShape[i], _fistWeight)"), "the weight never reaches the mesh");
         }

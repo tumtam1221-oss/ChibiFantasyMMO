@@ -273,8 +273,10 @@ namespace ChibiFantasy.Tests.EditMode
                 "level decoded as a number and is at or above the seeded value");
 
             // The names differ on the two sides -- class_definition_id in the schema,
-            // class_id on the wire -- so this asserts the mapping, not just the value.
-            Assert.That(character.Class.Value, Is.EqualTo("class.novice"));
+            // class_id on the wire -- so this asserts the mapping, not just the value. The
+            // fixture character is a swordsman (the game's first playable class, and what the
+            // Phase 20B weapon work equips a sword on); the seed sets it and this pins it.
+            Assert.That(character.Class.Value, Is.EqualTo("class.swordsman"));
             Assert.That(character.Map.Value, Is.EqualTo(_fixture.MapId));
             Assert.That(character.Appearance.Value, Is.EqualTo("appearance.default"));
             Assert.That(character.Availability, Is.EqualTo(CharacterAvailability.Playable));

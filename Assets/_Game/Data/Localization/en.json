@@ -58,6 +58,14 @@
       "text": "Apprentice Cutlass"
     },
     {
+      "key": "item.sapphire_guardian.name",
+      "text": "Sapphire Guardian"
+    },
+    {
+      "key": "item.sapphire_guardian.desc",
+      "text": "A one-handed sword with a sapphire-set guard, favoured by novice swordsmen."
+    },
+    {
       "key": "item.slime_gel.name",
       "text": "Slime Gel"
     },

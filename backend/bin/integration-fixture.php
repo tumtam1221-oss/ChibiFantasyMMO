@@ -117,7 +117,7 @@ $pdo->prepare(
          current_health, current_mana,
          class_definition_id, job_definition_id, map_definition_id,
          appearance_definition_id, availability, revision, created_at, updated_at)
-     VALUES (:cid, :aid, :sid, :name, 2, 12, 100, 50, "class.novice", "job.none",
+     VALUES (:cid, :aid, :sid, :name, 2, 12, 100, 50, "class.swordsman", "job.none",
              "map.harbor_town", "appearance.default", 1, 0, NOW(3), NOW(3))'
 )->execute([
     ':cid'  => $characterId,
@@ -214,7 +214,7 @@ $pdo->prepare(
          current_health, current_mana,
          class_definition_id, job_definition_id, map_definition_id,
          appearance_definition_id, availability, revision, created_at, updated_at)
-     VALUES (:cid, :aid, :sid, :name, 2, 5, 100, 50, "class.novice", "job.none",
+     VALUES (:cid, :aid, :sid, :name, 2, 5, 100, 50, "class.swordsman", "job.none",
              "map.harbor_town", "appearance.default", 1, 0, NOW(3), NOW(3))'
 )->execute([
     ':cid'  => $rewardCharacterId,

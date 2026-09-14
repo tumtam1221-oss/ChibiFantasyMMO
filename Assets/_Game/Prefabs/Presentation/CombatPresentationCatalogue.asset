@@ -1,0 +1,19 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 311ab505039fb9144972a8bd0fb21d28, type: 3}
+  m_Name: CombatPresentationCatalogue
+  m_EditorClassIdentifier: ChibiFantasy.Client::ChibiFantasy.Client.World.CombatPresentationCatalogue
+  _unarmed: {fileID: 11400000, guid: 5e59cb2eb305650499450bae199aaf20, type: 2}
+  _weapons:
+  - Weapon:
+      _value: item.sapphire_guardian
+    Presentation: {fileID: 11400000, guid: e30c0227c95be2d43b9dfedf9385db3b, type: 2}
