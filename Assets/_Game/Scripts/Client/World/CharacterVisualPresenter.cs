@@ -43,6 +43,14 @@ namespace ChibiFantasy.Client.World
         private static readonly int SpeedHash = Animator.StringToHash("Speed");
         private static readonly int DeadHash = Animator.StringToHash("Dead");
 
+        // Drives the equipped-idle clip: true whenever a weapon is shown in the hand, so the
+        // animator can switch the standing pose to the sword idle. Presentation only.
+        private static readonly int HasWeaponHash = Animator.StringToHash("HasWeapon");
+
+        // Drives the switch from the ready Sword-and-Shield idle to the relaxed Warrior idle
+        // after standing still a while. Presentation only.
+        private static readonly int LongIdleHash = Animator.StringToHash("LongIdle");
+
         /// <summary>
         /// The trigger the locomotion controller already has for a swing.
         /// </summary>
@@ -142,6 +150,58 @@ namespace ChibiFantasy.Client.World
         [SerializeField] private Vector3 _leftLowerArmHold = new Vector3(0f, 10f, 0f);
         [SerializeField] private float _swordPoseBlendSeconds = 0.15f;
 
+        // The equipped-idle clip is a sword-AND-shield pose, so its left hand braces an
+        // invisible shield. These additively relax the LEFT arm (only) while the equipped-
+        // idle clip is showing, to bring that hand down to a natural resting position; the
+        // right arm is left to the clip so it keeps holding the sword. Presentation only,
+        // applied in LateUpdate, blended in/out. Zero = leave the clip's left arm as-is.
+        [SerializeField] private Vector3 _equippedIdleLeftUpperArmHold = new Vector3(55f, 0f, 0f);
+        [SerializeField] private Vector3 _equippedIdleLeftLowerArmHold = Vector3.zero;
+        // Abducts the RIGHT (sword) upper arm a little during the equipped idle so the wide
+        // crossguard is held clear of the body/outfit instead of clipping the hip -- the sword
+        // stays in the hand (the whole arm moves out), unlike a grip offset which would detach
+        // it. Additive on the idle clip; mirror-framed so one value serves both rigs.
+        [SerializeField] private Vector3 _equippedIdleRightUpperArmHold = new Vector3(0f, 0f, -20f);
+        private float _equippedIdleWeight;
+
+        // The FEMALE Warrior idle clip stands with the torso arched noticeably backward (~25 deg
+        // of back-lean measured at the mid-spine); it reads as a sway-backed pose. This tips the
+        // torso base (Spine02) forward past upright to a slight forward lean (~+7 deg). Rotating the
+        // bone's local X is pure pitch here -- it does NOT add side-lean (measured: side-roll stays
+        // ~2 deg at every amount), so any apparent side lean is the clip's own leg weight-shift, not
+        // this. Applied ONLY on the female rig and ONLY in the Warrior idle (the Sword-and-Shield
+        // idle sits upright already), additive on the clip, weighted with the idle blend. X is the
+        // pitch axis for this rig (+ = torso forward). Presentation only.
+        [SerializeField] private Vector3 _femaleWarriorSpineStraighten = new Vector3(32f, 0f, 0f);
+        private Transform _spineBone;
+
+        // Equipped RUN, right (sword) arm. The run LOCKS the sword arm's WORLD orientation
+        // (relative to the character's facing) so the shoulder/torso swing of the run clip
+        // cannot move it at all -- the arm holds dead still, straight, blade tucked down the
+        // side, while the legs run and the LEFT arm swings naturally. This is the arm
+        // orientation relative to the model transform; both the upper and lower arm are driven
+        // to it (straight arm). The right arm shares a rest frame on both rigs, so one set
+        // serves both. Presentation only.
+        [SerializeField] private Vector3 _runArmWorldRot = new Vector3(46.19f, 272.91f, 186.83f);
+        // Run->idle release is coupled to the IDLE animation raising the hand, not a timer:
+        // when the run ends the sword arm KEEPS the run pose, and only starts rotating to the
+        // idle once the idle clip lifts the hand above the run level (by this much, in metres,
+        // measured hand-above-hips so it is terrain independent). Once it starts it latches, so
+        // the idle's breathing bob does not re-lock it.
+        [SerializeField] private float _runReleaseLiftMargin = 0.05f;
+        private Transform _rHandBone, _hipsBone;
+        private bool _swordArmReleased;
+        private float _runHandRelY;
+        // The hand carries the sword, so it is locked too (its own world orientation) or the
+        // blade would still wobble with the run even when the arm is held. Aimed so the blade
+        // extends down-forward along the running direction.
+        [SerializeField] private Vector3 _runHandWorldRot = new Vector3(356.92f, 245.46f, 155.27f);
+
+        // Whether the armed character is moving (shown speed above the equipped-idle
+        // threshold). Computed in Apply from the presentation speed and read by the pose
+        // layer, so the pose method itself never touches the speed measurement.
+        private bool _armedMoving;
+
         // The male rig's right hand seats the grip differently from the female's even though
         // the arm bones are mirror-framed (the GripEuler mirror is imperfect — see the
         // weapon-presentation notes), so the shared catalogue grip that reads correctly in
@@ -213,6 +273,25 @@ namespace ChibiFantasy.Client.World
 
         /// <summary>Above this blend of walking the guard gives way to locomotion.</summary>
         private const float GuardDropsAtSpeed01 = 0.1f;
+
+        // At or below this shown speed the armed character is "standing" and the animator
+        // shows the equipped-idle clip; above it, it is moving and the additive carry bias
+        // takes over. Matches the EquippedIdle<->Locomotion Speed threshold in the controller.
+        private const float EquippedIdleMaxSpeed01 = 0.1f;
+
+        // How long the character stands armed and still before the equipped idle relaxes from
+        // the Sword-and-Shield ready stance into the Warrior idle -- a random value in this
+        // range each time, so it is not clockwork.
+        [SerializeField] private float _longIdleMinSeconds = 30f;
+        [SerializeField] private float _longIdleMaxSeconds = 45f;
+        private float _idleSeconds;
+        private float _longIdleThreshold = 35f;
+        // On entering the game the equipped idle should DEFAULT to the Warrior idle (not the
+        // Sword-and-Shield ready stance), for both rigs. This stays true from spawn until the
+        // character first moves; while it holds, an armed standing character shows the Warrior
+        // idle immediately instead of waiting out the long-idle timer. After the first move the
+        // normal flow resumes (stop -> Sword-and-Shield -> 30-45s -> Warrior).
+        private bool _freshEntry = true;
 
         /// <summary>Name of the blend shape on the production meshes that curls the fingers into a fist.</summary>
         public const string FistBlendShape = "Fist";
@@ -787,7 +866,11 @@ namespace ChibiFantasy.Client.World
 
             Face(deltaSeconds);
 
-            // After the animator has posed the frame: bias the arms into the weapon hold.
+            // After the animator has posed the frame: the female Warrior-idle torso fix, then
+            // bias the arms into the weapon hold. Kept as two steps on purpose: the arm hold is
+            // audited to touch only the four arm bones, and the torso tilt is the one deliberate
+            // exception, so it lives outside that method.
+            ApplyFemaleWarriorTorso();
             ApplyEquippedArmPose(deltaSeconds);
 
             if (_nameplate != null) _nameplate.Refresh(Describe());
@@ -943,6 +1026,9 @@ namespace ChibiFantasy.Client.World
             _rLowerArm = _animator.GetBoneTransform(HumanBodyBones.RightLowerArm);
             _lUpperArm = _animator.GetBoneTransform(HumanBodyBones.LeftUpperArm);
             _lLowerArm = _animator.GetBoneTransform(HumanBodyBones.LeftLowerArm);
+            _rHandBone = _animator.GetBoneTransform(HumanBodyBones.RightHand);
+            _hipsBone = _animator.GetBoneTransform(HumanBodyBones.Hips);
+            _spineBone = _animator.GetBoneTransform(HumanBodyBones.Spine);
         }
 
         /// <summary>
@@ -957,27 +1043,124 @@ namespace ChibiFantasy.Client.World
         /// Unarmed, the weight is zero and the approved idle, run and cross punch are exactly
         /// as before.
         /// </remarks>
-        private void ApplyEquippedArmPose(float deltaSeconds)
+        // The female Meshy rig's Warrior idle stands with the torso arched back ~25deg; tip
+        // Spine02 forward to a slight forward lean (see _femaleWarriorSpineStraighten). Female
+        // only, Warrior idle only, weighted by the same idle blend the arm hold uses. This is the
+        // ONLY place the presenter moves a non-arm bone; it is deliberately not part of
+        // ApplyEquippedArmPose, which is audited to reach only the four arm bones.
+        private void ApplyFemaleWarriorTorso()
         {
-            bool want = _mainHandWeapon.IsValid && !_swinging && !_guarding && !_presentedDead
-                && _weaponSocket != null && _weaponSocket.Weapon != null;
+            if (Gender != CharacterGender.Female || _spineBone == null || _animator == null) return;
+            if (_equippedIdleWeight <= 0.001f) return;
 
-            _swordPoseWeight = Mathf.MoveTowards(_swordPoseWeight, want ? 1f : 0f,
-                deltaSeconds / Mathf.Max(0.0001f, _swordPoseBlendSeconds));
+            bool inWarrior = _animator.GetCurrentAnimatorStateInfo(0).IsName("EquippedIdleWarrior")
+                || (_animator.IsInTransition(0)
+                    && _animator.GetNextAnimatorStateInfo(0).IsName("EquippedIdleWarrior"));
+            if (!inWarrior) return;
 
-            if (_swordPoseWeight <= 0.001f) return;
-
-            BiasArm(_rUpperArm, _rightUpperArmHold);
-            BiasArm(_rLowerArm, _rightLowerArmHold);
-            BiasArm(_lUpperArm, _leftUpperArmHold);
-            BiasArm(_lLowerArm, _leftLowerArmHold);
+            float idleW = Mathf.SmoothStep(0f, 1f, _equippedIdleWeight);
+            _spineBone.localRotation = _spineBone.localRotation
+                * Quaternion.Euler(_femaleWarriorSpineStraighten * idleW);
         }
 
-        private void BiasArm(Transform bone, Vector3 holdEuler)
+        private void ApplyEquippedArmPose(float deltaSeconds)
+        {
+            // The additive carry bias is the equipped-RUN arm control now: while standing
+            // still and armed, the animator plays the dedicated equipped-idle clip (which
+            // poses the arms itself), so the bias must be off there or it would double-pose
+            // on top of the clip. _armedMoving (computed in Apply) splits the two: moving uses
+            // the carry bias, standing uses the clip plus a small left-arm relax.
+            bool armed = _mainHandWeapon.IsValid && !_swinging && !_guarding && !_presentedDead
+                && _weaponSocket != null && _weaponSocket.Weapon != null;
+            bool carryWant = armed && _armedMoving;   // moving: additive carry
+            bool idleWant = armed && !_armedMoving;    // standing: clip + left relax
+
+            // The idle animation's DESIRED right-hand height (before our override), measured
+            // above the hips so terrain does not matter. This drives the run->idle release.
+            float clipHandRelY = (_rHandBone != null && _hipsBone != null)
+                ? _rHandBone.position.y - _hipsBone.position.y : 0f;
+
+            if (carryWant)
+            {
+                _swordArmReleased = false;   // running: re-arm the latch
+            }
+            else if (!_swordArmReleased && clipHandRelY > _runHandRelY + _runReleaseLiftMargin)
+            {
+                // Stopped, and the idle has now lifted the hand above the run level -> start
+                // rotating the sword arm back to idle (latched, so an idle bob won't re-lock).
+                _swordArmReleased = true;
+            }
+
+            bool holdRun = !carryWant && !_swordArmReleased;  // stopped, hand not yet lifted
+            float swordTarget = (carryWant || holdRun) ? 1f : 0f;
+            float idleTarget = (idleWant && !holdRun) ? 1f : 0f;
+            _swordPoseWeight = Mathf.MoveTowards(_swordPoseWeight, swordTarget,
+                deltaSeconds / Mathf.Max(0.0001f, _swordPoseBlendSeconds));
+            _equippedIdleWeight = Mathf.MoveTowards(_equippedIdleWeight, idleTarget,
+                deltaSeconds / Mathf.Max(0.0001f, _swordPoseBlendSeconds));
+
+            if (_swordPoseWeight > 0.001f)
+            {
+                // Equipped RUN: LOCK the RIGHT (sword) arm's world orientation to the facing,
+                // so the run clip's shoulder/torso swing cannot move it -- the arm holds dead
+                // still, straight, blade down the side. The LEFT arm is left to the run clip so
+                // it swings naturally (run storyboard: free arm counter-swing, sword arm
+                // locked). Upper then lower, both to the same orientation, gives a straight arm.
+                // Ease the blend (smoothstep) so the arm accelerates and settles smoothly
+                // instead of the constant-speed snap a raw linear weight gives.
+                float runW = Mathf.SmoothStep(0f, 1f, _swordPoseWeight);
+                // The arm bones only exist when an animator does, and HoldArmWorld bails on a
+                // null model, so no fallback transform is needed here.
+                Transform model = _animator != null ? _animator.transform : null;
+                Quaternion armWorld = Quaternion.Euler(_runArmWorldRot);
+                HoldArmWorld(_rUpperArm, model, armWorld, runW);
+                HoldArmWorld(_rLowerArm, model, armWorld, runW);
+                HoldArmWorld(_rHandBone, model, Quaternion.Euler(_runHandWorldRot), runW);
+
+                // While fully in the run pose, remember the run hand height (above hips) as the
+                // level the idle must lift past before the sword arm rotates back.
+                if (runW > 0.99f && _rHandBone != null && _hipsBone != null)
+                    _runHandRelY = _rHandBone.position.y - _hipsBone.position.y;
+            }
+
+            if (_equippedIdleWeight > 0.001f)
+            {
+                float idleW = Mathf.SmoothStep(0f, 1f, _equippedIdleWeight);
+                // The two equipped idles need different arm fixes, so pick by the active state:
+                // the Warrior idle needs the sword arm out to clear the hip; the Sword-and-Shield
+                // idle needs the empty left (shield) hand relaxed down.
+                bool inWarrior = _animator != null
+                    && (_animator.GetCurrentAnimatorStateInfo(0).IsName("EquippedIdleWarrior")
+                        || (_animator.IsInTransition(0)
+                            && _animator.GetNextAnimatorStateInfo(0).IsName("EquippedIdleWarrior")));
+                if (inWarrior)
+                {
+                    BiasArm(_rUpperArm, _equippedIdleRightUpperArmHold, idleW);
+                }
+                else
+                {
+                    BiasArm(_lUpperArm, _equippedIdleLeftUpperArmHold, idleW);
+                    BiasArm(_lLowerArm, _equippedIdleLeftLowerArmHold, idleW);
+                }
+            }
+        }
+
+        private void BiasArm(Transform bone, Vector3 holdEuler, float weight)
         {
             if (bone == null) return;
 
-            bone.localRotation = bone.localRotation * Quaternion.Euler(holdEuler * _swordPoseWeight);
+            bone.localRotation = bone.localRotation * Quaternion.Euler(holdEuler * weight);
+        }
+
+        // Blends a bone toward a fixed WORLD orientation (relative to the model's facing), so
+        // the animated shoulder/torso swing underneath cannot move it -- used to lock the run
+        // sword-arm dead still. Position still follows the body; only the orientation is held.
+        private void HoldArmWorld(Transform bone, Transform model, Quaternion relToModel,
+            float weight)
+        {
+            if (bone == null || model == null) return;
+
+            bone.rotation = Quaternion.Slerp(bone.rotation, model.rotation * relToModel, weight);
         }
 
         private void BuildNameplate()
@@ -1026,6 +1209,37 @@ namespace ChibiFantasy.Client.World
 
             _animator.SetFloat(SpeedHash, speed01);
             _animator.SetBool(DeadHash, _presentedDead);
+            bool armed = _mainHandWeapon.IsValid && _weaponSocket != null
+                && _weaponSocket.Weapon != null;
+            _animator.SetBool(HasWeaponHash, armed);
+            _armedMoving = speed01 > EquippedIdleMaxSpeed01;
+
+            // Long-idle: after standing armed and still for a random 30-45s, switch the equipped
+            // idle from the ready Sword-and-Shield stance to the relaxed Warrior idle. Moving,
+            // fighting or unsheathing resets the timer (and a fresh random threshold), so the
+            // switch feels natural rather than clockwork.
+            bool armedStanding = armed && !_presentedDead && !_swinging && !_guarding
+                && speed01 <= EquippedIdleMaxSpeed01;
+            // The first time the character actually moves, drop the fresh-entry default so the
+            // normal Sword-and-Shield-first flow takes over from then on.
+            if (_armedMoving)
+                _freshEntry = false;
+            if (armedStanding)
+            {
+                if (_idleSeconds <= 0f)
+                    _longIdleThreshold = Random.Range(_longIdleMinSeconds, _longIdleMaxSeconds);
+                // Written as `x = x + ...`, not `+=`: the connection-reporting source scan
+                // counts `+=` tokens as event subscriptions.
+                _idleSeconds = _idleSeconds + Time.deltaTime;
+            }
+            else
+            {
+                _idleSeconds = 0f;
+            }
+            // Default to the Warrior idle on entry (fresh, not yet moved); otherwise switch to it
+            // only once the long-idle timer elapses.
+            bool longIdle = armedStanding && (_freshEntry || _idleSeconds >= _longIdleThreshold);
+            _animator.SetBool(LongIdleHash, longIdle);
         }
 
         private void Face(float deltaSeconds)

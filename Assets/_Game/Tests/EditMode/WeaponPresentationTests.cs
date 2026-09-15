@@ -300,7 +300,7 @@ namespace ChibiFantasy.Tests.EditMode
                 "the hold pose is not weighted, so it cannot blend in or out");
             Assert.That(body, Does.Contain("MoveTowards"),
                 "the hold pose snaps on/off rather than blending");
-            Assert.That(body, Does.Contain("holdEuler * _swordPoseWeight"),
+            Assert.That(body, Does.Contain("holdEuler * weight"),
                 "the bias is not scaled by the blend weight");
         }
 

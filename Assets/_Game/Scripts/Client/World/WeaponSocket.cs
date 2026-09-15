@@ -73,7 +73,17 @@ namespace ChibiFantasy.Client.World
             _socket.SetParent(_hand, false);
             _socket.localPosition = Vector3.zero;
             _socket.localRotation = Quaternion.identity;
-            _socket.localScale = Vector3.one;
+            // Neutralize the hand bone's rig scale so grip offsets and the weapon size are
+            // authored in real world units regardless of a model's internal bone scale. Most
+            // rigs import the hand at world scale 1, but some FBX exports leave the armature at
+            // 100x (a metres/centimetres unit artifact); without this the weapon would be shown
+            // 100x too big and its grip offset flung 100x out of the hand. Dividing by the hand's
+            // lossy scale makes the socket world scale 1 on every rig, so one grip value fits all.
+            Vector3 handScale = _hand.lossyScale;
+            _socket.localScale = new Vector3(
+                Mathf.Approximately(handScale.x, 0f) ? 1f : 1f / handScale.x,
+                Mathf.Approximately(handScale.y, 0f) ? 1f : 1f / handScale.y,
+                Mathf.Approximately(handScale.z, 0f) ? 1f : 1f / handScale.z);
 
             // Re-show whatever was equipped before the rebuild, in the new hand.
             if (_equipped.IsValid && _pendingPrefab != null)

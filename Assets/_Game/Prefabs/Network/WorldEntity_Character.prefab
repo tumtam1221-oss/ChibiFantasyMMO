@@ -147,7 +147,18 @@ MonoBehaviour:
   _rightLowerArmHold: {x: 2, y: 0, z: -10}
   _leftUpperArmHold: {x: 8, y: 0, z: 6}
   _leftLowerArmHold: {x: 0, y: 10, z: 0}
-  _swordPoseBlendSeconds: 0.15
+  _swordPoseBlendSeconds: 0.9
+  _equippedIdleLeftUpperArmHold: {x: 55, y: 0, z: 0}
+  _equippedIdleLeftLowerArmHold: {x: 0, y: 0, z: 0}
+  _equippedIdleRightUpperArmHold: {x: 0, y: 0, z: -20}
+  _femaleWarriorSpineStraighten: {x: 0, y: 0, z: 0}
+  _runArmWorldRot: {x: 46.19, y: 272.91, z: 186.83}
+  _runReleaseLiftMargin: 0.05
+  _femaleArmRollRightDeg: {x: 180, y: -163, z: 168, w: 101}
+  _femaleArmRollLeftDeg: {x: -180, y: 163, z: -168, w: -101}
+  _runHandWorldRot: {x: 356.92, y: 245.46, z: 155.27}
   _maleGripLift: {x: 0.0034, y: -0.0132, z: -0.0076}
   _overrideMaleGripEuler: 1
   _maleGripEuler: {x: 355.27, y: 124.75, z: 306.75}
+  _longIdleMinSeconds: 30
+  _longIdleMaxSeconds: 45
